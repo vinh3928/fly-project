@@ -1,0 +1,25 @@
+{
+  "name": "FlySimulation.Editor",
+  "rootNamespace": "FlySimulation.EditorTools",
+  "references": [
+    "FlySimulation.Runtime",
+    "Unity.ML-Agents"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [
+    {
+      "name": "com.unity.ml-agents",
+      "expression": "3.0.0",
+      "define": "UNITY_MLAGENTS"
+    }
+  ],
+  "noEngineReferences": false
+}

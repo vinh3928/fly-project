@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flybrain"
+version = "0.1.0"
+description = "Self-supervised representation learning and homeostatic RL for the fly embodied simulation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Fly Embodied-Learning Simulation" }]
+dependencies = [
+  "numpy>=1.26",
+  "torch>=2.2",
+  "pyyaml>=6.0",
+  "pyarrow>=14.0",
+  "pandas>=2.1",
+  "gymnasium>=0.29",
+  "tensorboard>=2.15",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "ruff>=0.3",
+  "black>=24.1",
+  "mypy>=1.8",
+]
+mlagents = [
+  # Paired with com.unity.ml-agents 4.0.x. Prefer python/.venv-mlagents (3.10).
+  # Use: ./scripts/setup_mlagents_venv.sh
+  "mlagents_envs==1.1.0",
+]
+
+[project.scripts]
+flybrain-train = "flybrain.training.train:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["flybrain*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]

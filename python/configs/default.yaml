@@ -1,0 +1,48 @@
+seed: 42
+experiment_id: experiment_000001
+fly_id: fly_001
+
+simulation:
+  physics_hz: 200
+  decision_hz: 20
+  vision_hz: 30
+  recording_hz: 50
+  episode_duration_seconds: 120
+  body_scale: 10.0
+
+chamber:
+  size: [1.0, 0.5, 1.0]
+  light_intensity: 1.0
+  temperature_celsius: 25.0
+  humidity: 0.5
+  wind_direction: [0.0, 0.0, 1.0]
+  wind_strength: 0.0
+  sugar_source_position: [0.3, 0.01, 0.3]
+  bitter_source_position: [-0.3, 0.01, -0.3]
+  chemical_spread: 0.25
+
+observations:
+  eye_resolution: [64, 64]
+  grayscale: true
+  joint_count: 18
+  chemical_channels: 8
+
+actions:
+  mode: high_level  # high_level | direct_joints
+  high_level_dim: 5
+  joint_dim: 18
+
+rewards:
+  curiosity_weight: 0.1
+  energy_weight: 1.0
+  hydration_weight: 1.0
+  damage_weight: 2.0
+  effort_weight: 0.05
+  instability_weight: 0.5
+
+training:
+  latent_dim: 256
+  batch_size: 64
+  learning_rate: 0.0003
+  buffer_capacity: 50000
+  device: cpu

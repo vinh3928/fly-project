@@ -1,0 +1,22 @@
+{
+  "name": "FlySimulation.Runtime",
+  "rootNamespace": "FlySimulation",
+  "references": [
+    "Unity.ML-Agents"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [
+    {
+      "name": "com.unity.ml-agents",
+      "expression": "3.0.0",
+      "define": "UNITY_MLAGENTS"
+    }
+  ],
+  "noEngineReferences": false
+}
