@@ -6,7 +6,7 @@ This repository is an **embodied fly-inspired learning simulation**, not a biolo
 
 ## Status
 
-**Phases 0–6 are complete** (foundation through taste/homeostasis food-search).
+**Phases 0–7 are complete** (foundation through two-layer next-state / low-load retrospective).
 
 - Unity 6 project with chamber, fly body, sensors, motors, and ML-Agents agent wiring
 - Deterministic seed resets, physics stability monitor, episode telemetry
@@ -15,12 +15,13 @@ This repository is an **embodied fly-inspired learning simulation**, not a biolo
 - Multimodal mind pipeline: affective embeddings → pgvector STM → thinking (+ devil’s advocate)
 - Hybrid visual navigation: recurrent vision head + FakeVisualNavEnv + Unity VisualTarget arena
 - Taste/homeostasis food-search: FakeFoodSearchEnv + consume/aversion via mind pipeline
+- Two-layer present/future (priority scan + outcome reflection) with low-load retrospective
 - Python `flybrain` package with encoders, world model, curiosity, and policy modules
 - FakeFlyEnv smoke test + CI
 - Standalone player build (`./scripts/build_unity_player.sh`) and Python launch
   (`python -m scripts.launch_unity`)
 
-Next: Phase 7 (self-supervised world model). Learned locomotion is deferred to Phase 9.
+Next: Phase 8 (curiosity-driven exploration). Learned locomotion is deferred to Phase 9.
 
 Flight is intentionally deferred until walking, sensing, recording, and learning are stable.
 

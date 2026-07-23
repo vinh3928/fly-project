@@ -25,6 +25,22 @@ class NextStateWorldModel(nn.Module):
     def forward(self, latent: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         return self.net(torch.cat([latent, action], dim=-1))
 
+    def rollout(
+        self,
+        latent: torch.Tensor,
+        actions: torch.Tensor,
+        *,
+        horizon: int | None = None,
+    ) -> torch.Tensor:
+        """Multi-step latent rollout. ``actions`` is (..., H, action_dim) or (..., action_dim)."""
+        if actions.dim() == latent.dim():
+            actions = actions.unsqueeze(-2)
+        steps = int(actions.shape[-2] if horizon is None else min(horizon, actions.shape[-2]))
+        state = latent
+        for t in range(steps):
+            state = self.forward(state, actions[..., t, :])
+        return state
+
     def prediction_loss(
         self, latent: torch.Tensor, action: torch.Tensor, next_latent: torch.Tensor
     ) -> torch.Tensor:

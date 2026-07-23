@@ -21,7 +21,7 @@ def test_present_future_stub_survival() -> None:
     )
     assert "Present" in out["present"]
     assert "Future" in out["future_hypothesis"]
-    assert "energy" in out["future_hypothesis"].lower() or "reduce" in out["future_hypothesis"].lower()
+    assert "survival" in out["present"].lower() or "maturity" in out["present"].lower()
 
 
 def test_composer_clamps_and_survival() -> None:

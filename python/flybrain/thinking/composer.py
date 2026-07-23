@@ -29,6 +29,9 @@ def compose_thought(
     present_future: dict[str, str],
     devil_critique: str,
     action_clamps: dict[str, float] | None = None,
+    future_action_bias: np.ndarray | None = None,
+    future_confidence: float | None = None,
+    future_meta: dict[str, Any] | None = None,
 ) -> ThoughtResult:
     clamps = {
         "forward_max": 1.0,
@@ -99,6 +102,21 @@ def compose_thought(
     turn = float(np.clip(turn, -clamps["turn_max"], clamps["turn_max"]))
     frequency = float(np.clip(frequency, 0.0, 1.0))
 
+    # Phase 7: blend Layer-1/2 chosen action into composer intent.
+    if future_action_bias is not None:
+        bias = np.asarray(future_action_bias, dtype=np.float32).reshape(-1)
+        blend = float(np.clip(future_confidence if future_confidence is not None else 0.45, 0.0, 0.85))
+        if bias.shape[0] >= 5:
+            forward = (1.0 - blend) * forward + blend * float(bias[0])
+            turn = (1.0 - blend) * turn + blend * float(bias[1])
+            height = (1.0 - 0.5 * blend) * height + 0.5 * blend * float(bias[2])
+            frequency = (1.0 - 0.5 * blend) * frequency + 0.5 * blend * float(bias[3])
+            proboscis = (1.0 - blend) * proboscis + blend * float(bias[4])
+            forward = float(np.clip(forward, -clamps["forward_max"], clamps["forward_max"]))
+            turn = float(np.clip(turn, -clamps["turn_max"], clamps["turn_max"]))
+            frequency = float(np.clip(frequency, 0.0, 1.0))
+            proboscis = float(np.clip(proboscis, 0.0, 1.0))
+
     # Devil's critique softens aggressive forward if critique mentions fall/toxin
     critique_l = devil_critique.lower()
     if "fall" in critique_l or "upright" in critique_l:
@@ -116,15 +134,21 @@ def compose_thought(
         f"Critique noted: {devil_critique[:180]}"
     )
 
+    conf = float(np.clip(1.0 - 0.5 * survival, 0.1, 1.0))
+    if future_confidence is not None:
+        conf = float(np.clip(0.5 * conf + 0.5 * future_confidence, 0.1, 1.0))
+
     intent = {
         "forward": forward,
         "turn": turn,
         "height": height,
         "frequency": frequency,
         "proboscis": proboscis,
-        "confidence": float(np.clip(1.0 - 0.5 * survival, 0.1, 1.0)),
+        "confidence": conf,
         "action": action.tolist(),
     }
+    if future_meta:
+        intent["future"] = dict(future_meta)
 
     return ThoughtResult(
         draft=draft,

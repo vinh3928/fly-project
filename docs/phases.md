@@ -161,7 +161,29 @@ python -m scripts.run_live_mind --fake-food-search --steps 80
 ./scripts/run_unity_editmode_tests.sh
 ```
 
-## Phase 7 — Self-supervised world model (present/future reasoning)
+## Phase 7 — Two-layer next-state + low-load retrospective ✅ complete
+
+Deliverables: outcome labeling + life-experience priority weights (survival → altruism +
+spiritual growth), Layer-1 latent-stimulus scan, Layer-2 desirable/undesirable reflection,
+low-load retrospective, `NextStateWorldModel` rollout + synthetic train script, live mind wiring.
+
+Exit criteria:
+
+- [x] Layer 1 picks an action that improves scored state (survival-dominant for young flies;
+      altruism/growth terms move ranking for high-experience flies)
+- [x] Layer 2 changes or confirms Layer 1 using labeled past outcomes
+- [x] Retrospective runs only under low load and writes outcome labels / thoughts
+- [x] World-model one-step prediction loss improves vs untrained baseline on synthetic replay
+- [x] Phase 4–6 tests still pass; Phase 7 unit tests cover weights, labeling, L1/L2, low-load
+
+How to verify:
+
+```bash
+cd python && pytest
+python -m scripts.train_world_model --steps 100
+python -m scripts.run_live_mind --fake --steps 80
+./scripts/run_unity_editmode_tests.sh
+```
 
 ## Phase 8 — Curiosity-driven exploration
 

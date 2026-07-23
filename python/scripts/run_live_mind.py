@@ -1,5 +1,5 @@
 """
-Run the Phase 4/5/6 live mind loop: observe → embed → STM → think → act.
+Run the Phase 4–7 live mind loop: observe → embed → STM → think → act.
 
 Examples:
   python -m scripts.run_live_mind --fake

@@ -50,6 +50,28 @@ thinking:
     height_default: 0.5
     frequency_default: 0.5
     survival_forward_scale: 0.25
+  enable_retrospective: true
+
+# Phase 7: two-layer next-state + low-load retrospective
+world_model:
+  latent_dim: 256
+  action_dim: 5
+  hidden_dim: 512
+  checkpoint_path: checkpoints/world_model.pt
+  rollout_horizon: 2
+  priorities:
+    age_horizon: 500
+    data_horizon: 100
+    max_altruism: 0.35
+    max_spiritual: 0.35
+    min_survival: 0.3
+  retrospective:
+    survival_risk_max: 0.45
+    bitter_max: 0.35
+    wall_hazard_max: 0.45
+    batch_size: 8
+    wm_train_steps: 1
+    wm_lr: 0.001
 
 live:
   max_steps: 200

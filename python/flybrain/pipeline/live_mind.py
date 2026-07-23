@@ -21,6 +21,8 @@ from flybrain.vision.recurrent_head import (
     VisionNavCues,
     heuristic_cues_from_frames,
 )
+from flybrain.world_model.outcomes import LifeExperience
+from flybrain.world_model.predictor import NextStateWorldModel
 
 
 def load_mind_config(path: str | Path | None = None) -> dict[str, Any]:
@@ -42,6 +44,13 @@ class LiveMindConfig:
     use_vision_head: bool = True
     use_heuristic_if_untrained: bool = True
     vision_checkpoint: str | None = None
+    world_model_checkpoint: str | None = None
+    world_model_latent_dim: int = 256
+    world_model_action_dim: int = 5
+    world_model_hidden_dim: int = 512
+    priorities: dict[str, Any] | None = None
+    retrospective: dict[str, Any] | None = None
+    enable_retrospective: bool = True
 
     @classmethod
     def from_yaml(cls, data: dict[str, Any], visual_nav: dict[str, Any] | None = None) -> LiveMindConfig:
@@ -49,6 +58,7 @@ class LiveMindConfig:
         thinking = data.get("thinking", {})
         live = data.get("live", {})
         llm = data.get("llm", {})
+        wm = data.get("world_model", {}) or {}
         vn = visual_nav or {}
         vn_live = vn.get("live", {})
         clamps = dict(thinking.get("action_clamps") or {})
@@ -68,11 +78,18 @@ class LiveMindConfig:
             use_vision_head=bool(vn_live.get("use_vision_head", True)),
             use_heuristic_if_untrained=bool(vn_live.get("use_heuristic_if_untrained", True)),
             vision_checkpoint=(vn.get("train") or {}).get("checkpoint_path"),
+            world_model_checkpoint=wm.get("checkpoint_path"),
+            world_model_latent_dim=int(wm.get("latent_dim", 256)),
+            world_model_action_dim=int(wm.get("action_dim", 5)),
+            world_model_hidden_dim=int(wm.get("hidden_dim", 512)),
+            priorities=dict(wm.get("priorities") or {}),
+            retrospective=dict(wm.get("retrospective") or {}),
+            enable_retrospective=bool(thinking.get("enable_retrospective", True)),
         )
 
 
 class LiveMindPipeline:
-    """One-process orchestrator for Phase 4/5 live mind loop."""
+    """One-process orchestrator for Phase 4/5/6/7 live mind loop."""
 
     def __init__(
         self,
@@ -81,6 +98,8 @@ class LiveMindPipeline:
         config: LiveMindConfig | None = None,
         memory: ShortTermMemory | None = None,
         vision_head: RecurrentVisionHead | None = None,
+        world_model: NextStateWorldModel | None = None,
+        experience: LifeExperience | None = None,
     ) -> None:
         self.env = env
         self.config = config or LiveMindConfig()
@@ -92,13 +111,25 @@ class LiveMindPipeline:
             dsn=self.config.dsn,
             dim=self.embedder.total_dim,
         )
+        self.world_model = world_model
+        self._wm_trained = world_model is not None
+        if self.world_model is None:
+            self.world_model = self._load_world_model()
+        # Use WM in thinking only when a trained checkpoint (or injected model) is available.
+        wm_for_thinking = self.world_model if self._wm_trained else None
+        self.experience = experience or LifeExperience.from_config(self.config.priorities)
         self.thinking = ThinkingService(
             self.memory,
             ThinkingConfig(
                 fly_id=self.config.fly_id,
                 action_clamps=self.config.action_clamps,
                 llm_mock=self.config.llm_mock,
+                priorities=self.config.priorities,
+                retrospective=self.config.retrospective,
+                enable_retrospective=self.config.enable_retrospective,
             ),
+            experience=self.experience,
+            world_model=wm_for_thinking,
         )
         self.vision_head = vision_head
         self._vision_trained = False
@@ -116,6 +147,26 @@ class LiveMindPipeline:
             self.vision_head.eval()
             self.vision_head.reset_state(1)
         self._step = 0
+
+    def _load_world_model(self) -> NextStateWorldModel | None:
+        model = NextStateWorldModel(
+            latent_dim=self.config.world_model_latent_dim,
+            action_dim=self.config.world_model_action_dim,
+            hidden_dim=self.config.world_model_hidden_dim,
+        )
+        ckpt = self.config.world_model_checkpoint
+        if not ckpt:
+            return None
+        path = Path(ckpt)
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[2] / path
+        if not path.exists():
+            return None
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        model.load_state_dict(state["model"] if isinstance(state, dict) and "model" in state else state)
+        model.eval()
+        self._wm_trained = True
+        return model
 
     def close(self) -> None:
         self.memory.close()
@@ -175,6 +226,7 @@ class LiveMindPipeline:
             sim_time=float(sim_time if sim_time is not None else self._step * 0.05),
             fly_id=self.config.fly_id,
         )
+        retro = self.thinking._last_retrospective
         info = {
             "stm_id": stm.id,
             "thought_id": thought_rec.id,
@@ -183,6 +235,10 @@ class LiveMindPipeline:
             "intent": thought.intent,
             "affect": affect.to_jsonable(),
             "vision_cues": cues.to_dict() if cues else None,
+            "maturity": self.experience.maturity(),
+            "priority_weights": (thought.intent.get("future") or {}).get("priority_weights"),
+            "retrospective_ran": bool(retro.ran) if retro else False,
+            "labeled_outcomes": self.experience.labeled_outcomes,
         }
         return thought.action, info
 
@@ -217,6 +273,7 @@ class LiveMindPipeline:
             self._step += 1
             if terminated or truncated:
                 break
+        self.experience.end_episode()
         end_dist = float(
             last_info.get(
                 "distance_to_sugar",
@@ -234,6 +291,9 @@ class LiveMindPipeline:
             "success": bool(last_info.get("success", False)),
             "sugar_consumed": float(last_info.get("sugar_consumed", 0.0)),
             "bitter_contacts": int(last_info.get("bitter_contacts", 0)),
+            "maturity": self.experience.maturity(),
+            "labeled_outcomes": self.experience.labeled_outcomes,
+            "episodes": self.experience.episodes,
         }
 
 
