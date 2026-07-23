@@ -2,16 +2,18 @@ Shader "Fly/UnlitColorTransparent"
 {
     Properties
     {
-        _Color ("Color", Color) = (0.55, 0.7, 0.95, 0.28)
+        [MainColor] _BaseColor ("Color", Color) = (0.55, 0.7, 0.95, 0.28)
+        [HideInInspector] _Color ("Legacy Color", Color) = (0.55, 0.7, 0.95, 0.28)
     }
 
     SubShader
     {
         Tags
         {
+            "RenderType" = "Transparent"
             "Queue" = "Transparent"
             "IgnoreProjector" = "True"
-            "RenderType" = "Transparent"
+            "RenderPipeline" = "UniversalPipeline"
         }
 
         LOD 100
@@ -21,37 +23,43 @@ Shader "Fly/UnlitColorTransparent"
 
         Pass
         {
-            CGPROGRAM
+            Name "Unlit"
+            Tags { "LightMode" = "UniversalForward" }
+
+            HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            #include "UnityCG.cginc"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
-            fixed4 _Color;
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseColor;
+                float4 _Color;
+            CBUFFER_END
 
-            struct appdata
+            struct Attributes
             {
-                float4 vertex : POSITION;
+                float4 positionOS : POSITION;
             };
 
-            struct v2f
+            struct Varyings
             {
-                float4 vertex : SV_POSITION;
+                float4 positionCS : SV_POSITION;
             };
 
-            v2f vert(appdata v)
+            Varyings vert(Attributes input)
             {
-                v2f o;
-                o.vertex = UnityObjectToClipPos(v.vertex);
-                return o;
+                Varyings output;
+                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                return output;
             }
 
-            fixed4 frag(v2f i) : SV_Target
+            half4 frag(Varyings input) : SV_Target
             {
-                return _Color;
+                return _BaseColor.a > 0.0 ? _BaseColor : _Color;
             }
-            ENDCG
+            ENDHLSL
         }
     }
 
-    FallBack "Unlit/Color"
+    Fallback Off
 }

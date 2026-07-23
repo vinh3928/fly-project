@@ -17,6 +17,7 @@ ANTENNA_DIM = 8 * 2  # 16
 PROBOSCIS_DIM = 2 + 8  # 10
 INTERNAL_DIM = 8
 BODY_STATE_DIM = 13
+INTERNAL_OFFSET = JOINT_DIM + CONTACT_DIM + FOOT_TASTE_DIM + ANTENNA_DIM + PROBOSCIS_DIM  # 176
 
 
 @dataclass
@@ -111,6 +112,12 @@ class SignalBuilder:
         # Body instability proxy: last body_state channel is height; use angular magnitude.
         instability = float(np.mean(np.abs(body_state[3:6]))) if body_state.size >= 6 else 0.0
 
+        # Detect all-zero internal block (common when ML-Agents received a zero pad).
+        if internal.size >= INTERNAL_DIM and float(np.max(np.abs(internal))) < 1e-8:
+            summary_note = {"internal_all_zero": 1.0}
+        else:
+            summary_note = {}
+
         summary = {
             "sugar": max(0.0, sugar),
             "bitter": max(0.0, bitter),
@@ -120,6 +127,7 @@ class SignalBuilder:
             "damage": max(0.0, min(1.0, damage)),
             "instability": max(0.0, instability),
             "proboscis_contact": float(proboscis[0]) if proboscis.size else 0.0,
+            **summary_note,
         }
 
         return SensorySignals(

@@ -42,6 +42,9 @@ python -m pip install \
 python -m pip install 'mlagents_envs==1.1.0' --ignore-requires-python --no-deps
 python -m pip install -e "$PY_DIR" --no-deps
 
+# Keep protobuf pinned last: other deps (e.g. tensorboard) may pull 4+/6+.
+python -m pip install 'protobuf==3.20.3'
+
 python - <<'PY'
 from mlagents_envs.environment import UnityEnvironment
 from flybrain.unity_env import UnityFlyEnv

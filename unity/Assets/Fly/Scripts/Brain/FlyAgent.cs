@@ -57,17 +57,55 @@ namespace FlySimulation.Fly.Brain
 
         public override void CollectObservations(VectorSensor sensor)
         {
+            const int expected = SensorManager.ExpectedVectorSize;
+            const int internalOffset =
+                SensorManager.JointCount * 4 +
+                SensorManager.FootCount * 5 +
+                SensorManager.FootCount * SensorManager.ChemicalChannels +
+                SensorManager.ChemicalChannels * 2 +
+                (2 + SensorManager.ChemicalChannels);
             float dt = Time.fixedDeltaTime;
-            int length = observations != null ? observations.Collect(dt) : 0;
-            float[] vector = observations != null ? observations.GetVectorObservation() : null;
-            if (vector == null)
+
+            // Recover bindings if the scene reference was lost at runtime.
+            if (observations != null && observations.Sensors == null)
             {
-                return;
+                var manager = GetComponent<SensorManager>();
+                if (manager != null)
+                {
+                    observations.Bind(manager);
+                }
             }
 
-            for (int i = 0; i < length; i++)
+            int length = observations != null ? observations.Collect(dt) : 0;
+            float[] vector = observations != null ? observations.GetVectorObservation() : null;
+
+            if (vector == null || length <= 0)
+            {
+                vector = new float[expected];
+                length = expected;
+                Debug.LogError(
+                    "FlyAgent.CollectObservations: sensor collect failed; " +
+                    "building a minimal vector from homeostasis only.");
+            }
+
+            // Always stamp internals from the live FlyHomeostasis component.
+            // This is the source of truth the Inspector shows; SensorManager alone
+            // has been observed to write zeros across to Python.
+            FlyHomeostasis homeo = homeostasis != null ? homeostasis : GetComponent<FlyHomeostasis>();
+            if (homeo != null && length > internalOffset + SensorManager.InternalStateCount - 1)
+            {
+                homeo.CopyNormalized(vector, internalOffset);
+            }
+
+            int n = Mathf.Min(length, expected);
+            for (int i = 0; i < n; i++)
             {
                 sensor.AddObservation(vector[i]);
+            }
+
+            for (int i = n; i < expected; i++)
+            {
+                sensor.AddObservation(0f);
             }
         }
 

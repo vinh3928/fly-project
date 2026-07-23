@@ -184,9 +184,17 @@ namespace FlySimulation.Fly.Sensors
 
         private int WriteInternal(int offset)
         {
-            if (homeostasis != null)
+            FlyHomeostasis homeo = homeostasis != null ? homeostasis : GetComponent<FlyHomeostasis>();
+            if (homeo != null)
             {
-                homeostasis.CopyNormalized(_vectorObservation, offset);
+                homeo.CopyNormalized(_vectorObservation, offset);
+            }
+            else
+            {
+                for (int i = 0; i < InternalStateCount; i++)
+                {
+                    _vectorObservation[offset + i] = 0f;
+                }
             }
 
             return offset + InternalStateCount;

@@ -48,7 +48,7 @@ class FakeFlyEnv(gym.Env if gym is not None else object):
         self._step = 0
         self._energy = 1.0
         self._obs = self._rng.normal(0.0, 0.1, size=self.config.observation_dim).astype(np.float32)
-        self._obs[0] = self._energy
+        self._write_internal()
         return self._obs.copy(), {"seed": seed if seed is not None else self.config.seed}
 
     def step(self, action):
@@ -59,12 +59,28 @@ class FakeFlyEnv(gym.Env if gym is not None else object):
         delta = 0.05 * action.mean()
         noise = self._rng.normal(0.0, 0.01, size=self._obs.shape)
         self._obs = np.clip(self._obs + noise, -1.0, 1.0)
-        self._obs[0] = self._energy
+        self._write_internal()
         reward = -0.05 * effort + (0.01 if action[0] > 0 else 0.0)
         terminated = self._energy <= 0.0
         truncated = self._step >= self.config.max_steps
-        info = {"effort": effort, "delta": delta}
+        info = {"effort": effort, "delta": delta, "energy": self._energy}
         return self._obs.copy(), float(reward), terminated, truncated, info
+
+    def _write_internal(self) -> None:
+        """Pack homeostasis into the Unity SensorManager layout (energy at index 176)."""
+        # joints(72)+contacts(30)+foot_taste(48)+antennae(16)+proboscis(10) = 176
+        internal = 176
+        if self._obs.shape[0] <= internal + 7:
+            self._obs[0] = self._energy
+            return
+        self._obs[internal] = self._energy
+        self._obs[internal + 1] = 1.0  # hydration
+        self._obs[internal + 2] = 0.0  # fatigue
+        self._obs[internal + 3] = 0.0  # damage
+        self._obs[internal + 4] = 0.5  # temperature normalized
+        self._obs[internal + 5] = 0.0  # toxin
+        self._obs[internal + 6] = max(0.0, 1.0 - self._energy)  # hunger
+        self._obs[internal + 7] = 0.5  # arousal
 
 
 def make_env(*, prefer_unity: bool = False):

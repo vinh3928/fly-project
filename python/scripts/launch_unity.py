@@ -34,15 +34,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Path to FlyChamber player (.app / .exe / .x86_64). Default: builds/FlyChamber.*",
     )
-    parser.add_argument("--port", type=int, default=5005)
+    parser.add_argument("--port", type=int, default=None, help="Default 5004 for --editor, else 5005")
     parser.add_argument("--graphics", action="store_true", help="Show the player window")
     args = parser.parse_args(argv)
 
     if args.editor:
         file_name = None
-        print("Connecting to Unity Editor on port", args.port)
-        print("Make sure Chamber.unity is in Play mode first.")
+        port = args.port if args.port is not None else 5004
+        print("Connecting to Unity Editor on port", port)
+        print("Make sure Chamber.unity is in Play mode (or press Play right after starting this).")
     else:
+        port = args.port if args.port is not None else 5005
         build = args.build or (str(default_build_path()) if default_build_path() else None)
         if build is None:
             print(
@@ -57,8 +59,9 @@ def main(argv: list[str] | None = None) -> int:
 
     config = UnityFlyConfig(
         file_name=file_name,
-        base_port=args.port,
+        base_port=port,
         no_graphics=not args.graphics and file_name is not None,
+        editor_connect=bool(args.editor),
     )
 
     with UnityFlyEnv(config) as env:

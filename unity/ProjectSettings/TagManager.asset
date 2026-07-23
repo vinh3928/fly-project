@@ -8,6 +8,7 @@ TagManager:
   - Chamber
   - ChemicalSource
   - Obstacle
+  - VisualTarget
   layers:
   - Default
   - TransparentFX

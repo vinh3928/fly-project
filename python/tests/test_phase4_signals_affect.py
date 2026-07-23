@@ -13,17 +13,26 @@ def test_phase4_constants() -> None:
     assert HIGH_LEVEL_ACTION_DIM == 5
 
 
-def test_signal_builder_splits_observation() -> None:
+def test_signal_builder_reads_unity_energy_index() -> None:
     builder = SignalBuilder()
-    obs = np.linspace(-0.5, 0.5, 197, dtype=np.float32)
+    obs = np.zeros(197, dtype=np.float32)
+    obs[176] = 0.87  # INTERNAL_OFFSET
+    obs[182] = 0.13  # hunger
     signals = builder.build(obs)
-    assert signals.body.shape[0] == 85
-    assert signals.chemical.shape[0] == 64
-    assert signals.internal.shape[0] == 8
-    assert signals.contacts.shape[0] == 30
-    assert signals.left_eye.shape == (1, 64, 64)
-    assert "energy" in signals.summary
-    assert "sugar" in signals.to_jsonable()
+    assert abs(signals.summary["energy"] - 0.87) < 1e-5
+    assert abs(signals.summary["hunger"] - 0.13) < 1e-5
+    assert signals.summary.get("internal_all_zero", 0.0) == 0.0
+
+
+def test_fake_env_energy_at_unity_layout_index() -> None:
+    from flybrain.env import FakeFlyEnv
+    from flybrain.signals.builder import INTERNAL_OFFSET, SignalBuilder
+
+    env = FakeFlyEnv()
+    obs, _ = env.reset()
+    assert abs(float(obs[INTERNAL_OFFSET]) - 1.0) < 1e-5
+    signals = SignalBuilder().build(obs)
+    assert signals.summary["energy"] > 0.9
 
 
 def test_affect_estimator_sugar_and_bitter() -> None:

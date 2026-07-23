@@ -208,6 +208,13 @@ class LiveMindPipeline:
         if callable(bearing_fn):
             sensory.summary.update(bearing_fn())
 
+        if sensory.summary.get("internal_all_zero") and self._step == 0:
+            print(
+                "warning: Unity obs internal block is all zeros "
+                f"(energy={sensory.summary.get('energy')}). "
+                "Check FlyAgent CollectObservations / SensorManager homeostasis binding.",
+                flush=True,
+            )
         affect = self.affect.estimate(sensory)
         embedding = self.embedder.embed(sensory, affect)
         signal_payload = sensory.to_jsonable()
@@ -304,7 +311,7 @@ def make_live_env(
     fake_food_search: bool = False,
     editor: bool = False,
     build: str | None = None,
-    port: int = 5005,
+    port: int | None = None,
 ):
     if fake_food_search:
         from flybrain.env_food_search import FakeFoodSearchEnv
@@ -318,11 +325,16 @@ def make_live_env(
         return FakeFlyEnv()
     from flybrain.unity_env import UnityFlyConfig, UnityFlyEnv
 
+    # ML-Agents: Editor trainer port is 5004; standalone executables use 5005+.
+    if port is None:
+        port = 5004 if editor else 5005
     file_name = None if editor else build
     return UnityFlyEnv(
         UnityFlyConfig(
             file_name=file_name,
             base_port=port,
             no_graphics=not editor and file_name is not None,
+            editor_connect=bool(editor),
+            timeout_wait=60 if editor else 120,
         )
     )

@@ -54,14 +54,16 @@ class UnityFlyConfig:
     seed: int = 42
     timeout_wait: int = 120
     behavior_name: str = BEHAVIOR_NAME
+    # When True, keep file_name=None so ML-Agents attaches to the open Editor
+    # Play session. Do not fall back to builds/FlyChamber.*.
+    editor_connect: bool = False
 
 
 class UnityFlyEnv(gym.Env if gym is not None else object):
     """Gymnasium wrapper around ``mlagents_envs.UnityEnvironment``.
 
-    Pass ``file_name=None`` to connect to a Unity Editor play session
-    (press Play in the editor first, with the ML-Agents port free).
-    Pass a player path (or rely on ``builds/FlyChamber.*``) to launch the binary.
+    Pass ``editor_connect=True`` (and ``file_name=None``) to connect to a Unity
+    Editor play session (press Play first). Pass a player path to launch a build.
     """
 
     metadata = {"render_modes": []}
@@ -81,7 +83,7 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
 
         self.config = config or UnityFlyConfig()
         file_name = self.config.file_name
-        if file_name is None:
+        if file_name is None and not self.config.editor_connect:
             build = default_build_path()
             file_name = str(build) if build is not None else None
 
@@ -147,31 +149,50 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
         decision, terminal = self._env.get_steps(self._behavior)
 
         if len(terminal) > 0:
-            obs = np.asarray(terminal.obs[0][0], dtype=np.float32)
+            obs = self._unpack_obs(terminal)
             reward = float(terminal.reward[0])
             return obs, reward, True, False, {"steps": self._steps}
 
         if len(decision) == 0:
             raise RuntimeError("Unity returned no decision or terminal steps")
 
-        obs = np.asarray(decision.obs[0][0], dtype=np.float32)
+        obs = self._unpack_obs(decision)
         reward = float(decision.reward[0])
         return obs, reward, False, False, {"steps": self._steps}
 
     def _current_obs(self) -> np.ndarray:
         decision, terminal = self._env.get_steps(self._behavior)
         if len(terminal) > 0:
-            return np.asarray(terminal.obs[0][0], dtype=np.float32)
+            return self._unpack_obs(terminal)
         if len(decision) > 0:
-            return np.asarray(decision.obs[0][0], dtype=np.float32)
+            return self._unpack_obs(decision)
         # First reset can leave an empty queue until one Academy step.
         self._env.step()
         decision, terminal = self._env.get_steps(self._behavior)
         if len(terminal) > 0:
-            return np.asarray(terminal.obs[0][0], dtype=np.float32)
+            return self._unpack_obs(terminal)
         if len(decision) > 0:
-            return np.asarray(decision.obs[0][0], dtype=np.float32)
+            return self._unpack_obs(decision)
         raise RuntimeError("No observations available after Unity reset")
+
+    def _unpack_obs(self, step_result) -> np.ndarray:
+        """Pick the flat vector observation (ignore visual tensors if present)."""
+        specs = self._env.behavior_specs[self._behavior].observation_specs
+        best = None
+        best_n = -1
+        for i, obs in enumerate(step_result.obs):
+            arr = np.asarray(obs[0], dtype=np.float32).reshape(-1)
+            # Prefer the sensor whose size matches our agent vector (197).
+            spec_shape = tuple(specs[i].shape) if i < len(specs) else ()
+            score = arr.size
+            if spec_shape == (DEFAULT_OBS_DIM,) or arr.size == DEFAULT_OBS_DIM:
+                score += 10_000
+            if score > best_n:
+                best_n = score
+                best = arr
+        if best is None:
+            raise RuntimeError("Unity step had no observation tensors")
+        return best
 
     def close(self) -> None:
         if getattr(self, "_env", None) is not None:

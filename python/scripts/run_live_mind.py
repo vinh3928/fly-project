@@ -40,7 +40,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--editor", action="store_true", help="Connect to Unity Editor Play mode")
     parser.add_argument("--build", type=str, default=None, help="Path to Unity player build")
-    parser.add_argument("--port", type=int, default=5005)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="ML-Agents port (default: 5004 for --editor, 5005 for builds)",
+    )
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--config", type=str, default=None, help="Path to mind.yaml")
     parser.add_argument("--visual-nav-config", type=str, default=None, help="Path to visual_nav.yaml")
@@ -67,16 +72,59 @@ def main(argv: list[str] | None = None) -> int:
         or args.fake_food_search
         or (not args.editor and args.build is None)
     )
+    if args.editor:
+        port = args.port if args.port is not None else 5004
+        print(
+            "Connecting to Unity Editor on port",
+            port,
+            flush=True,
+        )
+        print(
+            "IMPORTANT order:\n"
+            "  1) Stop Play in Unity if it is already playing\n"
+            "  2) Keep this script running until you see Listening / unity_env_ready\n"
+            "  3) THEN press Play in Chamber.unity\n"
+            "If Unity Console says 'Couldn't connect to trainer... inference instead',\n"
+            "Stop Play and press Play again while this script is waiting.",
+            flush=True,
+        )
+    else:
+        port = args.port
     env = make_live_env(
         fake=use_fake and not args.fake_visual_nav and not args.fake_food_search,
         fake_visual_nav=args.fake_visual_nav,
         fake_food_search=args.fake_food_search,
         editor=args.editor,
         build=args.build,
-        port=args.port,
+        port=port,
     )
+    print("unity_env_ready", flush=True)
     pipeline = LiveMindPipeline(env, config=cfg)
     try:
+        # One-shot raw obs diagnostic so energy wiring issues are visible immediately.
+        if args.editor or args.build:
+            from flybrain.signals.builder import INTERNAL_OFFSET
+
+            probe = getattr(env, "_current_obs", None)
+            if callable(probe):
+                raw = probe()
+            else:
+                raw, _ = env.reset()
+            raw = __import__("numpy").asarray(raw, dtype="float32").reshape(-1)
+            energy_raw = float(raw[INTERNAL_OFFSET]) if raw.size > INTERNAL_OFFSET else None
+            print(
+                "unity_obs_probe",
+                {
+                    "shape": list(raw.shape),
+                    "nnz": int((abs(raw) > 1e-8).sum()),
+                    "energy_at_176": energy_raw,
+                    "head5": [float(x) for x in raw[:5]],
+                    "internal8": [float(x) for x in raw[INTERNAL_OFFSET : INTERNAL_OFFSET + 8]]
+                    if raw.size >= INTERNAL_OFFSET + 8
+                    else [],
+                },
+                flush=True,
+            )
         result = pipeline.run(max_steps=args.steps or cfg.max_steps)
     finally:
         pipeline.close()

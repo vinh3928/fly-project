@@ -11,6 +11,11 @@ Unity simulation
 └── Python learning service (encoders, world model, curiosity, policy)
 ```
 
+## Simulation stack
+
+- Unity 6 with **URP** (Universal Render Pipeline) as the active render pipeline
+- Physics timestep 200 Hz; agent decisions ~20 Hz
+
 ## Data flow
 
 ```text

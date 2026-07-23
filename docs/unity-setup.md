@@ -51,21 +51,21 @@ ML-Agents `Heuristic` (when connected): Vertical = walk, Horizontal = turn, Spac
 
 ### Phase 4 live mind (Python actions)
 
-1. On `FlyAgent`, set **Use Walking Demo = false** so Python high-level actions apply.
-2. Press Play in `Chamber.unity`.
-3. From `python/`:
+1. On `FlyAgent`, set **Use Walking Demo = false**.
+2. **Stop Play** if the Editor is already playing.
+3. Start Python first (it listens on **5004**):
 
 ```bash
-python -m scripts.run_live_mind --editor
-# or without Unity:
-python -m scripts.run_live_mind --fake
-# Phase 5 visual nav smoke:
-python -m scripts.run_live_mind --fake-visual-nav --steps 80
-python -m scripts.train_vision_head --steps 100
-# Phase 6 food-search smoke:
-python -m scripts.run_live_mind --fake-food-search --steps 80
+source .venv-mlagents/bin/activate
+cd python
+python -m scripts.run_live_mind --editor --steps 20
 ```
 
+4. When the terminal is waiting / shows the connect message, press **Play** in `Chamber.unity`.
+
+If the Unity Console says `Couldn't connect to trainer on port 5004... Will perform inference instead`, the Editor started before Python was listening. **Stop Play**, leave Python running, press **Play** again.
+
+Do **not** use `--port 5005` with `--editor`.
 Optional pgvector STM:
 
 ```bash

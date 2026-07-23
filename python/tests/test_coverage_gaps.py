@@ -67,6 +67,8 @@ def test_fake_env_truncates_at_max_steps() -> None:
 
 
 def test_fake_env_energy_decays_with_effort() -> None:
+    from flybrain.signals.builder import INTERNAL_OFFSET
+
     env = FakeFlyEnv(FakeFlyConfig(max_steps=50, seed=0))
     obs, _ = env.reset(seed=0)
     idle = np.zeros(5, dtype=np.float32)
@@ -74,7 +76,8 @@ def test_fake_env_energy_decays_with_effort() -> None:
     _, _, _, _, idle_info = env.step(idle)
     obs2, _, _, _, hard_info = env.step(hard)
     assert hard_info["effort"] > idle_info["effort"]
-    assert float(obs2[0]) < float(obs[0])
+    assert float(obs2[INTERNAL_OFFSET]) < float(obs[INTERNAL_OFFSET])
+    assert hard_info["energy"] < 1.0
 
 
 def test_replay_buffer_overwrites_at_capacity() -> None:
