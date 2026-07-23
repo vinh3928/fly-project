@@ -252,3 +252,17 @@ python -m scripts.run_live_mind --fake-explore --no-curiosity --steps 120
 ## Phase 11 — Articulated-wing flight
 
 Flight begins only after walking, sensing, recording, and learning are stable.
+
+## Phase 0–8 deterministic benchmark (fake envs)
+
+Repeatable Python scoreboard (seed 42). Does **not** include Unity EditMode/Play.
+
+```bash
+cd python
+export PYTHONHASHSEED=0
+python -m scripts.run_phase_benchmark --check --self-check
+```
+
+- Implementation: `flybrain/benchmark.py`, `flybrain/seeding.py`
+- Snapshot: `benchmarks/expected_seed42.json`
+- Update snapshot after intentional metric changes: `python -m scripts.run_phase_benchmark --write`

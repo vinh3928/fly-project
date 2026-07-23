@@ -34,6 +34,16 @@ python -m scripts.smoke_exchange
 pytest
 ```
 
+## Phase 0–8 deterministic benchmark
+
+Seeded fake-env suite (no Unity). Writes/compares `benchmarks/expected_seed42.json`.
+
+```bash
+python -m scripts.run_phase_benchmark --check --self-check
+# After intentional metric changes:
+python -m scripts.run_phase_benchmark --write
+```
+
 ## Unity launch
 
 ```bash

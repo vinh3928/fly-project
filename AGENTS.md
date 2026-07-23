@@ -6,6 +6,8 @@
 - Prefer tests next to the area under test (Unity EditMode tests under `unity/Assets/Tests/`, Python tests under `python/tests/`).
 - When code changes are made, all tests must be run before finishing the task.
   - Python: `cd python && pytest`
+  - Phase 0–8 fake benchmark (optional but preferred when touching mind/env):  
+    `python -m scripts.run_phase_benchmark --check`
   - Unity: EditMode tests in the Test Runner (or equivalent batch run when available)
 - Do not consider work done until those test runs pass.
 

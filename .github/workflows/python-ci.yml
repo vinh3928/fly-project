@@ -28,3 +28,5 @@ jobs:
         run: pytest -q
       - name: Smoke exchange
         run: python -m scripts.smoke_exchange
+      - name: Phase 0-8 benchmark
+        run: python -m scripts.run_phase_benchmark --check --self-check

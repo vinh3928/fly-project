@@ -53,9 +53,12 @@ class LiveMindConfig:
     retrospective: dict[str, Any] | None = None
     enable_retrospective: bool = True
     curiosity: CuriosityConfig | None = None
+    seed: int = 42
 
     @classmethod
-    def from_yaml(cls, data: dict[str, Any], visual_nav: dict[str, Any] | None = None) -> LiveMindConfig:
+    def from_yaml(
+        cls, data: dict[str, Any], visual_nav: dict[str, Any] | None = None
+    ) -> LiveMindConfig:
         db = data.get("database", {})
         thinking = data.get("thinking", {})
         live = data.get("live", {})
@@ -68,7 +71,9 @@ class LiveMindConfig:
             clamps["wall_hazard_forward_scale"] = vn_live["wall_hazard_forward_scale"]
         elif "wall_hazard_forward_scale" in vn.get("arena", {}):
             clamps.setdefault("wall_hazard_forward_scale", 0.2)
-        clamps.setdefault("wall_hazard_forward_scale", float(vn_live.get("wall_hazard_forward_scale", 0.2)))
+        clamps.setdefault(
+            "wall_hazard_forward_scale", float(vn_live.get("wall_hazard_forward_scale", 0.2))
+        )
         return cls(
             fly_id=str(data.get("fly_id", "fly_001")),
             experiment_id=str(data.get("experiment_id", "experiment_mind_000001")),
@@ -88,6 +93,7 @@ class LiveMindConfig:
             retrospective=dict(wm.get("retrospective") or {}),
             enable_retrospective=bool(thinking.get("enable_retrospective", True)),
             curiosity=CuriosityConfig.from_dict(data.get("curiosity")),
+            seed=int(data.get("seed", live.get("seed", 42))),
         )
 
 
@@ -145,7 +151,9 @@ class LiveMindPipeline:
                     path = Path(__file__).resolve().parents[2] / path
                 if path.exists():
                     state = torch.load(path, map_location="cpu", weights_only=True)
-                    self.vision_head.load_state_dict(state["model"] if isinstance(state, dict) and "model" in state else state)
+                    self.vision_head.load_state_dict(
+                        state["model"] if isinstance(state, dict) and "model" in state else state
+                    )
                     self._vision_trained = True
             self.vision_head.eval()
             self.vision_head.reset_state(1)
@@ -168,7 +176,9 @@ class LiveMindPipeline:
         if not path.exists():
             return None
         state = torch.load(path, map_location="cpu", weights_only=True)
-        model.load_state_dict(state["model"] if isinstance(state, dict) and "model" in state else state)
+        model.load_state_dict(
+            state["model"] if isinstance(state, dict) and "model" in state else state
+        )
         model.eval()
         self._wm_trained = True
         return model
@@ -255,10 +265,18 @@ class LiveMindPipeline:
         affect_payload = affect.to_jsonable()
         if curiosity_step.gate > 0.05:
             affect_payload["exploration"] = float(
-                np.clip(affect_payload.get("exploration", 0.0) + 0.35 * curiosity_step.explore_bias, 0.0, 1.0)
+                np.clip(
+                    affect_payload.get("exploration", 0.0) + 0.35 * curiosity_step.explore_bias,
+                    0.0,
+                    1.0,
+                )
             )
             affect_payload["novelty"] = float(
-                np.clip(affect_payload.get("novelty", 0.0) + 0.4 * curiosity_step.novelty.novelty_score, 0.0, 1.0)
+                np.clip(
+                    affect_payload.get("novelty", 0.0) + 0.4 * curiosity_step.novelty.novelty_score,
+                    0.0,
+                    1.0,
+                )
             )
 
         stm, thought, thought_rec = self.thinking.think_on_embedding(
@@ -298,9 +316,10 @@ class LiveMindPipeline:
 
     def run(self, *, max_steps: int | None = None) -> dict[str, Any]:
         limit = max_steps if max_steps is not None else self.config.max_steps
+        self._step = 0
         self.curiosity.reset()
         self._pending_action = None
-        obs, reset_info = self.env.reset()
+        obs, reset_info = self.env.reset(seed=self.config.seed)
         last_info: dict[str, Any] = {}
         terminated = False
         truncated = False
@@ -322,6 +341,14 @@ class LiveMindPipeline:
                 action[0] = 0.4 * float(action[0]) + 0.6 * float(food_action[0])
                 action[1] = 0.35 * float(action[1]) + 0.65 * float(food_action[1])
                 action[4] = 0.3 * float(action[4]) + 0.7 * float(food_action[4])
+            # Phase 5: blend vision heuristic when the env exposes it.
+            vision_policy = getattr(self.env, "vision_policy_action", None)
+            if callable(vision_policy):
+                vision_action = vision_policy()
+                action = action.copy()
+                action[0] = 0.35 * float(action[0]) + 0.65 * float(vision_action[0])
+                action[1] = 0.25 * float(action[1]) + 0.75 * float(vision_action[1])
+                self._pending_action = action.copy()
             # Phase 8: optional explore heuristic blend when env provides it and gate is open.
             explore_policy = getattr(self.env, "explore_policy_action", None)
             if callable(explore_policy) and float(info.get("curiosity_gate", 0.0)) > 0.2:
@@ -330,7 +357,9 @@ class LiveMindPipeline:
                 action = action.copy()
                 action[0] = (1.0 - blend) * float(action[0]) + blend * float(explore_action[0])
                 action[1] = (1.0 - blend) * float(action[1]) + blend * float(explore_action[1])
-                action[3] = (1.0 - 0.5 * blend) * float(action[3]) + 0.5 * blend * float(explore_action[3])
+                action[3] = (1.0 - 0.5 * blend) * float(action[3]) + 0.5 * blend * float(
+                    explore_action[3]
+                )
                 self._pending_action = action.copy()
             last_info = info
             obs, _reward, terminated, truncated, step_info = self.env.step(action)
@@ -362,7 +391,9 @@ class LiveMindPipeline:
             "labeled_outcomes": self.experience.labeled_outcomes,
             "episodes": self.experience.episodes,
             "coverage": float(last_info.get("coverage", curiosity_summary.get("coverage", 0.0))),
-            "unique_cells": int(last_info.get("unique_cells", curiosity_summary.get("unique_cells", 0))),
+            "unique_cells": int(
+                last_info.get("unique_cells", curiosity_summary.get("unique_cells", 0))
+            ),
             "exploration_xp": float(
                 last_info.get("exploration_xp", curiosity_summary.get("exploration_xp", 0.0))
             ),
@@ -380,21 +411,25 @@ def make_live_env(
     editor: bool = False,
     build: str | None = None,
     port: int | None = None,
+    seed: int | None = None,
 ):
+    env_seed = 42 if seed is None else int(seed)
     if fake_explore:
-        from flybrain.env_explore import FakeExplorationEnv
+        from flybrain.env_explore import FakeExplorationConfig, FakeExplorationEnv
 
-        return FakeExplorationEnv()
+        return FakeExplorationEnv(FakeExplorationConfig(seed=env_seed))
     if fake_food_search:
-        from flybrain.env_food_search import FakeFoodSearchEnv
+        from flybrain.env_food_search import FakeFoodSearchConfig, FakeFoodSearchEnv
 
-        return FakeFoodSearchEnv()
+        return FakeFoodSearchEnv(FakeFoodSearchConfig(seed=env_seed))
     if fake_visual_nav:
-        from flybrain.env_visual_nav import FakeVisualNavEnv
+        from flybrain.env_visual_nav import FakeVisualNavConfig, FakeVisualNavEnv
 
-        return FakeVisualNavEnv()
+        return FakeVisualNavEnv(FakeVisualNavConfig(seed=env_seed))
     if fake:
-        return FakeFlyEnv()
+        from flybrain.env import FakeFlyConfig
+
+        return FakeFlyEnv(FakeFlyConfig(seed=env_seed))
     from flybrain.unity_env import UnityFlyConfig, UnityFlyEnv
 
     # ML-Agents: Editor trainer port is 5004; standalone executables use 5005+.
@@ -408,5 +443,6 @@ def make_live_env(
             no_graphics=not editor and file_name is not None,
             editor_connect=bool(editor),
             timeout_wait=60 if editor else 120,
+            seed=env_seed,
         )
     )
