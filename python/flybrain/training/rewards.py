@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 @dataclass
 class HomeostaticRewardConfig:
-    curiosity_weight: float = 0.1
+    curiosity_weight: float = 0.35
     energy_weight: float = 1.0
     hydration_weight: float = 1.0
     damage_weight: float = 2.0

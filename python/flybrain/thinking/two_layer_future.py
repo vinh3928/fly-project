@@ -216,6 +216,12 @@ def score_candidate(
         altruism_utility=nxt_a,
         spiritual_utility=nxt_g,
     )
+    # Phase 8: soft boost for explore when gated curiosity drive is active.
+    curiosity_drive = float(signals.get("curiosity_drive", signals.get("explore_bias", 0.0)))
+    if name == "explore" and curiosity_drive > 0.05:
+        from flybrain.phase8 import EXPLORE_CANDIDATE_BONUS
+
+        nxt_v = float(nxt_v + EXPLORE_CANDIDATE_BONUS * curiosity_drive)
     return Layer1Result(
         name=name,
         action=np.asarray(action, dtype=np.float32),

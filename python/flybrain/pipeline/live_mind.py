@@ -11,6 +11,7 @@ import torch
 import yaml
 
 from flybrain.affect.estimator import AffectEstimator
+from flybrain.curiosity import CuriosityConfig, CuriosityDrive
 from flybrain.env import FakeFlyEnv
 from flybrain.memory.embedder import MindEmbedder
 from flybrain.memory.pgvector import ShortTermMemory, open_short_term_memory
@@ -51,6 +52,7 @@ class LiveMindConfig:
     priorities: dict[str, Any] | None = None
     retrospective: dict[str, Any] | None = None
     enable_retrospective: bool = True
+    curiosity: CuriosityConfig | None = None
 
     @classmethod
     def from_yaml(cls, data: dict[str, Any], visual_nav: dict[str, Any] | None = None) -> LiveMindConfig:
@@ -85,6 +87,7 @@ class LiveMindConfig:
             priorities=dict(wm.get("priorities") or {}),
             retrospective=dict(wm.get("retrospective") or {}),
             enable_retrospective=bool(thinking.get("enable_retrospective", True)),
+            curiosity=CuriosityConfig.from_dict(data.get("curiosity")),
         )
 
 
@@ -146,7 +149,9 @@ class LiveMindPipeline:
                     self._vision_trained = True
             self.vision_head.eval()
             self.vision_head.reset_state(1)
+        self.curiosity = CuriosityDrive(self.config.curiosity or CuriosityConfig())
         self._step = 0
+        self._pending_action: np.ndarray | None = None
 
     def _load_world_model(self) -> NextStateWorldModel | None:
         model = NextStateWorldModel(
@@ -224,15 +229,49 @@ class LiveMindPipeline:
             if key in sensory.summary:
                 signal_payload[key] = sensory.summary[key]
 
+        position = None
+        pos_fn = getattr(self.env, "agent_position", None)
+        if callable(pos_fn):
+            position = np.asarray(pos_fn(), dtype=np.float32)
+        chem_vec = None
+        chem_fn = getattr(self.env, "chem_vector", None)
+        if callable(chem_fn):
+            chem_vec = np.asarray(chem_fn(), dtype=np.float32)
+
+        curiosity_step = self.curiosity.step(
+            embedding=embedding,
+            action=self._pending_action,
+            signals=signal_payload,
+            affect=affect.to_jsonable(),
+            position=position,
+            chem_vector=chem_vec,
+        )
+        signal_payload["curiosity"] = curiosity_step.curiosity
+        signal_payload["curiosity_drive"] = curiosity_step.explore_bias
+        signal_payload["explore_bias"] = curiosity_step.explore_bias
+        signal_payload["novelty"] = curiosity_step.novelty.novelty_score
+        signal_payload["exploration_xp"] = curiosity_step.novelty.exploration_xp
+        # Soft-bump affect exploration/novelty for thinking when gate allows.
+        affect_payload = affect.to_jsonable()
+        if curiosity_step.gate > 0.05:
+            affect_payload["exploration"] = float(
+                np.clip(affect_payload.get("exploration", 0.0) + 0.35 * curiosity_step.explore_bias, 0.0, 1.0)
+            )
+            affect_payload["novelty"] = float(
+                np.clip(affect_payload.get("novelty", 0.0) + 0.4 * curiosity_step.novelty.novelty_score, 0.0, 1.0)
+            )
+
         stm, thought, thought_rec = self.thinking.think_on_embedding(
             embedding=embedding,
             signals=signal_payload,
-            affect=affect.to_jsonable(),
+            affect=affect_payload,
             episode_id=self.config.experiment_id,
             step=self._step,
             sim_time=float(sim_time if sim_time is not None else self._step * 0.05),
             fly_id=self.config.fly_id,
         )
+        action = self.curiosity.apply_action_bias(thought.action, curiosity_step.explore_bias)
+        self._pending_action = action.copy()
         retro = self.thinking._last_retrospective
         info = {
             "stm_id": stm.id,
@@ -240,17 +279,27 @@ class LiveMindPipeline:
             "refined_thought": thought.refined_thought,
             "devil_critique": thought.devil_critique,
             "intent": thought.intent,
-            "affect": affect.to_jsonable(),
+            "affect": affect_payload,
             "vision_cues": cues.to_dict() if cues else None,
             "maturity": self.experience.maturity(),
             "priority_weights": (thought.intent.get("future") or {}).get("priority_weights"),
             "retrospective_ran": bool(retro.ran) if retro else False,
             "labeled_outcomes": self.experience.labeled_outcomes,
+            "curiosity": curiosity_step.curiosity,
+            "curiosity_gated": curiosity_step.gated_curiosity,
+            "curiosity_gate": curiosity_step.gate,
+            "explore_bias": curiosity_step.explore_bias,
+            "coverage": curiosity_step.novelty.coverage,
+            "unique_cells": curiosity_step.novelty.unique_cells,
+            "exploration_xp": curiosity_step.novelty.exploration_xp,
+            "novelty_first_visit": curiosity_step.novelty.first_visit,
         }
-        return thought.action, info
+        return action, info
 
     def run(self, *, max_steps: int | None = None) -> dict[str, Any]:
         limit = max_steps if max_steps is not None else self.config.max_steps
+        self.curiosity.reset()
+        self._pending_action = None
         obs, reset_info = self.env.reset()
         last_info: dict[str, Any] = {}
         terminated = False
@@ -273,6 +322,16 @@ class LiveMindPipeline:
                 action[0] = 0.4 * float(action[0]) + 0.6 * float(food_action[0])
                 action[1] = 0.35 * float(action[1]) + 0.65 * float(food_action[1])
                 action[4] = 0.3 * float(action[4]) + 0.7 * float(food_action[4])
+            # Phase 8: optional explore heuristic blend when env provides it and gate is open.
+            explore_policy = getattr(self.env, "explore_policy_action", None)
+            if callable(explore_policy) and float(info.get("curiosity_gate", 0.0)) > 0.2:
+                explore_action = explore_policy()
+                blend = 0.45 * float(info.get("explore_bias", 0.0))
+                action = action.copy()
+                action[0] = (1.0 - blend) * float(action[0]) + blend * float(explore_action[0])
+                action[1] = (1.0 - blend) * float(action[1]) + blend * float(explore_action[1])
+                action[3] = (1.0 - 0.5 * blend) * float(action[3]) + 0.5 * blend * float(explore_action[3])
+                self._pending_action = action.copy()
             last_info = info
             obs, _reward, terminated, truncated, step_info = self.env.step(action)
             if isinstance(step_info, dict):
@@ -287,6 +346,7 @@ class LiveMindPipeline:
                 last_info.get("distance_to_target", start_dist),
             )
         )
+        curiosity_summary = self.curiosity.summary()
         return {
             "steps": self._step,
             "terminated": bool(terminated),
@@ -301,6 +361,13 @@ class LiveMindPipeline:
             "maturity": self.experience.maturity(),
             "labeled_outcomes": self.experience.labeled_outcomes,
             "episodes": self.experience.episodes,
+            "coverage": float(last_info.get("coverage", curiosity_summary.get("coverage", 0.0))),
+            "unique_cells": int(last_info.get("unique_cells", curiosity_summary.get("unique_cells", 0))),
+            "exploration_xp": float(
+                last_info.get("exploration_xp", curiosity_summary.get("exploration_xp", 0.0))
+            ),
+            "curiosity_reward_mean": float(curiosity_summary.get("curiosity_reward_mean", 0.0)),
+            "curiosity": curiosity_summary,
         }
 
 
@@ -309,10 +376,15 @@ def make_live_env(
     fake: bool = True,
     fake_visual_nav: bool = False,
     fake_food_search: bool = False,
+    fake_explore: bool = False,
     editor: bool = False,
     build: str | None = None,
     port: int | None = None,
 ):
+    if fake_explore:
+        from flybrain.env_explore import FakeExplorationEnv
+
+        return FakeExplorationEnv()
     if fake_food_search:
         from flybrain.env_food_search import FakeFoodSearchEnv
 

@@ -76,3 +76,23 @@ world_model:
 live:
   max_steps: 200
   use_fake_env: false
+
+# Phase 8: curiosity-driven exploration (novelty + prediction error, homeostatic gates)
+curiosity:
+  enabled: true
+  curiosity_weight: 0.35
+  novelty_weight: 0.55
+  prediction_weight: 0.45
+  reward_cap: 1.0
+  survival_risk_max: 0.55
+  hunger_max: 0.55
+  energy_min: 0.4
+  explore_action_boost: 0.28
+  explore_candidate_bonus: 0.12
+  latent_dim: 256
+  action_dim: 5
+  novelty:
+    grid_cell_size: 0.1
+    first_visit_bonus: 1.0
+    repeat_decay: 0.85
+    arena_half_extent: 0.5

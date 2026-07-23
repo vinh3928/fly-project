@@ -66,6 +66,14 @@ python -m scripts.run_live_mind --editor --steps 20
 If the Unity Console says `Couldn't connect to trainer on port 5004... Will perform inference instead`, the Editor started before Python was listening. **Stop Play**, leave Python running, press **Play** again.
 
 Do **not** use `--port 5005` with `--editor`.
+
+Exploration smoke (Phase 8):
+
+```bash
+python -m scripts.run_live_mind --fake-explore --steps 120
+python -m scripts.run_live_mind --fake-explore --no-curiosity --steps 120
+```
+
 Optional pgvector STM:
 
 ```bash

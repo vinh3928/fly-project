@@ -185,7 +185,63 @@ python -m scripts.run_live_mind --fake --steps 80
 ./scripts/run_unity_editmode_tests.sh
 ```
 
-## Phase 8 — Curiosity-driven exploration
+## Phase 8 — Curiosity-driven exploration ✅ complete
+
+Goal: make the fly *want* to explore. Survival and feeding stay primary under threat or
+hunger; when load is moderate, novelty and learning progress pull behavior toward new
+places, stimuli, and action patterns — light internal “exploration XP,” not a UI.
+
+### Includes (not limited to)
+
+**Reward / progression (gamify new experiences)**
+
+- Intrinsic reward from prediction error + learning progress (`CuriosityModule`)
+- Novelty bonuses for first encounters: chamber cells, chem signatures, landmark events
+- Soft exploration XP / streaks that bias Layer-1 explore ranking and motor intent when
+  energy/survival allow
+- Diminishing returns so farming the same cell/event stops paying
+- Homeostatic gates so curiosity never overrides critical survival/feeding
+
+**World-model & surprise**
+
+- Live prediction-error signal from `CuriosityModule` on STM embedding transitions
+- Learning-progress via error EMA inside the module
+
+**Memory & thinking hooks**
+
+- Curiosity / novelty / explore_bias injected into thinking signals + affect bump
+- Composer + Layer-1 explore-candidate boost when gated curiosity is high
+- Optional `explore_policy_action` blend on `FakeExplorationEnv`
+
+**Environment / metrics**
+
+- `FakeExplorationEnv` (high energy, sparse sugar, landmarks, coverage telemetry)
+- Live mind reports coverage, unique_cells, exploration_xp, curiosity_reward_mean
+
+### Deliverables
+
+- `NoveltyTracker`, `CuriosityDrive`, `curiosity_gate` under `flybrain.curiosity`
+- Live mind wiring + `mind.yaml` / `default.yaml` knobs
+- `--fake-explore` smoke + Phase 8 unit tests
+
+### Exit criteria
+
+- [x] Under low hunger/survival risk, curious agents reach ≥ baseline spatial coverage
+- [x] First-visit / events yield intrinsic novelty; repeats decay
+- [x] Curiosity gated: high survival risk or critical hunger suppresses explore bias
+- [x] Hungry gate closes so Phase 6 feeding remains dominant when needed
+- [x] Unit/integration tests cover novelty, gates, diminishing returns, live-mind explore
+- [x] Config documents curiosity weights / gates (`configs/mind.yaml`)
+
+### How to verify
+
+```bash
+cd python && pytest
+python -m scripts.run_live_mind --fake-explore --steps 120
+# Baseline comparison:
+python -m scripts.run_live_mind --fake-explore --no-curiosity --steps 120
+./scripts/run_unity_editmode_tests.sh
+```
 
 ## Phase 9 — Learned locomotion (deferred from original Phase 4)
 

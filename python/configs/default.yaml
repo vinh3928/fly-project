@@ -33,7 +33,7 @@ actions:
   joint_dim: 18
 
 rewards:
-  curiosity_weight: 0.1
+  curiosity_weight: 0.35
   energy_weight: 1.0
   hydration_weight: 1.0
   damage_weight: 2.0

@@ -125,6 +125,14 @@ def compose_thought(
         forward *= 0.7
         turn = float(np.clip(turn + 0.2, -1.0, 1.0))
 
+    # Phase 8: curiosity / novelty bias when homeostasis allows (signaled upstream).
+    curiosity_drive = float(signals.get("curiosity_drive", signals.get("explore_bias", 0.0)))
+    if curiosity_drive > 0.05 and not hungry and survival < 0.55:
+        forward = float(np.clip(forward + 0.35 * curiosity_drive, -clamps["forward_max"], clamps["forward_max"]))
+        if abs(turn) < 0.2:
+            turn = float(np.clip(turn + 0.2 * curiosity_drive, -clamps["turn_max"], clamps["turn_max"]))
+        frequency = float(np.clip(frequency + 0.15 * curiosity_drive, 0.0, 1.0))
+
     action = np.asarray([forward, turn, height, frequency, proboscis], dtype=np.float32)
     assert action.shape[0] == HIGH_LEVEL_ACTION_DIM
 

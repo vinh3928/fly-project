@@ -21,7 +21,7 @@ This repository is an **embodied fly-inspired learning simulation**, not a biolo
 - Standalone player build (`./scripts/build_unity_player.sh`) and Python launch
   (`python -m scripts.launch_unity`)
 
-Next: Phase 8 (curiosity-driven exploration). Learned locomotion is deferred to Phase 9.
+Next: Phase 9 (learned locomotion). Phase 8 curiosity-driven exploration is complete.
 
 Flight is intentionally deferred until walking, sensing, recording, and learning are stable.
 
@@ -160,7 +160,7 @@ See [docs/phases.md](docs/phases.md) for exit criteria. Recommended order:
 5. Multimodal mind pipeline (STM + thinking)
 6. Visual navigation (hybrid vision head + arena)
 7. Taste and homeostasis (food-search)
-8. Self-supervised world model and curiosity
+8. Curiosity-driven exploration ✅ (novelty / learning-progress rewards; see docs/phases.md)
 9. Learned locomotion (deferred)
 10. Flight (simplified, then articulated)
 

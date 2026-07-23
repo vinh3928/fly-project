@@ -1,10 +1,11 @@
 """
-Run the Phase 4–7 live mind loop: observe → embed → STM → think → act.
+Run the Phase 4–8 live mind loop: observe → embed → STM → think → act.
 
 Examples:
   python -m scripts.run_live_mind --fake
   python -m scripts.run_live_mind --fake-visual-nav
   python -m scripts.run_live_mind --fake-food-search
+  python -m scripts.run_live_mind --fake-explore
   python -m scripts.run_live_mind --editor   # Unity Play + useWalkingDemo=false
 """
 
@@ -38,6 +39,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Use FakeFoodSearchEnv with sugar/bitter homeostasis",
     )
+    parser.add_argument(
+        "--fake-explore",
+        action="store_true",
+        help="Use FakeExplorationEnv (high energy, sparse sugar, coverage metrics)",
+    )
     parser.add_argument("--editor", action="store_true", help="Connect to Unity Editor Play mode")
     parser.add_argument("--build", type=str, default=None, help="Path to Unity player build")
     parser.add_argument(
@@ -50,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=str, default=None, help="Path to mind.yaml")
     parser.add_argument("--visual-nav-config", type=str, default=None, help="Path to visual_nav.yaml")
     parser.add_argument("--pgvector", action="store_true", help="Force pgvector backend")
+    parser.add_argument(
+        "--no-curiosity",
+        action="store_true",
+        help="Disable Phase 8 curiosity drive (baseline coverage comparison)",
+    )
     args = parser.parse_args(argv)
 
     raw = load_mind_config(args.config)
@@ -65,11 +76,14 @@ def main(argv: list[str] | None = None) -> int:
     cfg = LiveMindConfig.from_yaml(raw, visual_nav=visual_nav)
     if args.pgvector:
         cfg.backend = "pgvector"
+    if args.no_curiosity and cfg.curiosity is not None:
+        cfg.curiosity.enabled = False
 
     use_fake = (
         args.fake
         or args.fake_visual_nav
         or args.fake_food_search
+        or args.fake_explore
         or (not args.editor and args.build is None)
     )
     if args.editor:
@@ -91,9 +105,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         port = args.port
     env = make_live_env(
-        fake=use_fake and not args.fake_visual_nav and not args.fake_food_search,
+        fake=use_fake
+        and not args.fake_visual_nav
+        and not args.fake_food_search
+        and not args.fake_explore,
         fake_visual_nav=args.fake_visual_nav,
         fake_food_search=args.fake_food_search,
+        fake_explore=args.fake_explore,
         editor=args.editor,
         build=args.build,
         port=port,
@@ -101,26 +119,25 @@ def main(argv: list[str] | None = None) -> int:
     print("unity_env_ready", flush=True)
     pipeline = LiveMindPipeline(env, config=cfg)
     try:
-        # One-shot raw obs diagnostic so energy wiring issues are visible immediately.
         if args.editor or args.build:
             from flybrain.signals.builder import INTERNAL_OFFSET
 
             probe = getattr(env, "_current_obs", None)
             if callable(probe):
-                raw = probe()
+                raw_obs = probe()
             else:
-                raw, _ = env.reset()
-            raw = __import__("numpy").asarray(raw, dtype="float32").reshape(-1)
-            energy_raw = float(raw[INTERNAL_OFFSET]) if raw.size > INTERNAL_OFFSET else None
+                raw_obs, _ = env.reset()
+            raw_obs = __import__("numpy").asarray(raw_obs, dtype="float32").reshape(-1)
+            energy_raw = float(raw_obs[INTERNAL_OFFSET]) if raw_obs.size > INTERNAL_OFFSET else None
             print(
                 "unity_obs_probe",
                 {
-                    "shape": list(raw.shape),
-                    "nnz": int((abs(raw) > 1e-8).sum()),
+                    "shape": list(raw_obs.shape),
+                    "nnz": int((abs(raw_obs) > 1e-8).sum()),
                     "energy_at_176": energy_raw,
-                    "head5": [float(x) for x in raw[:5]],
-                    "internal8": [float(x) for x in raw[INTERNAL_OFFSET : INTERNAL_OFFSET + 8]]
-                    if raw.size >= INTERNAL_OFFSET + 8
+                    "head5": [float(x) for x in raw_obs[:5]],
+                    "internal8": [float(x) for x in raw_obs[INTERNAL_OFFSET : INTERNAL_OFFSET + 8]]
+                    if raw_obs.size >= INTERNAL_OFFSET + 8
                     else [],
                 },
                 flush=True,
