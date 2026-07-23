@@ -1,0 +1,21 @@
+services:
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: fly-mind-pgvector
+    environment:
+      POSTGRES_USER: fly
+      POSTGRES_PASSWORD: fly
+      POSTGRES_DB: fly_mind
+    ports:
+      - "5433:5432"
+    volumes:
+      - fly_mind_pgdata:/var/lib/postgresql/data
+      - ./init-mind.sql:/docker-entrypoint-initdb.d/01-init-mind.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fly -d fly_mind"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  fly_mind_pgdata:

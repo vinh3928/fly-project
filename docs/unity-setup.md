@@ -49,6 +49,25 @@ With the scene playing and focus in Game view, `WalkingDemoDriver` cycles stand 
 
 ML-Agents `Heuristic` (when connected): Vertical = walk, Horizontal = turn, Space = proboscis.
 
+### Phase 4 live mind (Python actions)
+
+1. On `FlyAgent`, set **Use Walking Demo = false** so Python high-level actions apply.
+2. Press Play in `Chamber.unity`.
+3. From `python/`:
+
+```bash
+python -m scripts.run_live_mind --editor
+# or without Unity:
+python -m scripts.run_live_mind --fake
+```
+
+Optional pgvector STM:
+
+```bash
+docker compose -f docker/docker-compose.mind.yml up -d
+python -m scripts.run_live_mind --fake --pgvector
+```
+
 ## Recording output
 
 Episode folders are written under the repo `data/experiments/` directory:

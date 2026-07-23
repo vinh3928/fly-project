@@ -94,20 +94,45 @@ cd python && pytest
 # Episode folders under data/experiments/<experiment_id>_ep####/
 ```
 
-## Phase 4 — Learned locomotion
+## Phase 4 — Multimodal mind pipeline ✅ complete
 
-- ML-Agents walking env, locomotion reward, checkpoints
+Deliverables: live sensory → signals → affective embeddings → pgvector short-term
+memory → always-on thinking service (reflection + present/future stub + devil’s-advocate
+LLM) that emits high-level motor intents back to Unity.
+
+Exit criteria:
+
+- [x] Live (or FakeFlyEnv) obs produces a stored STM embedding with affect factors
+- [x] Thinking service consumes STM and writes a refined thought with devil’s-advocate critique
+- [x] Thinking emits a valid 5-d high-level action for ≥1 env step
+- [x] Unit/integration tests for signals, affect, memory, thinking, live mind smoke
+
+How to verify:
+
+```bash
+# Start pgvector (optional for InMemory tests; required for real STM)
+docker compose -f docker/docker-compose.mind.yml up -d
+
+cd python && pip install -e '.[mind]' && pytest
+python -m scripts.run_live_mind --fake   # smoke without Unity
+# Live: Unity Play Chamber.unity with useWalkingDemo=false, then:
+# python -m scripts.run_live_mind --editor
+```
 
 ## Phase 5 — Visual navigation
 
 ## Phase 6 — Taste and homeostasis
 
-## Phase 7 — Self-supervised world model
+## Phase 7 — Self-supervised world model (present/future reasoning)
 
 ## Phase 8 — Curiosity-driven exploration
 
-## Phase 9 — Simplified flight
+## Phase 9 — Learned locomotion (deferred from original Phase 4)
 
-## Phase 10 — Articulated-wing flight
+- ML-Agents walking env, locomotion reward, checkpoints
+
+## Phase 10 — Simplified flight
+
+## Phase 11 — Articulated-wing flight
 
 Flight begins only after walking, sensing, recording, and learning are stable.

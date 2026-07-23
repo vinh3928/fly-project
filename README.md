@@ -6,18 +6,19 @@ This repository is an **embodied fly-inspired learning simulation**, not a biolo
 
 ## Status
 
-**Phases 0–3 are complete** (foundation, passive chamber, walking, sensory recording).
+**Phases 0–4 are complete** (foundation, chamber, walking, sensory recording, mind pipeline).
 
 - Unity 6 project with chamber, fly body, sensors, motors, and ML-Agents agent wiring
 - Deterministic seed resets, physics stability monitor, episode telemetry
 - Balance + tripod gait + root locomotion (stand / walk / turn / recover)
 - Synchronized multimodal recording (joints/contacts/taste/odor/pose/vision) + Python replay
+- Multimodal mind pipeline: affective embeddings → pgvector STM → thinking (+ devil’s advocate)
 - Python `flybrain` package with encoders, world model, curiosity, and policy modules
 - FakeFlyEnv smoke test + CI
 - Standalone player build (`./scripts/build_unity_player.sh`) and Python launch
   (`python -m scripts.launch_unity`)
 
-Next: Phase 4 (learned locomotion).
+Next: Phase 5 (visual navigation). Learned locomotion is deferred to Phase 9.
 
 Flight is intentionally deferred until walking, sensing, recording, and learning are stable.
 
@@ -153,10 +154,11 @@ See [docs/phases.md](docs/phases.md) for exit criteria. Recommended order:
 2. Passive fly body
 3. Articulated legs and hand-coded walking
 4. Sensor recording
-5. Learned locomotion
+5. Multimodal mind pipeline (STM + thinking)
 6. Vision, taste, homeostasis
 7. Self-supervised world model and curiosity
-8. Flight (simplified, then articulated)
+8. Learned locomotion (deferred)
+9. Flight (simplified, then articulated)
 
 ## First release target
 
