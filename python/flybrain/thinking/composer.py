@@ -46,17 +46,22 @@ def compose_thought(
     joy = float(affect.get("joy", 0.0))
     anger = float(affect.get("anger", 0.0))
     altruism = float(affect.get("altruism", 0.0))
+    hunger = float(signals.get("hunger", affect.get("sad", 0.0)))
+    energy = float(signals.get("energy", 1.0 - hunger))
+    proboscis_contact = float(signals.get("proboscis_contact", 0.0))
+    sugar_bearing = float(signals.get("sugar_bearing", signals.get("target_bearing", 0.0)))
+    bitter_bearing = float(signals.get("bitter_bearing", 0.0))
     target_bearing = float(signals.get("target_bearing", 0.0))
     target_confidence = float(signals.get("target_confidence", 0.0))
     wall_hazard = float(signals.get("wall_hazard", 0.0))
     forward_bias = float(signals.get("forward_bias", 0.0))
     turn_bias = float(signals.get("turn_bias", 0.0))
 
+    hungry = hunger >= 0.45 or energy < 0.55
     draft = (
         f"Draft: joy={joy:.2f} anger={anger:.2f} survival={survival:.2f} "
-        f"altruism={altruism:.2f}; sugar={sugar:.2f} bitter={bitter:.2f}; "
-        f"bearing={target_bearing:.2f} wall={wall_hazard:.2f}. "
-        f"Plan to {'approach visible target' if target_confidence > 0.3 else ('approach sugar' if sugar > bitter else 'avoid bitter / explore')}."
+        f"hunger={hunger:.2f} energy={energy:.2f}; sugar={sugar:.2f} bitter={bitter:.2f}. "
+        f"Plan to {'seek/consume sugar' if hungry and sugar >= bitter else ('avoid bitter' if bitter > sugar else 'explore')}."
     )
 
     # High-level action: [forward, turn, height, frequency, proboscis]
@@ -65,8 +70,18 @@ def compose_thought(
     # Phase 5 visual nav cues
     forward = 0.55 * forward + 0.45 * forward_bias + 0.25 * target_confidence
     turn = 0.45 * turn + 0.55 * turn_bias + 0.5 * target_bearing * target_confidence
+    # Phase 6 food-search
+    if hungry:
+        forward = 0.5 * forward + 0.5 * (0.55 + 0.4 * sugar - 0.5 * bitter)
+        turn = 0.4 * turn + 0.6 * (0.8 * sugar_bearing - 0.55 * bitter_bearing)
+        if sugar > 0.25:
+            turn = float(np.clip(turn + 0.35 * sugar_bearing, -1.0, 1.0))
+    else:
+        forward *= 0.35
+        turn *= 0.4
     if bitter > sugar:
-        turn = np.sign(turn + 1e-6) * max(abs(turn), 0.4)
+        turn = np.sign(turn - bitter_bearing + 1e-6) * max(abs(turn), 0.45)
+        turn = float(np.clip(turn - 0.4 * np.sign(bitter_bearing + 1e-6), -1.0, 1.0))
     if survival > 0.6:
         forward *= float(clamps["survival_forward_scale"])
     if wall_hazard > 0.4:
@@ -75,7 +90,10 @@ def compose_thought(
         turn = float(np.clip(turn + 0.35 * np.sign(turn + 1e-6), -1.0, 1.0))
     height = float(clamps["height_default"])
     frequency = float(clamps["frequency_default"]) + 0.2 * exploration
-    proboscis = float(np.clip(sugar * 0.8 - bitter * 0.5, 0.0, 1.0))
+    if hungry and sugar > bitter:
+        proboscis = float(np.clip(0.35 + 0.7 * sugar + 0.4 * proboscis_contact - 0.8 * bitter, 0.0, 1.0))
+    else:
+        proboscis = float(np.clip(sugar * 0.3 - bitter * 0.8, 0.0, 1.0))
 
     forward = float(np.clip(forward, -clamps["forward_max"], clamps["forward_max"]))
     turn = float(np.clip(turn, -clamps["turn_max"], clamps["turn_max"]))

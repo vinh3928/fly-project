@@ -238,10 +238,21 @@ namespace FlySimulation.Fly.Brain
                 return;
             }
 
-            ChemicalChannels taste = proboscis.Taste;
+            // Require meaningful extension before feeding / toxin uptake.
+            if (proboscis.ExtensionNormalized < 0.35f)
+            {
+                return;
+            }
+
+            // Taste is valid only during contact (Phase 3 gating).
+            ChemicalChannels taste = proboscis.GatedTaste;
+            float dt = Time.fixedDeltaTime;
             if (taste.Sugar > 0.2f)
             {
-                homeostasis.ConsumeSugar(0.05f * Time.fixedDeltaTime);
+                float amount = 0.08f * dt;
+                homeostasis.ConsumeSugar(amount);
+                var metrics = GetComponent<FoodSearchMetrics>();
+                metrics?.RegisterSugarConsume(amount);
                 recorder?.LogEvent(
                     SimulationStepCount,
                     episodeManager != null ? episodeManager.EpisodeTime : 0f,
@@ -250,12 +261,15 @@ namespace FlySimulation.Fly.Brain
 
             if (taste.Water > 0.2f)
             {
-                homeostasis.ConsumeWater(0.05f * Time.fixedDeltaTime);
+                homeostasis.ConsumeWater(0.05f * dt);
             }
 
             if (taste.Bitter > 0.2f || taste.Toxin > 0.1f)
             {
-                homeostasis.ApplyBitterOrToxin(0.02f * Time.fixedDeltaTime);
+                float toxin = 0.04f * dt;
+                homeostasis.ApplyBitterOrToxin(toxin);
+                var metrics = GetComponent<FoodSearchMetrics>();
+                metrics?.RegisterBitterContact();
                 recorder?.LogEvent(
                     SimulationStepCount,
                     episodeManager != null ? episodeManager.EpisodeTime : 0f,

@@ -62,6 +62,8 @@ python -m scripts.run_live_mind --fake
 # Phase 5 visual nav smoke:
 python -m scripts.run_live_mind --fake-visual-nav --steps 80
 python -m scripts.train_vision_head --steps 100
+# Phase 6 food-search smoke:
+python -m scripts.run_live_mind --fake-food-search --steps 80
 ```
 
 Optional pgvector STM:
@@ -71,7 +73,7 @@ docker compose -f docker/docker-compose.mind.yml up -d
 python -m scripts.run_live_mind --fake --pgvector
 ```
 
-After **Tools → Fly → Setup Chamber Scene**, Phase 5 adds a green **VisualTarget**, floor marks, and dark obstacle pillars.
+After **Tools → Fly → Setup Chamber Scene**, Phase 5 adds a green **VisualTarget**, floor marks, and dark obstacle pillars. Phase 6 uses existing sugar/bitter sources with hardened proboscis consume.
 ## Recording output
 
 Episode folders are written under the repo `data/experiments/` directory:

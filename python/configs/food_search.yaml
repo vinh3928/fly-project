@@ -1,0 +1,21 @@
+seed: 42
+
+arena:
+  half_extent: 0.45
+  patch_radius: 0.08
+  eval_steps: 120
+
+homeostasis:
+  initial_energy: 0.35
+  energy_drain: 0.004
+  sugar_consume_rate: 0.08
+  bitter_toxin_rate: 0.04
+  hunger_search_threshold: 0.45
+  sated_energy_threshold: 0.75
+
+rewards:
+  sugar_consume_weight: 2.0
+  bitter_penalty_weight: 1.5
+  hunger_penalty_weight: 0.3
+  energy_weight: 1.0
+  damage_weight: 2.0

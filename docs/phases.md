@@ -141,7 +141,25 @@ python -m scripts.run_live_mind --fake-visual-nav --steps 80
 ./scripts/run_unity_editmode_tests.sh
 ```
 
-## Phase 6 — Taste and homeostasis
+## Phase 6 — Taste and homeostasis ✅ complete
+
+Deliverables: FakeFoodSearchEnv, homeostatic reward terms, mind-pipeline food-search
+intents, Unity consume hardening (gated taste + extension), FoodSearchMetrics.
+
+Exit criteria:
+
+- [x] Hungry agents search for food
+- [x] Agents distinguish sugar from bitter
+- [x] Agents consume sugar using the proboscis
+- [x] Behavior changes based on internal state
+
+How to verify:
+
+```bash
+cd python && pytest
+python -m scripts.run_live_mind --fake-food-search --steps 80
+./scripts/run_unity_editmode_tests.sh
+```
 
 ## Phase 7 — Self-supervised world model (present/future reasoning)
 

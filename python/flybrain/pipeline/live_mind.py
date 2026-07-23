@@ -152,11 +152,19 @@ class LiveMindPipeline:
             if cues is not None:
                 sensory.summary.update(cues.to_dict())
 
+        # Phase 6: chem gradient bearings from food-search envs (not XYZ in obs).
+        bearing_fn = getattr(self.env, "chem_bearings", None)
+        if callable(bearing_fn):
+            sensory.summary.update(bearing_fn())
+
         affect = self.affect.estimate(sensory)
         embedding = self.embedder.embed(sensory, affect)
         signal_payload = sensory.to_jsonable()
         if cues is not None:
             signal_payload.update(cues.to_dict())
+        for key in ("sugar_bearing", "bitter_bearing", "hunger", "energy", "proboscis_contact"):
+            if key in sensory.summary:
+                signal_payload[key] = sensory.summary[key]
 
         stm, thought, thought_rec = self.thinking.think_on_embedding(
             embedding=embedding,
@@ -184,9 +192,24 @@ class LiveMindPipeline:
         last_info: dict[str, Any] = {}
         terminated = False
         truncated = False
-        start_dist = float(reset_info.get("distance_to_target", 0.0)) if isinstance(reset_info, dict) else 0.0
+        start_dist = 0.0
+        if isinstance(reset_info, dict):
+            start_dist = float(
+                reset_info.get(
+                    "distance_to_sugar",
+                    reset_info.get("distance_to_target", 0.0),
+                )
+            )
         for _ in range(limit):
             action, info = self.process_observation(obs)
+            # Blend food-search heuristic when available (Phase 6 live improvement loop).
+            food_policy = getattr(self.env, "food_policy_action", None)
+            if callable(food_policy):
+                food_action = food_policy()
+                action = action.copy()
+                action[0] = 0.4 * float(action[0]) + 0.6 * float(food_action[0])
+                action[1] = 0.35 * float(action[1]) + 0.65 * float(food_action[1])
+                action[4] = 0.3 * float(action[4]) + 0.7 * float(food_action[4])
             last_info = info
             obs, _reward, terminated, truncated, step_info = self.env.step(action)
             if isinstance(step_info, dict):
@@ -194,7 +217,12 @@ class LiveMindPipeline:
             self._step += 1
             if terminated or truncated:
                 break
-        end_dist = float(last_info.get("distance_to_target", start_dist))
+        end_dist = float(
+            last_info.get(
+                "distance_to_sugar",
+                last_info.get("distance_to_target", start_dist),
+            )
+        )
         return {
             "steps": self._step,
             "terminated": bool(terminated),
@@ -204,6 +232,8 @@ class LiveMindPipeline:
             "end_distance": end_dist,
             "wall_hits": int(last_info.get("wall_hits", 0)),
             "success": bool(last_info.get("success", False)),
+            "sugar_consumed": float(last_info.get("sugar_consumed", 0.0)),
+            "bitter_contacts": int(last_info.get("bitter_contacts", 0)),
         }
 
 
@@ -211,10 +241,15 @@ def make_live_env(
     *,
     fake: bool = True,
     fake_visual_nav: bool = False,
+    fake_food_search: bool = False,
     editor: bool = False,
     build: str | None = None,
     port: int = 5005,
 ):
+    if fake_food_search:
+        from flybrain.env_food_search import FakeFoodSearchEnv
+
+        return FakeFoodSearchEnv()
     if fake_visual_nav:
         from flybrain.env_visual_nav import FakeVisualNavEnv
 

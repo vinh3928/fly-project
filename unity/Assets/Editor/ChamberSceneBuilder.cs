@@ -165,6 +165,7 @@ namespace FlySimulation.EditorTools
             var stability = fly.AddComponent<PhysicsStabilityMonitor>();
             var navMetrics = fly.AddComponent<VisualNavMetrics>();
             navMetrics.Bind(fly.transform, visualTarget.transform, config.ChamberSize);
+            fly.AddComponent<FoodSearchMetrics>();
             SetPrivate(episode, "configuration", config);
             SetPrivate(episode, "chamber", chamber);
             SetPrivate(episode, "randomizer", randomizer);
