@@ -119,7 +119,27 @@ python -m scripts.run_live_mind --fake   # smoke without Unity
 # python -m scripts.run_live_mind --editor
 ```
 
-## Phase 5 — Visual navigation
+## Phase 5 — Visual navigation ✅ complete
+
+Deliverables: recurrent vision head (offline synthetic training), FakeVisualNavEnv,
+mind-pipeline vision cues, Unity VisualTarget + visible obstacles + eval metrics.
+
+Exit criteria:
+
+- [x] Agent avoids walls (FakeVisualNavEnv wall-hit budget with vision cues)
+- [x] Agent navigates toward a visible target (distance reduction / success)
+- [x] Agent operates without direct target coordinates in the observation vector
+
+How to verify:
+
+```bash
+cd python && pytest
+python -m scripts.train_vision_head --steps 100
+python -m scripts.run_live_mind --fake-visual-nav --steps 80
+
+# Unity: Tools → Fly → Setup Chamber Scene (VisualTarget + dark obstacles)
+./scripts/run_unity_editmode_tests.sh
+```
 
 ## Phase 6 — Taste and homeostasis
 

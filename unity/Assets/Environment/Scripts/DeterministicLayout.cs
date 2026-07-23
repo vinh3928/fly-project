@@ -36,6 +36,21 @@ namespace FlySimulation.Environment
             return positions;
         }
 
+        public static Vector3 GenerateVisualTargetPosition(
+            int seed,
+            Vector3 chamberSize,
+            float placementMargin,
+            float targetRadius)
+        {
+            var rng = new System.Random(seed ^ unchecked((int)0x5EEDFACE));
+            float halfX = Mathf.Max(0.01f, chamberSize.x * 0.5f - placementMargin);
+            float halfZ = Mathf.Max(0.01f, chamberSize.z * 0.5f - placementMargin);
+            return new Vector3(
+                NextRange(rng, -halfX, halfX),
+                targetRadius,
+                NextRange(rng, -halfZ, halfZ));
+        }
+
         public static bool AreEqual(Vector3[] a, Vector3[] b, float epsilon = 1e-5f)
         {
             if (ReferenceEquals(a, b))

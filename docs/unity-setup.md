@@ -59,6 +59,9 @@ ML-Agents `Heuristic` (when connected): Vertical = walk, Horizontal = turn, Spac
 python -m scripts.run_live_mind --editor
 # or without Unity:
 python -m scripts.run_live_mind --fake
+# Phase 5 visual nav smoke:
+python -m scripts.run_live_mind --fake-visual-nav --steps 80
+python -m scripts.train_vision_head --steps 100
 ```
 
 Optional pgvector STM:
@@ -68,6 +71,7 @@ docker compose -f docker/docker-compose.mind.yml up -d
 python -m scripts.run_live_mind --fake --pgvector
 ```
 
+After **Tools → Fly → Setup Chamber Scene**, Phase 5 adds a green **VisualTarget**, floor marks, and dark obstacle pillars.
 ## Recording output
 
 Episode folders are written under the repo `data/experiments/` directory:

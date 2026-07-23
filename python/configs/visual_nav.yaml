@@ -1,0 +1,22 @@
+seed: 42
+vision_size: 64
+latent_dim: 128
+hidden_dim: 128
+
+train:
+  steps: 200
+  batch_size: 32
+  learning_rate: 0.001
+  device: cpu
+  checkpoint_path: ../data/checkpoints/vision_head.pt
+
+arena:
+  half_extent: 0.45
+  success_radius: 0.08
+  eval_steps: 120
+  max_wall_collisions: 3
+
+live:
+  use_vision_head: true
+  use_heuristic_if_untrained: true
+  wall_hazard_forward_scale: 0.2

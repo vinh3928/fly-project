@@ -40,7 +40,7 @@ namespace FlySimulation.EditorTools
             // Keep Built-in RP (no SRP asset) so Unlit/Color materials never go pink.
             UnityEngine.Rendering.GraphicsSettings.defaultRenderPipeline = null;
             QualitySettings.renderPipeline = null;
-            EnsureTags("Fly", "Chamber", "ChemicalSource", "Obstacle");
+            EnsureTags("Fly", "Chamber", "ChemicalSource", "Obstacle", "VisualTarget");
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             var config = ExperimentConfiguration.Default();
@@ -53,6 +53,9 @@ namespace FlySimulation.EditorTools
             Material flyMat = CreateColorMaterial("FlyMat", new Color(0.12f, 0.12f, 0.12f), overwrite: true);
             Material accentMat = CreateColorMaterial("FlyAccentMat", new Color(1f, 0.4f, 0.05f), overwrite: true);
             Material outlineMat = CreateColorMaterial("OutlineMat", new Color(0.1f, 1f, 1f), overwrite: true);
+            Material targetMat = CreateColorMaterial("VisualTargetMat", new Color(0.1f, 0.95f, 0.35f), overwrite: true);
+            Material obstacleMat = CreateColorMaterial("ObstacleMat", new Color(0.18f, 0.16f, 0.14f), overwrite: true);
+            Material floorMarkMat = CreateColorMaterial("FloorMarkMat", new Color(0.72f, 0.74f, 0.78f), overwrite: true);
 
             var chamberRoot = new GameObject("Chamber");
             TrySetTag(chamberRoot, "Chamber");
@@ -94,6 +97,34 @@ namespace FlySimulation.EditorTools
             bitterSource.Configure(ChemicalSource.SourceType.Bitter, 1f, 0.25f);
             EnsureSurface(bitter, new ChemicalChannels { Bitter = 1f });
 
+            // Phase 5: high-contrast floor patches for visual landmarking (walls stay mesh-hidden).
+            for (int i = 0; i < 4; i++)
+            {
+                var mark = CreateCube($"FloorMark_{i}", chamberRoot.transform, floorMarkMat);
+                float ox = (i % 2 == 0 ? -1f : 1f) * config.ChamberSize.x * 0.22f;
+                float oz = (i < 2 ? -1f : 1f) * config.ChamberSize.z * 0.22f;
+                mark.transform.localPosition = new Vector3(ox, 0.0006f, oz);
+                mark.transform.localScale = new Vector3(
+                    config.ChamberSize.x * 0.12f,
+                    0.001f,
+                    config.ChamberSize.z * 0.12f);
+            }
+
+            // Phase 5: bright visual target (distinct from sugar/bitter chemicals).
+            var visualTarget = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            visualTarget.name = "VisualTarget";
+            TrySetTag(visualTarget, Phase5ExitCriteria.VisualTargetTag);
+            visualTarget.transform.SetParent(chamberRoot.transform, false);
+            float targetRadius = 0.006f;
+            Vector3 targetPos = DeterministicLayout.GenerateVisualTargetPosition(
+                config.RandomSeed,
+                config.ChamberSize,
+                placementMargin: 0.02f,
+                targetRadius: targetRadius);
+            visualTarget.transform.localPosition = targetPos;
+            visualTarget.transform.localScale = Vector3.one * (targetRadius * 2f);
+            ApplyMaterial(visualTarget, targetMat);
+
             // Chamber bounds are the floor/walls; skip LineRenderer outline (can corrupt player builds
             // when paired with Unlit/Color materials).
             // CreateChamberOutline(chamberRoot.transform, config.ChamberSize, outlineMat);
@@ -120,10 +151,20 @@ namespace FlySimulation.EditorTools
             SetPrivate(chamber, "configuration", config);
             chamber.ApplyConfiguration(config);
 
+            // Phase 5: visible dark pillars (not giant white cubes).
+            var soRandomizer = new SerializedObject(randomizer);
+            soRandomizer.FindProperty("obstacleCount").intValue = Phase5ExitCriteria.DefaultObstacleCount;
+            soRandomizer.FindProperty("obstacleRadius").floatValue = Phase5ExitCriteria.DefaultObstacleRadius;
+            soRandomizer.FindProperty("placementMargin").floatValue = 0.015f;
+            soRandomizer.FindProperty("obstacleMaterial").objectReferenceValue = obstacleMat;
+            soRandomizer.ApplyModifiedPropertiesWithoutUndo();
+
             var fly = BuildFly(config, chemicalField, flyMat, accentMat);
             var episode = fly.AddComponent<FlyEpisodeManager>();
             var recorder = fly.AddComponent<ExperimentRecorder>();
             var stability = fly.AddComponent<PhysicsStabilityMonitor>();
+            var navMetrics = fly.AddComponent<VisualNavMetrics>();
+            navMetrics.Bind(fly.transform, visualTarget.transform, config.ChamberSize);
             SetPrivate(episode, "configuration", config);
             SetPrivate(episode, "chamber", chamber);
             SetPrivate(episode, "randomizer", randomizer);
@@ -231,15 +272,45 @@ namespace FlySimulation.EditorTools
             }
 
             overview.tag = "MainCamera";
-            // Ensure Play mode won't spawn giant default-white obstacle cubes.
+            // Phase 5: keep a few visible dark obstacles for navigation.
             var randomizer = UnityEngine.Object.FindFirstObjectByType<EnvironmentRandomizer>();
             if (randomizer != null)
             {
+                var obstacleMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/Fly/Materials/ObstacleMat.mat");
                 var so = new SerializedObject(randomizer);
-                so.FindProperty("obstacleCount").intValue = 0;
-                so.FindProperty("obstacleRadius").floatValue = 0.005f;
+                so.FindProperty("obstacleCount").intValue = Phase5ExitCriteria.DefaultObstacleCount;
+                so.FindProperty("obstacleRadius").floatValue = Phase5ExitCriteria.DefaultObstacleRadius;
                 so.FindProperty("placementMargin").floatValue = 0.015f;
+                if (obstacleMat != null)
+                {
+                    so.FindProperty("obstacleMaterial").objectReferenceValue = obstacleMat;
+                }
+
                 so.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            // Ensure a VisualTarget exists for Phase 5.
+            if (GameObject.Find("VisualTarget") == null)
+            {
+                var targetMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/Fly/Materials/VisualTargetMat.mat")
+                    ?? CreateColorMaterial("VisualTargetMat", new Color(0.1f, 0.95f, 0.35f), overwrite: true);
+                var chamberGo = GameObject.Find("Chamber");
+                var visualTarget = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                visualTarget.name = "VisualTarget";
+                TrySetTag(visualTarget, Phase5ExitCriteria.VisualTargetTag);
+                if (chamberGo != null)
+                {
+                    visualTarget.transform.SetParent(chamberGo.transform, false);
+                }
+
+                Vector3 size = chamberSize;
+                visualTarget.transform.localPosition = DeterministicLayout.GenerateVisualTargetPosition(
+                    ExperimentConfiguration.Default().RandomSeed,
+                    size,
+                    0.02f,
+                    0.006f);
+                visualTarget.transform.localScale = Vector3.one * 0.012f;
+                ApplyMaterial(visualTarget, targetMat);
             }
 
             ChamberWallHider.HideWalls();
@@ -254,7 +325,7 @@ namespace FlySimulation.EditorTools
 
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
             Debug.Log(
-                "Chamber visibility fixed: wall meshes hidden, obstacle spawn disabled, " +
+                "Chamber visibility fixed: wall meshes hidden, Phase 5 visual target/obstacles ready, " +
                 $"OverviewCamera reframed for {chamberSize}. Press Play → Game tab.");
         }
 
@@ -278,6 +349,9 @@ namespace FlySimulation.EditorTools
             CreateColorMaterial("FlyMat", new Color(0.12f, 0.12f, 0.12f), overwrite: true);
             CreateColorMaterial("FlyAccentMat", new Color(1f, 0.4f, 0.05f), overwrite: true);
             CreateColorMaterial("OutlineMat", new Color(0.1f, 1f, 1f), overwrite: true);
+            CreateColorMaterial("VisualTargetMat", new Color(0.1f, 0.95f, 0.35f), overwrite: true);
+            CreateColorMaterial("ObstacleMat", new Color(0.18f, 0.16f, 0.14f), overwrite: true);
+            CreateColorMaterial("FloorMarkMat", new Color(0.72f, 0.74f, 0.78f), overwrite: true);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
         }

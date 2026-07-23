@@ -52,21 +52,29 @@ class AffectEstimator:
         damage = float(s.get("damage", 0.0))
         instability = float(s.get("instability", 0.0))
         contact = float(s.get("mean_contact", 0.0))
+        wall_hazard = float(s.get("wall_hazard", 0.0))
+        target_confidence = float(s.get("target_confidence", 0.0))
 
-        joy = _clamp01(self.weights["sugar_to_joy"] * sugar)
+        joy = _clamp01(self.weights["sugar_to_joy"] * sugar + 0.35 * target_confidence)
         anger = _clamp01(self.weights["bitter_to_anger"] * bitter)
         fear = _clamp01(
-            self.weights["bitter_to_fear"] * bitter + self.weights["damage_to_fear"] * damage
+            self.weights["bitter_to_fear"] * bitter
+            + self.weights["damage_to_fear"] * damage
+            + 0.55 * wall_hazard
         )
         sad = _clamp01(self.weights["hunger_to_sad"] * hunger + (1.0 - energy) * 0.3)
-        surprise = _clamp01(self.weights["instability_to_surprise"] * instability + bitter * 0.2)
+        surprise = _clamp01(
+            self.weights["instability_to_surprise"] * instability + bitter * 0.2 + 0.4 * wall_hazard
+        )
         disgust = _clamp01(bitter * 0.9)
         energy_threat = _clamp01((1.0 - energy) * self.weights["energy_to_survival"])
-        survival_risk = _clamp01(0.5 * energy_threat + 0.3 * damage + 0.2 * fear)
+        survival_risk = _clamp01(0.5 * energy_threat + 0.3 * damage + 0.2 * fear + 0.15 * wall_hazard)
         pain = _clamp01(damage)
-        comfort = _clamp01(0.5 * joy + 0.3 * contact + 0.2 * energy - 0.4 * bitter)
+        comfort = _clamp01(0.5 * joy + 0.3 * contact + 0.2 * energy - 0.4 * bitter - 0.3 * wall_hazard)
         trust = _clamp01(0.4 * joy + 0.3 * contact - 0.5 * bitter)
-        anticipation = _clamp01(0.4 * hunger + 0.3 * sugar + 0.2 * surprise)
+        anticipation = _clamp01(
+            0.4 * hunger + 0.3 * sugar + 0.2 * surprise + 0.45 * target_confidence
+        )
         altruism = _clamp01(0.3 * trust + 0.2 * joy - 0.4 * survival_risk)
         social_drive = _clamp01(0.2 * trust + 0.2 * anticipation)
         exploration = _clamp01(0.4 * surprise + 0.3 * anticipation + 0.2 * (1.0 - fear))

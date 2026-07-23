@@ -46,20 +46,33 @@ def compose_thought(
     joy = float(affect.get("joy", 0.0))
     anger = float(affect.get("anger", 0.0))
     altruism = float(affect.get("altruism", 0.0))
+    target_bearing = float(signals.get("target_bearing", 0.0))
+    target_confidence = float(signals.get("target_confidence", 0.0))
+    wall_hazard = float(signals.get("wall_hazard", 0.0))
+    forward_bias = float(signals.get("forward_bias", 0.0))
+    turn_bias = float(signals.get("turn_bias", 0.0))
 
     draft = (
         f"Draft: joy={joy:.2f} anger={anger:.2f} survival={survival:.2f} "
-        f"altruism={altruism:.2f}; sugar={sugar:.2f} bitter={bitter:.2f}. "
-        f"Plan to {'approach sugar' if sugar > bitter else 'avoid bitter / explore'}."
+        f"altruism={altruism:.2f}; sugar={sugar:.2f} bitter={bitter:.2f}; "
+        f"bearing={target_bearing:.2f} wall={wall_hazard:.2f}. "
+        f"Plan to {'approach visible target' if target_confidence > 0.3 else ('approach sugar' if sugar > bitter else 'avoid bitter / explore')}."
     )
 
     # High-level action: [forward, turn, height, frequency, proboscis]
     forward = exploration * 0.6 + joy * 0.4 - bitter * 0.5
     turn = anger * 0.4 - sugar * 0.2
+    # Phase 5 visual nav cues
+    forward = 0.55 * forward + 0.45 * forward_bias + 0.25 * target_confidence
+    turn = 0.45 * turn + 0.55 * turn_bias + 0.5 * target_bearing * target_confidence
     if bitter > sugar:
         turn = np.sign(turn + 1e-6) * max(abs(turn), 0.4)
     if survival > 0.6:
         forward *= float(clamps["survival_forward_scale"])
+    if wall_hazard > 0.4:
+        scale = float(clamps.get("wall_hazard_forward_scale", 0.2))
+        forward *= max(scale, 1.0 - wall_hazard)
+        turn = float(np.clip(turn + 0.35 * np.sign(turn + 1e-6), -1.0, 1.0))
     height = float(clamps["height_default"])
     frequency = float(clamps["frequency_default"]) + 0.2 * exploration
     proboscis = float(np.clip(sugar * 0.8 - bitter * 0.5, 0.0, 1.0))
