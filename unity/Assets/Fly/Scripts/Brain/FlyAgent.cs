@@ -164,10 +164,12 @@ namespace FlySimulation.Fly.Brain
 
             if (recorder != null && episodeManager != null && episodeManager.EpisodeActive)
             {
-                float recordInterval = 1f / Mathf.Max(1f, configuration.RecordingHz);
-                if (Mathf.Approximately(episodeManager.EpisodeTime % recordInterval, 0f) ||
-                    episodeManager.SimulationStep % Mathf.Max(1, Mathf.RoundToInt(configuration.PhysicsHz / configuration.RecordingHz)) == 0)
+                int recordPeriod = Mathf.Max(
+                    1,
+                    Mathf.RoundToInt(configuration.PhysicsHz / Mathf.Max(1f, configuration.RecordingHz)));
+                if (episodeManager.SimulationStep % recordPeriod == 0)
                 {
+                    observations?.Collect(Time.fixedDeltaTime);
                     recorder.RecordStep(episodeManager, observations, motors, homeostasis, body);
                 }
             }

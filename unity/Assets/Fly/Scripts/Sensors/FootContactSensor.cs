@@ -146,7 +146,7 @@ namespace FlySimulation.Fly.Sensors
 
         public void CopyTasteObservation(float[] buffer, int offset)
         {
-            Taste.CopyTo(buffer, offset);
+            TasteGating.CopyGated(IsTouching, Taste, buffer, offset);
         }
     }
 }

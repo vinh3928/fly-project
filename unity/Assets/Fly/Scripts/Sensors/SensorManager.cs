@@ -49,6 +49,11 @@ namespace FlySimulation.Fly.Sensors
         public JointObservation[] Joints => _jointObservations;
         public FootContactSensor[] Feet => feet;
         public ProboscisSensor Proboscis => proboscis;
+        public AntennaOdorSensor LeftAntenna => leftAntenna;
+        public AntennaOdorSensor RightAntenna => rightAntenna;
+        public VisionFrameProvider Vision => vision;
+        public FlyBodyController Body => body;
+        public FlyHomeostasis Homeostasis => homeostasis;
 
         public void Bind(
             FlyBodyController bodyController,

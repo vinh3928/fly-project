@@ -72,9 +72,27 @@ cd python && pytest
 # WalkingDemoDriver cycles stand → walk → turn
 ```
 
-## Phase 3 — Sensory recording (next)
+## Phase 3 — Sensory recording ✅ complete
 
-- Eye cameras, joint/contact/taste/odor/internal streams, synchronized experiment folders
+Deliverables: synchronized multimodal episode logs (CSV/JSONL/PNG), taste gated to contact,
+vision frames with eye/body orientation metadata, Python `EpisodeReplay` loader.
+
+Exit criteria:
+
+- [x] Every observation timestamped (`sim_time` / `timestamp` on CSV + JSONL streams)
+- [x] Recorded vision matches fly orientation (`vision/manifest.jsonl` body/eye forwards)
+- [x] Taste only during valid contact (`TasteGating` + gated `taste.csv`)
+- [x] Episodes replayable from logs (`flybrain.recording.EpisodeReplay`)
+
+How to verify:
+
+```bash
+cd python && pytest
+./scripts/run_unity_editmode_tests.sh
+
+# Visual / data: Unity → Tools → Fly → Setup Chamber Scene → Play
+# Episode folders under data/experiments/<experiment_id>_ep####/
+```
 
 ## Phase 4 — Learned locomotion
 

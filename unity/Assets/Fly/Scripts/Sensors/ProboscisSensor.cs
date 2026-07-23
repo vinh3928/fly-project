@@ -49,7 +49,10 @@ namespace FlySimulation.Fly.Sensors
         {
             buffer[offset] = ExtensionNormalized;
             buffer[offset + 1] = IsContacting ? 1f : 0f;
-            Taste.CopyTo(buffer, offset + 2);
+            TasteGating.CopyGated(IsContacting, Taste, buffer, offset + 2);
         }
+
+        /// <summary>Gated taste used by the recorder (zero unless contacting).</summary>
+        public ChemicalChannels GatedTaste => TasteGating.Gate(IsContacting, Taste);
     }
 }

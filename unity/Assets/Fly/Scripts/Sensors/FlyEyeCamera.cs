@@ -99,6 +99,16 @@ namespace FlySimulation.Fly.Sensors
             return _frameBuffer;
         }
 
+        public byte[] CapturePng()
+        {
+            CaptureFrame();
+            return _readback != null ? _readback.EncodeToPNG() : System.Array.Empty<byte>();
+        }
+
+        public Vector3 Forward => transform.forward;
+        public Vector3 Position => transform.position;
+        public Quaternion Rotation => transform.rotation;
+
         private void OnDestroy()
         {
             if (_renderTexture != null)
