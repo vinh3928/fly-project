@@ -22,8 +22,8 @@ namespace FlySimulation.Experiments
         public float RecordingHz = 50f;
 
         [Header("Chamber")]
-        // ~10× smaller than the original 1×0.5×1 m arena.
-        public Vector3 ChamberSize = new Vector3(0.1f, 0.05f, 0.1f);
+        // 5× the prior 0.1×0.05×0.1 m arena (still compact vs original 1×0.5×1 m).
+        public Vector3 ChamberSize = new Vector3(0.5f, 0.25f, 0.5f);
         public float LightIntensity = 1f;
         public float TemperatureCelsius = 25f;
         public float Humidity = 0.5f;
@@ -31,18 +31,18 @@ namespace FlySimulation.Experiments
         public float WindStrength = 0f;
 
         [Header("Chemistry")]
-        public Vector3 SugarSourcePosition = new Vector3(0.03f, 0.002f, 0.03f);
-        public Vector3 BitterSourcePosition = new Vector3(-0.03f, 0.002f, -0.03f);
+        public Vector3 SugarSourcePosition = new Vector3(0.15f, 0.01f, 0.15f);
+        public Vector3 BitterSourcePosition = new Vector3(-0.15f, 0.01f, -0.15f);
         public float SugarStrength = 1f;
         public float BitterStrength = 1f;
-        public float ChemicalSpread = 0.025f;
+        public float ChemicalSpread = 0.125f;
 
         [Header("Obstacles")]
         public Vector3[] ObstaclePositions = Array.Empty<Vector3>();
 
         [Header("Fly spawn")]
-        // BodyScale 1 (was 10). Y is refined at scene build so feet rest on the floor.
-        public Vector3 FlySpawnPosition = new Vector3(0f, 0.02f, 0f);
+        // BodyScale 1. Center of chamber in XZ; Y refined so feet rest on the floor.
+        public Vector3 FlySpawnPosition = new Vector3(0f, 0.04f, 0f);
         public Vector3 FlySpawnEuler = Vector3.zero;
         public float BodyScale = 1f;
 

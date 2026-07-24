@@ -31,21 +31,91 @@ namespace FlySimulation.Fly.Brain
         [SerializeField] private FlyEpisodeManager episodeManager;
         [SerializeField] private ExperimentRecorder recorder;
         [SerializeField] private bool useHighLevelActions = true;
-        [SerializeField] private bool useWalkingDemo = true;
+        [Tooltip("When true AND WalkingDemoDriver is enabled, demo owns motors. Leave false for live mind / Python.")]
+        [SerializeField] private bool useWalkingDemo = false;
+        [Tooltip("Phase 9 architecture B: append mind/motor goals to vector observations for PPO.")]
+        [SerializeField] private bool includeMotorGoalsInObs;
+        [Tooltip("Phase 9: add locomotion/goal-tracking reward terms.")]
+        [SerializeField] private bool useLocomotionReward;
 
         private RewardCalculator _rewardCalculator;
         private float _decisionAccumulator;
         private float _previousEnergy;
         private bool _decisionRequested;
+        private readonly float[] _motorGoal = { 0f, 0f, 0.5f, 0.5f, 0f };
+        private Vector3 _previousPosition;
+        private float _previousYaw;
 
         public ExperimentConfiguration Configuration => configuration;
         public long SimulationStepCount =>
             episodeManager != null ? episodeManager.SimulationStep : 0;
+        /// <summary>When true, WalkingDemoDriver owns motors; Python/ML-Agents actions are ignored.</summary>
+        public bool UseWalkingDemo => useWalkingDemo;
+
+        /// <summary>
+        /// Demo owns motors only when the flag is on <em>and</em> WalkingDemoDriver is enabled.
+        /// Avoids a stuck fly when Use Walking Demo is true but the driver component is disabled.
+        /// </summary>
+        public bool DemoOwnsMotors
+        {
+            get
+            {
+                if (!useWalkingDemo)
+                {
+                    return false;
+                }
+
+                var demo = GetComponent<WalkingDemoDriver>();
+                return demo != null && demo.isActiveAndEnabled;
+            }
+        }
+
 
 #if UNITY_MLAGENTS
         public override void Initialize()
         {
+            EnsureEyeCameraSensors();
             BaseInitialize();
+            if (useWalkingDemo && !DemoOwnsMotors)
+            {
+                Debug.LogWarning(
+                    "FlyAgent: Use Walking Demo is on but WalkingDemoDriver is disabled — " +
+                    "applying ML-Agents/Python actions. Enable WalkingDemoDriver for the stand/walk/turn demo, " +
+                    "or leave Use Walking Demo off for live mind.");
+            }
+            else if (!useWalkingDemo)
+            {
+                bool trainer =
+                    Unity.MLAgents.Academy.IsInitialized
+                    && Unity.MLAgents.Academy.Instance.IsCommunicatorOn;
+                if (trainer)
+                {
+                    Debug.Log(
+                        "FlyAgent: live control — connected to Python trainer; actions drive motors.");
+                }
+                else
+                {
+                    Debug.LogError(
+                        "FlyAgent: NO Python trainer on port 5004 — Academy is in inference mode. "
+                        + "Actions will be ~zero and the fly will stand still. "
+                        + "Stop Play, start: python -m scripts.run_live_mind --editor … "
+                        + "wait until it prints Listening on port 5004, THEN press Play.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Register ML-Agents camera sensors for eye frames before Agent sensor init completes.
+        /// </summary>
+        private void EnsureEyeCameraSensors()
+        {
+            var bridge = GetComponent<FlyEyeMlAgentsBridge>();
+            if (bridge == null)
+            {
+                bridge = gameObject.AddComponent<FlyEyeMlAgentsBridge>();
+            }
+
+            bridge.EnsureCameraSensors();
         }
 
         public override void OnEpisodeBegin()
@@ -53,7 +123,30 @@ namespace FlySimulation.Fly.Brain
             episodeManager?.StartEpisode();
             _rewardCalculator?.Reset(homeostasis);
             _previousEnergy = homeostasis != null ? homeostasis.Energy : 1f;
+            if (body != null)
+            {
+                _previousPosition = body.transform.position;
+                _previousYaw = body.transform.eulerAngles.y;
+            }
+
+            // Sample a stand/walk/turn goal for motor PPO when goals are in the obs.
+            if (includeMotorGoalsInObs)
+            {
+                SampleTrainingGoal();
+            }
         }
+
+        /// <summary>Phase 9: mind / Python sets the motor goal setpoint.</summary>
+        public void SetMotorGoal(float forward, float turn, float height, float frequency, float proboscis)
+        {
+            _motorGoal[0] = Mathf.Clamp(forward, -1f, 1f);
+            _motorGoal[1] = Mathf.Clamp(turn, -1f, 1f);
+            _motorGoal[2] = Mathf.Clamp01(height);
+            _motorGoal[3] = Mathf.Clamp01(frequency);
+            _motorGoal[4] = Mathf.Clamp01(proboscis);
+        }
+
+        public float[] GetMotorGoal() => (float[])_motorGoal.Clone();
 
         public override void CollectObservations(VectorSensor sensor)
         {
@@ -107,18 +200,66 @@ namespace FlySimulation.Fly.Brain
             {
                 sensor.AddObservation(0f);
             }
+
+            if (includeMotorGoalsInObs)
+            {
+                for (int i = 0; i < LocomotionReward.GoalDim; i++)
+                {
+                    sensor.AddObservation(_motorGoal[i]);
+                }
+            }
         }
 
         public override void OnActionReceived(ActionBuffers actions)
         {
-            // Play-mode WalkingDemoDriver owns motors; ignore zero/default ML-Agents actions.
-            if (!useWalkingDemo)
+            // Apply Python/ML-Agents actions unless an enabled WalkingDemoDriver owns motors.
+            if (!DemoOwnsMotors)
             {
                 ApplyActions(actions.ContinuousActions.Array);
             }
 
             float reward = ComputeStepReward(0f);
+            if (useLocomotionReward && body != null)
+            {
+                Vector3 pos = body.transform.position;
+                Vector3 delta = pos - _previousPosition;
+                Vector3 forward = new Vector3(
+                    Mathf.Sin(_previousYaw * Mathf.Deg2Rad),
+                    0f,
+                    Mathf.Cos(_previousYaw * Mathf.Deg2Rad));
+                float forwardProgress = Vector3.Dot(delta, forward);
+                float yawProgress = Mathf.DeltaAngle(_previousYaw, body.transform.eulerAngles.y) * Mathf.Deg2Rad;
+                float[] actionArr = actions.ContinuousActions.Array;
+                reward += LocomotionReward.Compute(
+                    _motorGoal,
+                    actionArr,
+                    forwardProgress,
+                    yawProgress,
+                    upright: body.HasFallen ? 0f : 1f,
+                    fell: body.HasFallen);
+                _previousPosition = pos;
+                _previousYaw = body.transform.eulerAngles.y;
+            }
+
             AddReward(reward);
+        }
+
+        private void SampleTrainingGoal()
+        {
+            // Curriculum-ish random setpoints for goal-conditioned motor training.
+            float mode = Random.value;
+            if (mode < 0.25f)
+            {
+                SetMotorGoal(0f, 0f, 0.5f, 0.5f, 0f); // stand
+            }
+            else if (mode < 0.7f)
+            {
+                SetMotorGoal(Random.Range(0.4f, 1f), Random.Range(-0.2f, 0.2f), 0.5f, 0.7f, 0f);
+            }
+            else
+            {
+                SetMotorGoal(Random.Range(0.1f, 0.5f), Random.Range(-1f, 1f), 0.5f, 0.7f, 0f);
+            }
         }
 
         public override void Heuristic(in ActionBuffers actionsOut)
@@ -189,12 +330,13 @@ namespace FlySimulation.Fly.Brain
             {
                 _decisionAccumulator = 0f;
                 observations?.Collect(Time.fixedDeltaTime);
-                // WalkingDemoDriver owns high-level commands in Play mode when enabled.
-                if (!useWalkingDemo)
-                {
-                    motors?.SetHighLevelCommands(0f, 0f, 0.5f, 0.5f);
-                    motors?.SetProboscisExtension(0f);
-                }
+            // WalkingDemoDriver owns high-level commands in Play mode when actively enabled.
+            if (!DemoOwnsMotors)
+            {
+                // Without ML-Agents there is no external action stream; hold idle.
+                motors?.SetHighLevelCommands(0f, 0f, 0.5f, 0.5f);
+                motors?.SetProboscisExtension(0f);
+            }
 
                 ComputeStepReward(0f);
             }
@@ -215,7 +357,7 @@ namespace FlySimulation.Fly.Brain
 
         public void ApplyActions(float[] continuousActions)
         {
-            if (useWalkingDemo)
+            if (DemoOwnsMotors)
             {
                 return;
             }
@@ -232,7 +374,8 @@ namespace FlySimulation.Fly.Brain
                 float height = continuousActions.Length > 2 ? continuousActions[2] : 0.5f;
                 float frequency = continuousActions.Length > 3 ? continuousActions[3] : 0.5f;
                 float proboscis = continuousActions.Length > 4 ? continuousActions[4] : 0f;
-                motors.SetHighLevelCommands(forward, turn, height, frequency);
+                motors.SetHighLevelCommands(
+                    forward, LocomotionReward.MindTurnToMotorBias(turn), height, frequency);
                 motors.SetProboscisExtension(Mathf.Clamp01(proboscis));
             }
             else

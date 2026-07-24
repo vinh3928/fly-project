@@ -132,25 +132,28 @@ def test_layer1_advanced_weights_move_ranking() -> None:
 
 def test_layer2_vetoes_undesirable_history() -> None:
     exp = LifeExperience(lifetime_steps=100, labeled_outcomes=50, age_horizon=50, data_horizon=20)
-    best, scored, _ = layer1_quick_scan(
+    _, scored, _ = layer1_quick_scan(
         signals={"energy": 0.6, "sugar": 0.2, "bitter": 0.5, "wall_hazard": 0.0},
         affect={"survival_risk": 0.4, "exploration": 0.3, "altruism": 0.2},
         experience=exp,
     )
+    # Pin Layer-1 to forward so the veto path is exercised even if calm/roam
+    # scoring prefers another locomotor first.
+    layer1 = next(s for s in scored if s.name == "forward")
     past = [
-        {"action_name": best.name, "kind": "undesirable", "score": -0.5},
+        {"action_name": "forward", "kind": "undesirable", "score": -0.5},
         {"action_name": "stop", "kind": "desirable", "score": 0.4},
         {"action_name": "turn_left", "kind": "desirable", "score": 0.3},
     ]
     chosen, overridden, reason = layer2_reflect_outcomes(
-        layer1=best,
+        layer1=layer1,
         scored=scored,
         past_outcomes=past,
         signals={"energy": 0.6, "sugar": 0.2, "bitter": 0.5},
         affect={"survival_risk": 0.4},
     )
     assert overridden
-    assert chosen.name != best.name
+    assert chosen.name != "forward"
     assert "veto" in reason or "prefer" in reason
 
 

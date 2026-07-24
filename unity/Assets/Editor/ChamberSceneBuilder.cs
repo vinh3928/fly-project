@@ -429,6 +429,7 @@ namespace FlySimulation.EditorTools
             leftCam.enabled = false; // RenderTexture capture only; keep OverviewCamera as Game view
             leftCam.depth = -10;
             var leftEye = leftEyeGo.AddComponent<FlyEyeCamera>();
+            SetPrivate(leftEye, "isLeftEye", true);
 
             var rightEyeGo = new GameObject("RightEye");
             rightEyeGo.transform.SetParent(head.transform, false);
@@ -437,6 +438,7 @@ namespace FlySimulation.EditorTools
             rightCam.enabled = false;
             rightCam.depth = -10;
             var rightEye = rightEyeGo.AddComponent<FlyEyeCamera>();
+            SetPrivate(rightEye, "isLeftEye", false);
 
             var leftAntennaGo = new GameObject("LeftAntenna");
             leftAntennaGo.transform.SetParent(head.transform, false);
@@ -494,13 +496,15 @@ namespace FlySimulation.EditorTools
 
             var demo = fly.AddComponent<WalkingDemoDriver>();
             demo.Bind(motors);
+            demo.enabled = false; // live mind default; enable + Use Walking Demo for Phase 2 demo
 
             var agent = fly.AddComponent<FlyAgent>();
             SetPrivate(agent, "body", body);
             SetPrivate(agent, "homeostasis", homeostasis);
             SetPrivate(agent, "motors", motors);
             SetPrivate(agent, "observations", observationCollector);
-            SetPrivate(agent, "useWalkingDemo", true);
+            SetPrivate(agent, "useWalkingDemo", false);
+            fly.AddComponent<FlyEyeMlAgentsBridge>();
             ConfigureMlAgents(fly);
 
             return fly;

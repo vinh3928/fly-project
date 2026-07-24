@@ -28,7 +28,7 @@ In the Unity **top menu bar** (not the Project window `Assets/Fly` folder):
 
 This creates `Assets/Scenes/Chamber.unity` with:
 
-- 0.1×0.05×0.1 m chamber (open ceiling + cutaway near walls)
+- 0.5×0.25×0.5 m chamber (open ceiling + cutaway near walls)
 - Sugar and bitter chemical sources
 - BodyScale=1 fly with six legs planted on the floor
 - Overview camera + episode manager and recorder
@@ -51,21 +51,56 @@ ML-Agents `Heuristic` (when connected): Vertical = walk, Horizontal = turn, Spac
 
 ### Phase 4 live mind (Python actions)
 
-1. On `FlyAgent`, set **Use Walking Demo = false**.
-2. **Stop Play** if the Editor is already playing.
-3. Start Python first (it listens on **5004**):
+1. On `FlyAgent`, leave **Use Walking Demo = false** (Chamber scene default for live mind).
+2. **Stop Play** in Unity (required).
+3. Start Python (**binds port 5004 before loading Torch**):
 
 ```bash
 source .venv-mlagents/bin/activate
 cd python
-python -m scripts.run_live_mind --editor --steps 20
+python -m scripts.run_live_mind --editor --continuous --mind-interval 4
 ```
 
-4. When the terminal is waiting / shows the connect message, press **Play** in `Chamber.unity`.
+4. Wait until the terminal prints **`Listening on port 5004`** (from ML-Agents).
+5. **Then** press **Play** in `Chamber.unity` (do **not** wait for `unity_env_ready` first — that appears only *after* Unity connects).
+
+Unity Console must say **`connected to Python trainer`**. If it says **`NO Python trainer`** or
+`Couldn't connect to trainer... inference instead`, Stop Play and press Play again while Python
+is still Listening (or restart the Unity Editor if Academy got stuck in inference).
+
+Eye-frame wall hazards (Phase 5): on Play, `FlyEyeMlAgentsBridge` registers LeftEye/RightEye
+camera sensors. Live logs should include `wall=…` when vision cues are active; approaching a
+wall should raise `wall` and bias the mind toward turn/stop instead of pure `explore`.
+
+**Where are the live mind logs?**
+
+| What | Where |
+|------|--------|
+| Per-step lines (`[live 0000 MIND*] …`) | **Python terminal** and `python/logs/live_mind.log` |
+| Full end snapshot (`live_mind_ok` JSON) | Terminal after Ctrl+C / finish, and `python/logs/live_mind_last.json` |
+| Unity Console | Does **not** show these |
+
+```bash
+# watch steps live
+tail -f logs/live_mind.log
+
+# open last full mind dump
+open logs/live_mind_last.json   # or: less / cat / jq
+
+# richer per-MIND* DETAIL JSON lines
+python -m scripts.run_live_mind --editor --continuous --mind-interval 4 -v
+```
+
+Use `--quiet` only if you want to silence per-step lines.
+
+To verify Unity locomotion alone: enable the `WalkingDemoDriver` component **and** set
+**Use Walking Demo = true**, then Play without Python — stand → walk → turn.
 
 If the Unity Console says `Couldn't connect to trainer on port 5004... Will perform inference instead`, the Editor started before Python was listening. **Stop Play**, leave Python running, press **Play** again.
 
 Do **not** use `--port 5005` with `--editor`.
+
+`WalkingDemoDriver` auto-disables when **Use Walking Demo** is false so it cannot overwrite Python motor commands.
 
 Exploration smoke (Phase 8):
 

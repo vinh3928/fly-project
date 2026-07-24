@@ -98,7 +98,11 @@ class RecurrentVisionHead(nn.Module):
 
 
 def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNavCues:
-    """Label-free heuristic for smoke tests before/without a trained checkpoint."""
+    """Label-free heuristic for smoke tests before/without a trained checkpoint.
+
+    Synthetic dark wall bars (Phase 5) and Unity light/near-field walls both raise
+    ``wall_hazard`` so live Chamber play can avoid obstacles without a trained head.
+    """
     l = np.asarray(left, dtype=np.float32).reshape(-1, left.shape[-2], left.shape[-1])
     r = np.asarray(right, dtype=np.float32).reshape(-1, right.shape[-2], right.shape[-1])
     frame = 0.5 * (l[0] + r[0])
@@ -109,9 +113,30 @@ def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNav
     xs = np.linspace(-1.0, 1.0, w, dtype=np.float32)
     bearing = float((bright.sum(axis=0) * xs).sum() / mass)
     confidence = float(np.clip(mass / (h * w * 0.08), 0.0, 1.0))
-    left_bar = float(frame[:, : max(1, w // 8)].mean())
-    right_bar = float(frame[:, -max(1, w // 8) :].mean())
-    wall_hazard = float(np.clip(1.0 - min(left_bar, right_bar) / 0.35, 0.0, 1.0))
+    edge = max(1, w // 8)
+    left_bar = float(frame[:, :edge].mean())
+    right_bar = float(frame[:, -edge:].mean())
+    left_std = float(frame[:, :edge].std())
+    right_std = float(frame[:, -edge:].std())
+    # Classic synthetic cue: dark edge columns.
+    dark_edge = float(np.clip(1.0 - min(left_bar, right_bar) / 0.35, 0.0, 1.0))
+    # Unity chamber walls are often light + low-texture when close.
+    def _uniform_bright(mean: float, std: float) -> float:
+        if mean < 0.4:
+            return 0.0
+        return float(np.clip(mean * (1.0 - min(1.0, std / 0.12)), 0.0, 1.0))
+
+    light_edge = max(_uniform_bright(left_bar, left_std), _uniform_bright(right_bar, right_std))
+    # Frontal fill: low stereo difference + low spatial variance ⇒ near wall.
+    stereo = float(np.mean(np.abs(l[0] - r[0])))
+    global_std = float(frame.std())
+    frontal = 0.0
+    if stereo < 0.06 and global_std < 0.12:
+        frontal = float(np.clip(0.55 + 0.35 * (0.06 - stereo) / 0.06, 0.0, 1.0))
+    wall_hazard = float(np.clip(max(dark_edge, light_edge, frontal), 0.0, 1.0))
     forward = float(np.clip(0.7 * confidence - 0.8 * wall_hazard, -1.0, 1.0))
-    turn = float(np.clip(bearing * confidence, -1.0, 1.0))
+    turn = float(np.clip(bearing * confidence - 0.55 * (right_bar - left_bar), -1.0, 1.0))
+    if wall_hazard > 0.45 and abs(turn) < 0.15:
+        # Bias away from the darker / more occluded side when nearly frontal.
+        turn = float(np.clip(-0.55 if left_bar <= right_bar else 0.55, -1.0, 1.0))
     return VisionNavCues(bearing, confidence, wall_hazard, forward, turn)

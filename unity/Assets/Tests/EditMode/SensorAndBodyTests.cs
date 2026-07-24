@@ -318,7 +318,7 @@ namespace FlySimulation.Tests.EditMode
             Assert.AreEqual(2f, config.DamageWeight, 1e-5f);
             Assert.AreEqual(0.05f, config.EffortWeight, 1e-5f);
             Assert.AreEqual(0.5f, config.InstabilityWeight, 1e-5f);
-            Assert.AreEqual(new Vector3(0.1f, 0.05f, 0.1f), config.ChamberSize);
+            Assert.AreEqual(new Vector3(0.5f, 0.25f, 0.5f), config.ChamberSize);
             Assert.AreEqual(1f, config.BodyScale, 1e-5f);
             Assert.AreEqual(0f, config.FlySpawnPosition.x, 1e-5f);
             Assert.AreEqual(0f, config.FlySpawnPosition.z, 1e-5f);

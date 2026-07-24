@@ -23,8 +23,8 @@ namespace FlySimulation.Fly.Motors
         [SerializeField] private float turnBias;
         [SerializeField] private float walkForward;
         [SerializeField] private float bodyHeightCommand = 0.5f;
-        [SerializeField] private float walkSpeed = 0.045f;
-        [SerializeField] private float turnSpeed = 2.5f;
+        [SerializeField] private float walkSpeed = 0.18f;
+        [SerializeField] private float turnSpeed = 4.0f;
 
         private float _phase;
         private readonly float[] _jointTargets = new float[18];
@@ -154,8 +154,9 @@ namespace FlySimulation.Fly.Motors
 
             if (Mathf.Abs(turnBias) > 1e-4f)
             {
+                // turnBias in [-1,1]; turnSpeed is rad/s at full command.
                 float yawDegrees = turnBias * turnSpeed * dt * Mathf.Rad2Deg;
-                rb.MoveRotation(Quaternion.Euler(0f, yawDegrees, 0f) * rb.rotation);
+                rb.MoveRotation(rb.rotation * Quaternion.Euler(0f, yawDegrees, 0f));
             }
 
             rb.linearVelocity = Vector3.zero;

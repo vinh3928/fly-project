@@ -243,9 +243,49 @@ python -m scripts.run_live_mind --fake-explore --no-curiosity --steps 120
 ./scripts/run_unity_editmode_tests.sh
 ```
 
-## Phase 9 — Learned locomotion (deferred from original Phase 4)
+## Phase 9 — Learned locomotion (architecture B) ✅ complete
 
-- ML-Agents walking env, locomotion reward, checkpoints
+Goal: keep the mind deliberating while a **motor layer** walks. Mind emits goals/setpoints;
+motor tracks them every decision tick (heuristic tracker now; optional learned MLP / ML-Agents PPO).
+
+### Architecture B
+
+```text
+Mind (every mind_interval steps) → motor_goal[5]
+Motor layer (every step)         → motor_action[5] → Unity / FakeLocomotionEnv
+```
+
+### Deliverables
+
+- `flybrain.motor`: `MotorLayer`, `HeuristicMotorTracker`, `MotorPolicyNet`, locomotion reward
+- `FakeLocomotionEnv` + `scripts/train_motor_layer.py` (behavior-clone tracker)
+- Live mind: `enable_motor_layer`, `mind_interval` (default 4)
+- Unity: `LocomotionReward`, FlyAgent goal obs / locomotion reward flags
+- `scripts/train_walk_ppo.sh` + updated `mlagents_walk.yaml` notes
+
+### Exit criteria
+
+- [x] Motor tracker approaches a fixed goal with diminishing error
+- [x] Fake locomotion: forward goal yields displacement + bounded tracking error
+- [x] Live mind: `motor_ticks >= mind_ticks` with architecture B
+- [x] Motor policy smoke train writes a checkpoint
+- [x] Unity EditMode tests for locomotion reward
+- [x] Docs + mind.yaml `motor:` config
+
+### How to verify
+
+```bash
+cd python && pytest tests/test_phase9_motor.py
+python -m scripts.train_motor_layer --steps 100
+python -m scripts.run_live_mind --fake --steps 40
+# Optional Unity PPO (rebuild player; FlyAgent flags as in mlagents_walk.yaml):
+# TRAIN_MLAGENTS=1 ./scripts/train_walk_ppo.sh
+./scripts/run_unity_editmode_tests.sh
+```
+
+### Deferred (9b)
+
+Full ArticulationBody ground-reaction joint control remains a follow-on spike.
 
 ## Phase 10 — Simplified flight
 

@@ -6,10 +6,13 @@ namespace FlySimulation.Fly.Brain
     /// <summary>
     /// Play-mode Phase 2 demo: cycles stand → walk → turn so exit criteria are visible.
     /// Re-applies commands every FixedUpdate so ML-Agents default-zero actions cannot stick.
+    /// Disabled automatically when <see cref="FlyAgent.UseWalkingDemo"/> is false so Python/mind
+    /// motor commands are not overwritten.
     /// </summary>
     public sealed class WalkingDemoDriver : MonoBehaviour
     {
         [SerializeField] private FlyMotorController motors;
+        [SerializeField] private FlyAgent agent;
         [SerializeField] private bool autoStart = true;
         [SerializeField] private float standSeconds = 1f;
         [SerializeField] private float walkSeconds = 5f;
@@ -24,17 +27,31 @@ namespace FlySimulation.Fly.Brain
             motors = motorController;
         }
 
+        private void Awake()
+        {
+            if (agent == null)
+            {
+                agent = GetComponent<FlyAgent>();
+            }
+        }
+
         private void OnEnable()
         {
             _timer = 0f;
             _stage = 0;
             _lastLoggedStage = null;
-            ApplyStage(forceLog: true);
+            if (DemoActive)
+            {
+                ApplyStage(forceLog: true);
+            }
         }
+
+        private bool DemoActive =>
+            autoStart && motors != null && (agent == null || agent.UseWalkingDemo);
 
         private void FixedUpdate()
         {
-            if (!autoStart || motors == null)
+            if (!DemoActive)
             {
                 return;
             }

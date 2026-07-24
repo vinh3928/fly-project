@@ -60,7 +60,7 @@ def compose_thought(
     forward_bias = float(signals.get("forward_bias", 0.0))
     turn_bias = float(signals.get("turn_bias", 0.0))
 
-    hungry = hunger >= 0.45 or energy < 0.55
+    hungry = hunger >= 0.3 or energy < 0.7
     draft = (
         f"Draft: joy={joy:.2f} anger={anger:.2f} survival={survival:.2f} "
         f"hunger={hunger:.2f} energy={energy:.2f}; sugar={sugar:.2f} bitter={bitter:.2f}. "
@@ -68,7 +68,8 @@ def compose_thought(
     )
 
     # High-level action: [forward, turn, height, frequency, proboscis]
-    forward = exploration * 0.6 + joy * 0.4 - bitter * 0.5
+    # Baseline roam so calm high-energy flies still walk (motor goals stay locomotor).
+    forward = 0.35 + exploration * 0.5 + joy * 0.35 - bitter * 0.5
     turn = anger * 0.4 - sugar * 0.2
     # Phase 5 visual nav cues
     forward = 0.55 * forward + 0.45 * forward_bias + 0.25 * target_confidence
@@ -87,10 +88,12 @@ def compose_thought(
         turn = float(np.clip(turn - 0.4 * np.sign(bitter_bearing + 1e-6), -1.0, 1.0))
     if survival > 0.6:
         forward *= float(clamps["survival_forward_scale"])
-    if wall_hazard > 0.4:
+        turn = float(np.clip(turn + 0.35 * np.sign(turn + 1e-6), -1.0, 1.0))
+    if wall_hazard > 0.25:
         scale = float(clamps.get("wall_hazard_forward_scale", 0.2))
         forward *= max(scale, 1.0 - wall_hazard)
-        turn = float(np.clip(turn + 0.35 * np.sign(turn + 1e-6), -1.0, 1.0))
+        if abs(turn) < 0.2:
+            turn = float(np.clip(turn + 0.55 * float(np.sign(turn_bias) or 1.0), -1.0, 1.0))
     height = float(clamps["height_default"])
     frequency = float(clamps["frequency_default"]) + 0.2 * exploration
     if hungry and sugar > bitter:
@@ -105,7 +108,7 @@ def compose_thought(
     # Phase 7: blend Layer-1/2 chosen action into composer intent.
     if future_action_bias is not None:
         bias = np.asarray(future_action_bias, dtype=np.float32).reshape(-1)
-        blend = float(np.clip(future_confidence if future_confidence is not None else 0.45, 0.0, 0.85))
+        blend = float(np.clip(future_confidence if future_confidence is not None else 0.65, 0.0, 0.95))
         if bias.shape[0] >= 5:
             forward = (1.0 - blend) * forward + blend * float(bias[0])
             turn = (1.0 - blend) * turn + blend * float(bias[1])

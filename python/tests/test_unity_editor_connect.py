@@ -37,3 +37,13 @@ def test_editor_default_port_is_5004() -> None:
     if port is None:
         port = 5004 if editor else 5005
     assert port == 5005
+
+
+def test_editor_connect_instructions_are_not_inverted() -> None:
+    """Regression: docs/script used to say wait for unity_env_ready before Play."""
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_live_mind.py"
+    text = script.read_text(encoding="utf-8")
+    assert "Do NOT wait for unity_env_ready first" in text
+    assert "_open_editor_env_early" in text

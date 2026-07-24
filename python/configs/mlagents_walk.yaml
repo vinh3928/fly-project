@@ -26,6 +26,10 @@ behaviors:
     time_horizon: 128
     summary_freq: 10000
     checkpoint_interval: 50000
+# Phase 9 architecture B notes:
+# - Enable FlyAgent.includeMotorGoalsInObs (obs = 197 body + 5 goal = 202)
+# - Enable FlyAgent.useLocomotionReward; set useWalkingDemo=false
+# - Goals are sampled on episode begin; actions track those setpoints
 env_settings:
   env_path: ../../builds/FlyChamber
   env_args: null

@@ -21,7 +21,7 @@ namespace FlySimulation.Tests.EditMode
         [Test]
         public void VisualTargetSpawn_IsDeterministicForSeed()
         {
-            Vector3 chamber = new Vector3(0.1f, 0.05f, 0.1f);
+            Vector3 chamber = new Vector3(0.5f, 0.25f, 0.5f);
             Vector3 a = DeterministicLayout.GenerateVisualTargetPosition(42, chamber, 0.02f, 0.006f);
             Vector3 b = DeterministicLayout.GenerateVisualTargetPosition(42, chamber, 0.02f, 0.006f);
             Vector3 c = DeterministicLayout.GenerateVisualTargetPosition(43, chamber, 0.02f, 0.006f);

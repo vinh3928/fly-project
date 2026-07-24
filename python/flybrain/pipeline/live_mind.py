@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import sys
 
 import numpy as np
 import torch
@@ -15,6 +16,8 @@ from flybrain.curiosity import CuriosityConfig, CuriosityDrive
 from flybrain.env import FakeFlyEnv
 from flybrain.memory.embedder import MindEmbedder
 from flybrain.memory.pgvector import ShortTermMemory, open_short_term_memory
+from flybrain.motor import MotorLayer, MotorLayerConfig, goal_from_intent
+from flybrain.phase9 import DEFAULT_MIND_INTERVAL
 from flybrain.signals.builder import SignalBuilder
 from flybrain.thinking.service import ThinkingConfig, ThinkingService
 from flybrain.vision.recurrent_head import (
@@ -25,6 +28,138 @@ from flybrain.vision.recurrent_head import (
 from flybrain.world_model.outcomes import LifeExperience
 from flybrain.world_model.predictor import NextStateWorldModel
 
+
+def format_live_step_log(
+    step: int,
+    action: np.ndarray,
+    info: dict[str, Any],
+    *,
+    verbose: bool = False,
+) -> str:
+    """Console summary: every step shows motor + current mind snapshot."""
+    refreshed = bool(info.get("mind_tick"))
+    tag = "MIND*" if refreshed else "motor"
+    act = np.asarray(action, dtype=np.float32).reshape(-1)
+    fwd = float(act[0]) if act.size else 0.0
+    turn = float(act[1]) if act.size > 1 else 0.0
+    goal = info.get("motor_goal") or info.get("goal")
+    if goal is not None:
+        g = np.asarray(goal, dtype=np.float32).reshape(-1)
+        goal_s = f"goal=[{float(g[0]):+.2f},{float(g[1]):+.2f}]" if g.size >= 2 else "goal=?"
+    else:
+        intent = info.get("intent") or {}
+        goal_s = (
+            f"intent=[{float(intent.get('forward', 0.0)):+.2f},"
+            f"{float(intent.get('turn', 0.0)):+.2f}]"
+        )
+    track = info.get("motor_tracking_error")
+    track_s = f" track={float(track):.3f}" if track is not None else ""
+    energy = info.get("energy")
+    energy_s = f" E={float(energy):.2f}" if energy is not None else ""
+    hunger = info.get("hunger")
+    hunger_s = f" H={float(hunger):.2f}" if hunger is not None else ""
+    cov = info.get("coverage")
+    cov_s = f" cov={float(cov):.3f}" if cov is not None else ""
+
+    intent = info.get("intent") or {}
+    future = intent.get("future") if isinstance(intent, dict) else None
+    chosen = ""
+    l1_s = ""
+    if isinstance(future, dict) and future.get("chosen_name"):
+        chosen = f" plan={future.get('chosen_name')}"
+        layer1 = future.get("layer1_values") or []
+        if isinstance(layer1, list) and layer1:
+            top = []
+            for row in layer1[:3]:
+                if not isinstance(row, dict):
+                    continue
+                top.append(f"{row.get('name')}={float(row.get('value', 0.0)):.2f}")
+            if top:
+                l1_s = f" L1[{', '.join(top)}]"
+
+    affect = info.get("affect") or {}
+    survival = affect.get("survival_risk") if isinstance(affect, dict) else None
+    surv_s = f" surv={float(survival):.2f}" if survival is not None else ""
+    fear = affect.get("fear") if isinstance(affect, dict) else None
+    fear_s = f" fear={float(fear):.2f}" if fear is not None else ""
+    cues = info.get("vision_cues") if isinstance(info.get("vision_cues"), dict) else {}
+    wall = cues.get("wall_hazard") if cues else None
+    wall_s = f" wall={float(wall):.2f}" if wall is not None else ""
+    bearing = cues.get("target_bearing") if cues else None
+    bearing_s = f" bear={float(bearing):+.2f}" if bearing is not None else ""
+    cur = info.get("curiosity_gated")
+    cur_s = f" cur={float(cur):.3f}" if cur is not None else ""
+
+    thought = " ".join(str(info.get("refined_thought") or "").split())
+    critique = " ".join(str(info.get("devil_critique") or "").split())
+    thought_limit = 500 if verbose else 220
+    critique_limit = 280 if verbose else 140
+    # Always show current mind snapshot (held across motor ticks until the next MIND*).
+    thought_s = f" | mind: {thought[:thought_limit]}" if thought else ""
+    critique_s = f" | devil: {critique[:critique_limit]}" if critique else ""
+
+    return (
+        f"[live {step:04d} {tag}] {goal_s} act=[{fwd:+.2f},{turn:+.2f}]"
+        f"{track_s}{energy_s}{hunger_s}{surv_s}{fear_s}{wall_s}{bearing_s}{cur_s}"
+        f"{cov_s}{chosen}{l1_s}{thought_s}{critique_s}"
+    )
+
+
+def format_live_mind_detail(step: int, info: dict[str, Any]) -> str:
+    """Multi-line dump for MIND* ticks when verbose logging is on."""
+    import json
+
+    intent = info.get("intent") or {}
+    future = intent.get("future") if isinstance(intent, dict) else {}
+    payload = {
+        "step": step,
+        "plan": (future or {}).get("chosen_name"),
+        "intent": {
+            "forward": intent.get("forward") if isinstance(intent, dict) else None,
+            "turn": intent.get("turn") if isinstance(intent, dict) else None,
+            "confidence": intent.get("confidence") if isinstance(intent, dict) else None,
+        },
+        "vision_cues": info.get("vision_cues"),
+        "affect": {
+            k: (info.get("affect") or {}).get(k)
+            for k in ("survival_risk", "fear", "novelty", "exploration", "joy")
+        },
+        "layer1_values": (future or {}).get("layer1_values"),
+        "refined_thought": info.get("refined_thought"),
+        "devil_critique": info.get("devil_critique"),
+        "curiosity_gated": info.get("curiosity_gated"),
+        "energy": info.get("energy"),
+        "hunger": info.get("hunger"),
+    }
+    return f"[live {step:04d} DETAIL] " + json.dumps(payload, default=str)
+
+
+def log_live_step(
+    step: int,
+    action: np.ndarray,
+    info: dict[str, Any],
+    *,
+    log_path: str | Path | None = None,
+    verbose: bool = False,
+) -> None:
+    """Print a live step line to the console and optionally append to a file."""
+    line = format_live_step_log(step, action, info, verbose=verbose)
+    # stdout + stderr: some IDE/Unity-adjacent terminals only surface one stream.
+    print(line, flush=True)
+    print(line, file=sys.stderr, flush=True)
+    detail = ""
+    if verbose and bool(info.get("mind_tick")):
+        detail = format_live_mind_detail(step, info)
+        print(detail, flush=True)
+        print(detail, file=sys.stderr, flush=True)
+    if log_path is not None:
+        path = Path(log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+            if detail:
+                handle.write(detail + "\n")
+            handle.flush()
 
 def load_mind_config(path: str | Path | None = None) -> dict[str, Any]:
     if path is None:
@@ -42,6 +177,7 @@ class LiveMindConfig:
     dsn: str | None = None
     llm_mock: bool = True
     action_clamps: dict[str, float] | None = None
+    stimulus_thresholds: dict[str, float] | None = None
     use_vision_head: bool = True
     use_heuristic_if_untrained: bool = True
     vision_checkpoint: str | None = None
@@ -54,6 +190,16 @@ class LiveMindConfig:
     enable_retrospective: bool = True
     curiosity: CuriosityConfig | None = None
     seed: int = 42
+    # Phase 9 architecture B: mind goals at mind_interval; motor tracks every step.
+    enable_motor_layer: bool = True
+    mind_interval: int = DEFAULT_MIND_INTERVAL
+    motor: MotorLayerConfig | None = None
+    console_log: bool = False
+    console_log_every: int = 1
+    # When set, each [live …] line is also appended here (easier than hunting terminals).
+    log_path: str | None = None
+    # Longer mind text + full DETAIL JSON lines on each MIND* tick.
+    console_log_verbose: bool = False
 
     @classmethod
     def from_yaml(
@@ -64,6 +210,7 @@ class LiveMindConfig:
         live = data.get("live", {})
         llm = data.get("llm", {})
         wm = data.get("world_model", {}) or {}
+        motor_raw = data.get("motor", {}) or {}
         vn = visual_nav or {}
         vn_live = vn.get("live", {})
         clamps = dict(thinking.get("action_clamps") or {})
@@ -82,6 +229,7 @@ class LiveMindConfig:
             dsn=db.get("dsn"),
             llm_mock=bool(llm.get("mock", True)),
             action_clamps=clamps,
+            stimulus_thresholds=dict(thinking.get("stimulus_thresholds") or {}) or None,
             use_vision_head=bool(vn_live.get("use_vision_head", True)),
             use_heuristic_if_untrained=bool(vn_live.get("use_heuristic_if_untrained", True)),
             vision_checkpoint=(vn.get("train") or {}).get("checkpoint_path"),
@@ -94,6 +242,15 @@ class LiveMindConfig:
             enable_retrospective=bool(thinking.get("enable_retrospective", True)),
             curiosity=CuriosityConfig.from_dict(data.get("curiosity")),
             seed=int(data.get("seed", live.get("seed", 42))),
+            enable_motor_layer=bool(motor_raw.get("enabled", live.get("enable_motor_layer", True))),
+            mind_interval=int(
+                motor_raw.get("mind_interval", live.get("mind_interval", DEFAULT_MIND_INTERVAL))
+            ),
+            motor=MotorLayerConfig.from_dict(motor_raw),
+            console_log=bool(live.get("console_log", False)),
+            console_log_every=max(1, int(live.get("console_log_every", 1))),
+            log_path=str(live["log_path"]) if live.get("log_path") else None,
+            console_log_verbose=bool(live.get("console_log_verbose", False)),
         )
 
 
@@ -132,6 +289,7 @@ class LiveMindPipeline:
             ThinkingConfig(
                 fly_id=self.config.fly_id,
                 action_clamps=self.config.action_clamps,
+                stimulus_thresholds=self.config.stimulus_thresholds,
                 llm_mock=self.config.llm_mock,
                 priorities=self.config.priorities,
                 retrospective=self.config.retrospective,
@@ -158,8 +316,15 @@ class LiveMindPipeline:
             self.vision_head.eval()
             self.vision_head.reset_state(1)
         self.curiosity = CuriosityDrive(self.config.curiosity or CuriosityConfig())
+        motor_cfg = self.config.motor or MotorLayerConfig()
+        if self.config.motor is None and not self.config.enable_motor_layer:
+            motor_cfg = MotorLayerConfig(mode="heuristic")
+        self.motor = MotorLayer(motor_cfg) if self.config.enable_motor_layer else None
         self._step = 0
         self._pending_action: np.ndarray | None = None
+        self._last_mind_info: dict[str, Any] = {}
+        self._mind_ticks = 0
+        self._motor_ticks = 0
 
     def _load_world_model(self) -> NextStateWorldModel | None:
         model = NextStateWorldModel(
@@ -288,8 +453,8 @@ class LiveMindPipeline:
             sim_time=float(sim_time if sim_time is not None else self._step * 0.05),
             fly_id=self.config.fly_id,
         )
-        action = self.curiosity.apply_action_bias(thought.action, curiosity_step.explore_bias)
-        self._pending_action = action.copy()
+        mind_action = self.curiosity.apply_action_bias(thought.action, curiosity_step.explore_bias)
+        self._mind_ticks += 1
         retro = self.thinking._last_retrospective
         info = {
             "stm_id": stm.id,
@@ -311,14 +476,104 @@ class LiveMindPipeline:
             "unique_cells": curiosity_step.novelty.unique_cells,
             "exploration_xp": curiosity_step.novelty.exploration_xp,
             "novelty_first_visit": curiosity_step.novelty.first_visit,
+            "mind_tick": True,
+            "energy": signal_payload.get("energy", sensory.summary.get("energy")),
+            "hunger": signal_payload.get("hunger", sensory.summary.get("hunger")),
         }
+        self._last_mind_info = dict(info)
+
+        if self.motor is not None:
+            # Prefer L1/L2 plan as the motor goal; curiosity may still nudge it.
+            raw_goal = goal_from_intent(thought.intent, mind_action)
+            goal = self.curiosity.apply_action_bias(raw_goal, curiosity_step.explore_bias)
+            self.motor.set_goal(goal)
+            set_goal = getattr(self.env, "set_goal", None)
+            if callable(set_goal):
+                set_goal(goal)
+            action = self.motor.act(observation)
+            self._motor_ticks += 1
+            info["motor_goal"] = goal.tolist()
+            info["motor_action"] = action.tolist()
+            info["motor_tracking_error"] = self.motor.tracking_error()
+            info["architecture"] = "B"
+        else:
+            action = mind_action
+            info["architecture"] = "A"
+        self._pending_action = action.copy()
         return action, info
 
-    def run(self, *, max_steps: int | None = None) -> dict[str, Any]:
-        limit = max_steps if max_steps is not None else self.config.max_steps
+    def process_motor_only(self, observation: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+        """Motor tick without a new mind thought (architecture B)."""
+        info = dict(self._last_mind_info)
+        info["mind_tick"] = False
+        # Keep novelty / curiosity ticking so exploration metrics stay live during motor steps.
+        sensory = self.signals.build(observation)
+        affect = self.affect.estimate(sensory)
+        embedding = self.embedder.embed(sensory, affect)
+        position = None
+        pos_fn = getattr(self.env, "agent_position", None)
+        if callable(pos_fn):
+            position = np.asarray(pos_fn(), dtype=np.float32)
+        chem_vec = None
+        chem_fn = getattr(self.env, "chem_vector", None)
+        if callable(chem_fn):
+            chem_vec = np.asarray(chem_fn(), dtype=np.float32)
+        curiosity_step = self.curiosity.step(
+            embedding=embedding,
+            action=self._pending_action,
+            signals=sensory.to_jsonable(),
+            affect=affect.to_jsonable(),
+            position=position,
+            chem_vector=chem_vec,
+        )
+        info["curiosity"] = curiosity_step.curiosity
+        info["curiosity_gated"] = curiosity_step.gated_curiosity
+        info["curiosity_gate"] = curiosity_step.gate
+        info["explore_bias"] = curiosity_step.explore_bias
+        info["coverage"] = curiosity_step.novelty.coverage
+        info["unique_cells"] = curiosity_step.novelty.unique_cells
+        info["exploration_xp"] = curiosity_step.novelty.exploration_xp
+        summary = sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else sensory.summary
+        info["energy"] = summary.get("energy", sensory.summary.get("energy"))
+        info["hunger"] = summary.get("hunger", sensory.summary.get("hunger"))
+        if self.motor is None:
+            action = (
+                self._pending_action
+                if self._pending_action is not None
+                else np.asarray([0.0, 0.0, 0.5, 0.5, 0.0], dtype=np.float32)
+            )
+            info["architecture"] = "A"
+            return action, info
+        action = self.motor.act(observation)
+        self._motor_ticks += 1
+        info["motor_goal"] = self.motor.goal.tolist()
+        info["motor_action"] = action.tolist()
+        info["motor_tracking_error"] = self.motor.tracking_error()
+        info["architecture"] = "B"
+        self._pending_action = action.copy()
+        return action, info
+
+    def run(
+        self,
+        *,
+        max_steps: int | None = None,
+        continuous: bool = False,
+        realtime_hz: float | None = None,
+    ) -> dict[str, Any]:
+        import time
+
+        if continuous:
+            step_limit: int | None = None
+        else:
+            step_limit = max_steps if max_steps is not None else self.config.max_steps
         self._step = 0
+        self._mind_ticks = 0
+        self._motor_ticks = 0
         self.curiosity.reset()
         self._pending_action = None
+        self._last_mind_info = {}
+        if self.motor is not None:
+            self.motor.reset()
         obs, reset_info = self.env.reset(seed=self.config.seed)
         last_info: dict[str, Any] = {}
         terminated = False
@@ -331,41 +586,104 @@ class LiveMindPipeline:
                     reset_info.get("distance_to_target", 0.0),
                 )
             )
-        for _ in range(limit):
-            action, info = self.process_observation(obs)
-            # Blend food-search heuristic when available (Phase 6 live improvement loop).
+        interval = max(1, int(self.config.mind_interval))
+        period = (1.0 / float(realtime_hz)) if realtime_hz and realtime_hz > 0 else None
+        if self.config.console_log:
+            print(
+                "live_mind_waiting_first_tick "
+                "(first [live …] line appears after the first mind/motor compute; "
+                "then each Unity Academy decision)",
+                flush=True,
+            )
+        while step_limit is None or self._step < step_limit:
+            tick_start = time.perf_counter()
+            should_think = (
+                (self.motor is None) or (self._step % interval == 0) or not self._last_mind_info
+            )
+            if should_think:
+                if self.config.console_log and self._step == 0:
+                    print("live_mind_thinking step=0 …", flush=True)
+                action, info = self.process_observation(obs)
+            else:
+                action, info = self.process_motor_only(obs)
+            # Blend food-search heuristic into the *goal* path when mind just thought.
             food_policy = getattr(self.env, "food_policy_action", None)
-            if callable(food_policy):
+            if callable(food_policy) and info.get("mind_tick"):
                 food_action = food_policy()
-                action = action.copy()
-                action[0] = 0.4 * float(action[0]) + 0.6 * float(food_action[0])
-                action[1] = 0.35 * float(action[1]) + 0.65 * float(food_action[1])
-                action[4] = 0.3 * float(action[4]) + 0.7 * float(food_action[4])
-            # Phase 5: blend vision heuristic when the env exposes it.
+                if self.motor is not None:
+                    blended = action.copy()
+                    blended[0] = 0.4 * float(self.motor.goal[0]) + 0.6 * float(food_action[0])
+                    blended[1] = 0.35 * float(self.motor.goal[1]) + 0.65 * float(food_action[1])
+                    blended[4] = 0.3 * float(self.motor.goal[4]) + 0.7 * float(food_action[4])
+                    self.motor.set_goal(blended)
+                    set_goal = getattr(self.env, "set_goal", None)
+                    if callable(set_goal):
+                        set_goal(blended)
+                    action = self.motor.act(obs)
+                else:
+                    action = action.copy()
+                    action[0] = 0.4 * float(action[0]) + 0.6 * float(food_action[0])
+                    action[1] = 0.35 * float(action[1]) + 0.65 * float(food_action[1])
+                    action[4] = 0.3 * float(action[4]) + 0.7 * float(food_action[4])
             vision_policy = getattr(self.env, "vision_policy_action", None)
-            if callable(vision_policy):
+            if callable(vision_policy) and info.get("mind_tick"):
                 vision_action = vision_policy()
-                action = action.copy()
-                action[0] = 0.35 * float(action[0]) + 0.65 * float(vision_action[0])
-                action[1] = 0.25 * float(action[1]) + 0.75 * float(vision_action[1])
+                if self.motor is not None:
+                    blended = self.motor.goal.copy()
+                    blended[0] = 0.35 * float(blended[0]) + 0.65 * float(vision_action[0])
+                    blended[1] = 0.25 * float(blended[1]) + 0.75 * float(vision_action[1])
+                    self.motor.set_goal(blended)
+                    action = self.motor.act(obs)
+                else:
+                    action = action.copy()
+                    action[0] = 0.35 * float(action[0]) + 0.65 * float(vision_action[0])
+                    action[1] = 0.25 * float(action[1]) + 0.75 * float(vision_action[1])
                 self._pending_action = action.copy()
-            # Phase 8: optional explore heuristic blend when env provides it and gate is open.
             explore_policy = getattr(self.env, "explore_policy_action", None)
-            if callable(explore_policy) and float(info.get("curiosity_gate", 0.0)) > 0.2:
+            if (
+                callable(explore_policy)
+                and info.get("mind_tick")
+                and float(info.get("curiosity_gate", 0.0)) > 0.2
+            ):
                 explore_action = explore_policy()
                 blend = 0.45 * float(info.get("explore_bias", 0.0))
-                action = action.copy()
-                action[0] = (1.0 - blend) * float(action[0]) + blend * float(explore_action[0])
-                action[1] = (1.0 - blend) * float(action[1]) + blend * float(explore_action[1])
-                action[3] = (1.0 - 0.5 * blend) * float(action[3]) + 0.5 * blend * float(
-                    explore_action[3]
-                )
+                if self.motor is not None:
+                    g = self.motor.goal.copy()
+                    g[0] = (1.0 - blend) * float(g[0]) + blend * float(explore_action[0])
+                    g[1] = (1.0 - blend) * float(g[1]) + blend * float(explore_action[1])
+                    g[3] = (1.0 - 0.5 * blend) * float(g[3]) + 0.5 * blend * float(
+                        explore_action[3]
+                    )
+                    self.motor.set_goal(g)
+                    action = self.motor.act(obs)
+                else:
+                    action = action.copy()
+                    action[0] = (1.0 - blend) * float(action[0]) + blend * float(explore_action[0])
+                    action[1] = (1.0 - blend) * float(action[1]) + blend * float(explore_action[1])
+                    action[3] = (1.0 - 0.5 * blend) * float(action[3]) + 0.5 * blend * float(
+                        explore_action[3]
+                    )
                 self._pending_action = action.copy()
             last_info = info
+            # Log BEFORE env.step: Unity/ML-Agents step() blocks until the next
+            # Academy decision, so post-step logging looks like "nothing until exit".
+            if self.config.console_log and (self._step % self.config.console_log_every == 0):
+                log_live_step(
+                    self._step,
+                    action,
+                    last_info,
+                    log_path=self.config.log_path,
+                    verbose=self.config.console_log_verbose,
+                )
             obs, _reward, terminated, truncated, step_info = self.env.step(action)
             if isinstance(step_info, dict):
                 last_info = {**last_info, **step_info}
             self._step += 1
+            if period is not None:
+                elapsed = time.perf_counter() - tick_start
+                sleep_for = period - elapsed
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
             if terminated or truncated:
                 break
         self.experience.end_episode()
@@ -399,6 +717,10 @@ class LiveMindPipeline:
             ),
             "curiosity_reward_mean": float(curiosity_summary.get("curiosity_reward_mean", 0.0)),
             "curiosity": curiosity_summary,
+            "mind_ticks": self._mind_ticks,
+            "motor_ticks": self._motor_ticks,
+            "mind_interval": interval,
+            "architecture": "B" if self.motor is not None else "A",
         }
 
 
@@ -408,12 +730,17 @@ def make_live_env(
     fake_visual_nav: bool = False,
     fake_food_search: bool = False,
     fake_explore: bool = False,
+    fake_locomotion: bool = False,
     editor: bool = False,
     build: str | None = None,
     port: int | None = None,
     seed: int | None = None,
 ):
     env_seed = 42 if seed is None else int(seed)
+    if fake_locomotion:
+        from flybrain.env_locomotion import FakeLocomotionConfig, FakeLocomotionEnv
+
+        return FakeLocomotionEnv(FakeLocomotionConfig(seed=env_seed))
     if fake_explore:
         from flybrain.env_explore import FakeExplorationConfig, FakeExplorationEnv
 
@@ -442,7 +769,7 @@ def make_live_env(
             base_port=port,
             no_graphics=not editor and file_name is not None,
             editor_connect=bool(editor),
-            timeout_wait=60 if editor else 120,
+            timeout_wait=600 if editor else 120,
             seed=env_seed,
         )
     )

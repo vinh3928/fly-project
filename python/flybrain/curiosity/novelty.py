@@ -27,7 +27,7 @@ class NoveltyConfig:
     repeat_decay: float = REPEAT_VISIT_DECAY
     embedding_bins: int = EMBEDDING_HASH_BINS
     chem_bins: int = CHEM_SIGNATURE_BINS
-    arena_half_extent: float = 0.5
+    arena_half_extent: float = 0.25
 
 
 @dataclass

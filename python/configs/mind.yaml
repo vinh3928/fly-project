@@ -49,7 +49,15 @@ thinking:
     turn_max: 1.0
     height_default: 0.5
     frequency_default: 0.5
-    survival_forward_scale: 0.25
+    survival_forward_scale: 0.35
+  # Lower ⇒ sugar/novelty/hunger peaks fire sooner → walk/forage plans.
+  stimulus_thresholds:
+    bitter: 0.2
+    sugar: 0.15
+    wall: 0.25
+    survival: 0.35
+    low_energy: 0.55
+    novelty: 0.22
   enable_retrospective: true
 
 # Phase 7: two-layer next-state + low-load retrospective
@@ -76,6 +84,22 @@ world_model:
 live:
   max_steps: 200
   use_fake_env: false
+  console_log: true
+  console_log_every: 1  # every decision step; mind text is included on motor ticks too
+  console_log_verbose: false  # set true or pass -v for full MIND* DETAIL JSON lines
+
+# Phase 9 architecture B: mind emits goals; motor layer tracks every step.
+motor:
+  enabled: true
+  mind_interval: 4
+  mode: heuristic  # heuristic | learned
+  smoothing: 0.55
+  max_delta: 0.75
+  min_forward: 0.4
+  checkpoint_path: checkpoints/motor_policy.pt
+  obs_dim: 197
+  goal_dim: 5
+  action_dim: 5
 
 # Phase 8: curiosity-driven exploration (novelty + prediction error, homeostatic gates)
 curiosity:
@@ -84,15 +108,15 @@ curiosity:
   novelty_weight: 0.55
   prediction_weight: 0.45
   reward_cap: 1.0
-  survival_risk_max: 0.55
-  hunger_max: 0.55
-  energy_min: 0.4
-  explore_action_boost: 0.28
-  explore_candidate_bonus: 0.12
+  survival_risk_max: 0.7
+  hunger_max: 0.7
+  energy_min: 0.25
+  explore_action_boost: 0.45
+  explore_candidate_bonus: 0.22
   latent_dim: 256
   action_dim: 5
   novelty:
     grid_cell_size: 0.1
     first_visit_bonus: 1.0
     repeat_decay: 0.85
-    arena_half_extent: 0.5
+    arena_half_extent: 0.25

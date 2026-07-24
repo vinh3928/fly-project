@@ -11,7 +11,7 @@ namespace FlySimulation.Environment
     [RequireComponent(typeof(Camera))]
     public sealed class ChamberOverviewCamera : MonoBehaviour
     {
-        [SerializeField] private Vector3 chamberSize = new Vector3(0.1f, 0.05f, 0.1f);
+        [SerializeField] private Vector3 chamberSize = new Vector3(0.5f, 0.25f, 0.5f);
         [SerializeField] private float fieldOfView = 50f;
 
         private Camera _camera;

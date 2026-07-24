@@ -28,6 +28,7 @@ class ThinkingConfig:
     top_k_similar: int = 5
     recent_k: int = 8
     action_clamps: dict[str, float] | None = None
+    stimulus_thresholds: dict[str, float] | None = None
     llm_mock: bool = True
     llm_kwargs: dict[str, Any] | None = None
     priorities: dict[str, Any] | None = None
@@ -81,6 +82,7 @@ class ThinkingService:
             past_outcomes=self.outcome_memory.all(),
             world_model=self.world_model,
             embedding=stm.embedding,
+            stimulus_thresholds=self.config.stimulus_thresholds,
         )
         present_future = future.as_present_future()
         draft = (
@@ -102,6 +104,7 @@ class ThinkingService:
             future_confidence=future.confidence,
             future_meta={
                 "chosen_name": future.chosen_name,
+                "chosen_action": np.asarray(future.chosen_action, dtype=np.float32).tolist(),
                 "layer2_override": future.layer2_override,
                 "layer2_reason": future.layer2_reason,
                 "priority_weights": future.priority_weights,

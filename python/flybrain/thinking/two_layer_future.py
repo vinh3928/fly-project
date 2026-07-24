@@ -21,14 +21,25 @@ from flybrain.world_model.predictor import NextStateWorldModel
 
 
 # Discrete candidate high-level actions for Layer-1 scan.
+# Forward-heavy so motor goals produce visible walking when mind+motor track them.
 _CANDIDATES: list[tuple[str, np.ndarray]] = [
-    ("forward", np.asarray([0.8, 0.0, 0.5, 0.5, 0.0], dtype=np.float32)),
-    ("turn_left", np.asarray([0.2, -0.7, 0.5, 0.5, 0.0], dtype=np.float32)),
-    ("turn_right", np.asarray([0.2, 0.7, 0.5, 0.5, 0.0], dtype=np.float32)),
+    ("forward", np.asarray([0.9, 0.0, 0.5, 0.75, 0.0], dtype=np.float32)),
+    ("turn_left", np.asarray([0.65, -0.75, 0.5, 0.7, 0.0], dtype=np.float32)),
+    ("turn_right", np.asarray([0.65, 0.75, 0.5, 0.7, 0.0], dtype=np.float32)),
     ("stop", np.asarray([0.0, 0.0, 0.5, 0.3, 0.0], dtype=np.float32)),
-    ("feed", np.asarray([0.15, 0.0, 0.5, 0.4, 0.9], dtype=np.float32)),
-    ("explore", np.asarray([0.45, 0.25, 0.5, 0.7, 0.0], dtype=np.float32)),
+    ("feed", np.asarray([0.25, 0.0, 0.5, 0.45, 0.9], dtype=np.float32)),
+    ("explore", np.asarray([0.75, 0.2, 0.5, 0.8, 0.0], dtype=np.float32)),
 ]
+
+# Lower than historical defaults so sugar / novelty / hunger fire earlier → walk sooner.
+DEFAULT_STIMULUS_THRESHOLDS: dict[str, float] = {
+    "bitter": 0.2,
+    "sugar": 0.15,
+    "wall": 0.25,
+    "survival": 0.35,
+    "low_energy": 0.55,  # energy below this ⇒ low_energy peak
+    "novelty": 0.22,
+}
 
 
 @dataclass
@@ -59,19 +70,24 @@ class FuturePrediction:
         return {"present": self.present, "future_hypothesis": self.future_hypothesis}
 
 
-def _stimulus_peaks(signals: dict[str, Any], affect: dict[str, Any]) -> list[str]:
+def _stimulus_peaks(
+    signals: dict[str, Any],
+    affect: dict[str, Any],
+    thresholds: dict[str, float] | None = None,
+) -> list[str]:
+    thr = {**DEFAULT_STIMULUS_THRESHOLDS, **(thresholds or {})}
     peaks: list[str] = []
-    if float(signals.get("bitter", 0.0)) > 0.35:
+    if float(signals.get("bitter", 0.0)) > thr["bitter"]:
         peaks.append("bitter")
-    if float(signals.get("sugar", 0.0)) > 0.3:
+    if float(signals.get("sugar", 0.0)) > thr["sugar"]:
         peaks.append("sugar")
-    if float(signals.get("wall_hazard", 0.0)) > 0.4:
+    if float(signals.get("wall_hazard", 0.0)) > thr["wall"]:
         peaks.append("wall")
-    if float(affect.get("survival_risk", 0.0)) > 0.55:
+    if float(affect.get("survival_risk", 0.0)) > thr["survival"]:
         peaks.append("survival")
-    if float(signals.get("energy", 0.5)) < 0.4:
+    if float(signals.get("energy", 0.5)) < thr["low_energy"]:
         peaks.append("low_energy")
-    if float(affect.get("novelty", affect.get("exploration", 0.0))) > 0.55:
+    if float(affect.get("novelty", affect.get("exploration", 0.0))) > thr["novelty"]:
         peaks.append("novelty")
     return peaks
 
@@ -183,6 +199,7 @@ def score_candidate(
     world_model: NextStateWorldModel | None = None,
     embedding: np.ndarray | None = None,
     learning_progress: float = 0.0,
+    stimulus_peaks: list[str] | None = None,
 ) -> Layer1Result:
     cur_s, cur_a, cur_g = _utilities_from_state(signals=signals, affect=affect)
     cur_v = priority_value(
@@ -216,12 +233,20 @@ def score_candidate(
         altruism_utility=nxt_a,
         spiritual_utility=nxt_g,
     )
-    # Phase 8: soft boost for explore when gated curiosity drive is active.
+    # Phase 8: soft boost for explore/forward when gated curiosity drive is active.
     curiosity_drive = float(signals.get("curiosity_drive", signals.get("explore_bias", 0.0)))
-    if name == "explore" and curiosity_drive > 0.05:
+    if curiosity_drive > 0.05 and name in ("explore", "forward"):
         from flybrain.phase8 import EXPLORE_CANDIDATE_BONUS
 
         nxt_v = float(nxt_v + EXPLORE_CANDIDATE_BONUS * curiosity_drive)
+    peaks = stimulus_peaks if stimulus_peaks is not None else _stimulus_peaks(signals, affect)
+    # Calm / novelty: prefer walking over stop/spin-in-place so motor goals stay locomotor.
+    calmish = (not peaks) or peaks == ["novelty"]
+    if calmish:
+        if name in ("forward", "explore"):
+            nxt_v = float(nxt_v + 0.12)
+        elif name == "stop":
+            nxt_v = float(nxt_v - 0.08)
     return Layer1Result(
         name=name,
         action=np.asarray(action, dtype=np.float32),
@@ -241,11 +266,12 @@ def layer1_quick_scan(
     world_model: NextStateWorldModel | None = None,
     embedding: np.ndarray | None = None,
     candidates: list[tuple[str, np.ndarray]] | None = None,
+    stimulus_thresholds: dict[str, float] | None = None,
 ) -> tuple[Layer1Result, list[Layer1Result], PriorityWeights]:
     """Scan latent stimuli / candidate actions; pick best priority-improving action."""
     survival_risk = float(affect.get("survival_risk", 0.0))
     weights = experience.priority_weights(survival_risk=survival_risk)
-    peaks = _stimulus_peaks(signals, affect)
+    peaks = _stimulus_peaks(signals, affect, stimulus_thresholds)
     pool = list(candidates or _CANDIDATES)
 
     # Bias pool toward stimuli (still score all, but ensure relevant actions present).
@@ -254,6 +280,8 @@ def layer1_quick_scan(
     if "sugar" in peaks or "low_energy" in peaks:
         # Prefer feed/forward early in list for tie-breaks
         pool = sorted(pool, key=lambda c: 0 if c[0] in ("feed", "forward") else 1)
+    if not peaks or peaks == ["novelty"]:
+        pool = sorted(pool, key=lambda c: 0 if c[0] in ("forward", "explore") else 1)
 
     scored = [
         score_candidate(
@@ -264,6 +292,7 @@ def layer1_quick_scan(
             weights=weights,
             world_model=world_model,
             embedding=embedding,
+            stimulus_peaks=peaks,
         )
         for name, action in pool
     ]
@@ -356,6 +385,7 @@ def predict_present_future(
     past_outcomes: list[dict[str, Any]] | None = None,
     world_model: NextStateWorldModel | None = None,
     embedding: np.ndarray | None = None,
+    stimulus_thresholds: dict[str, float] | None = None,
 ) -> FuturePrediction:
     best, scored, weights = layer1_quick_scan(
         signals=signals,
@@ -363,6 +393,7 @@ def predict_present_future(
         experience=experience,
         world_model=world_model,
         embedding=embedding,
+        stimulus_thresholds=stimulus_thresholds,
     )
     chosen, overridden, reason = layer2_reflect_outcomes(
         layer1=best,
