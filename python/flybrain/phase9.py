@@ -9,7 +9,7 @@ BODY_OBS_DIM = 197
 MOTOR_TRAINING_OBS_DIM = BODY_OBS_DIM + MOTOR_GOAL_DIM  # 202
 
 # Live mind: think less often than the motor steps.
-DEFAULT_MIND_INTERVAL = 4
+DEFAULT_MIND_INTERVAL = 40
 
 # Locomotion reward weights (Python fake + Unity mirror).
 FORWARD_PROGRESS_WEIGHT = 1.0

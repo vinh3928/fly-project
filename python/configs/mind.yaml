@@ -35,12 +35,22 @@ affect:
     damage_to_fear: 0.7
 
 llm:
-  # OpenAI-compatible; set OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
-  base_url: "https://api.openai.com/v1"
-  model: "gpt-4o-mini"
-  timeout_seconds: 30
-  # When true (default for tests), use heuristic devil's advocate without HTTP
-  mock: true
+  # Devil's advocate against a LOCAL *text* Ollama model (not OpenAI, not the vision model).
+  # qwen2.5vl:7b is for visual_thinking only — using it here costs ~10-15s/call.
+  #   ollama pull llama3.2:3b
+  # Env overrides still work: OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL.
+  base_url: "http://127.0.0.1:11434/v1"
+  model: "llama3.2:3b"
+  api_key: "ollama"       # Ollama ignores it; the OpenAI-style client sends one
+  timeout_seconds: 20
+  max_tokens: 120         # enough for the full JSON proposal without truncation
+  temperature: 0.3
+  keep_alive: "10m"       # keep model warm between mind ticks
+  # When true, use the heuristic devil's advocate without HTTP (tests / offline).
+  mock: false
+  # Critique is requested every mind tick, so refresh off-thread and reuse the
+  # newest reply instead of blocking the sim loop on the model.
+  background: true
 
 thinking:
   decision_hz: 20
@@ -80,6 +90,7 @@ world_model:
     batch_size: 8
     wm_train_steps: 1
     wm_lr: 0.001
+    investigate_interest: true
 
 live:
   max_steps: 200
@@ -91,7 +102,7 @@ live:
 # Phase 9 architecture B: mind emits goals; motor layer tracks every step.
 motor:
   enabled: true
-  mind_interval: 4
+  mind_interval: 40  # ~10× less often than 4; motor still tracks every step
   mode: heuristic  # heuristic | learned
   smoothing: 0.55
   max_delta: 0.75
@@ -148,3 +159,87 @@ tendency:
   outcome_lr: 0.08
   base_bonus: 0.06
   safe_mode_bonus: 0.30
+
+# Eye novelty: new visual patches pull explore motor toward their bearing.
+visual_novelty:
+  enabled: true
+  n_columns: 8
+  first_visit_bonus: 1.0
+  repeat_decay: 0.7
+  change_weight: 0.45
+  novelty_weight: 0.55
+  turn_gain: 0.85
+  forward_gain: 0.55
+  min_novelty_for_pull: 0.18
+  # Habituation: staring at the same view (a wall) slowly loses novelty; a
+  # genuinely changing scene recovers it. Prevents ambient walls staying "novel".
+  habituation_enabled: true
+  static_change_threshold: 0.08   # frame change below this ⇒ "same view"
+  habituation_rate: 0.02          # slow decay toward habituated when static (~50 ticks)
+  dishabituation_rate: 0.5        # fast recovery when the scene changes
+  habituation_strength: 0.9       # up to 90% of novelty suppressed when fully habituated
+
+# Novelty-triggered vision-LLM "thinking mode": when the eyes see something
+# novel during low cognitive load, stop to think against a LOCAL vision LLM
+# (Ollama, not OpenAI). Runs off the hot path so the motor keeps ticking.
+#   Recommended models:  qwen2.5vl:7b (best), qwen2.5vl:3b / moondream (light).
+#   Enable Ollama:  set enabled: true, mock: false, and run `ollama pull qwen2.5vl:7b`.
+visual_thinking:
+  enabled: true             # novelty → low-load vision-LLM think via Ollama
+  mock: false               # false = call Ollama; true = offline heuristic
+  base_url: "http://127.0.0.1:11434/v1"
+  model: "qwen2.5vl:7b"
+  api_key: "ollama"         # Ollama ignores it; the OpenAI-style client sends one
+  timeout_seconds: 30
+  # Gating: only "stop to think" when safe and worthwhile.
+  min_visual_novelty: 0.45
+  require_new_stimulus: false
+  max_wall_hazard: 0.6
+  max_survival_risk: 0.5
+  cooldown_ticks: 40
+  image_size: 128
+  # Motor influence.
+  inspect_forward_scale: 0.2   # damp forward while thinking (stop & look)
+  inspect_turn_gain: 0.6       # orient toward the stimulus while thinking
+  insight_ttl_ticks: 40        # how long an "approach" insight pulls the goal
+
+# Seeded personality — judgement reads a live snapshot every mind tick.
+# Later systems rewrite these via pipeline.personality.adjust / set_traits.
+personality:
+  risk_appetite: 0.45          # 0 = averse .. 1 = seeking
+  playfulness: 0.55
+  curiosity_to_test: 0.70
+  intelligence: 0.50
+  wisdom: 0.30
+
+# Trait-weighted judgement of structured devil proposals → motor blend.
+# acknowledge = park as interest point for low-load investigation (no motor blend).
+judgement:
+  enabled: true
+  reconsider_budget: 1
+  reject_memory_ticks: 80
+  base_blend_weight: 0.30
+  max_blend_weight: 0.60
+  accept_threshold: 0.15
+  reject_threshold: 0.20
+  ignore_weak_confidence: 0.2
+  acknowledge_threshold: 0.18
+  acknowledge_novelty_min: 0.15
+  acknowledge_load_min: 0.45
+  acknowledge_eye_match_max: 0.4   # if eyes match a stored acknowledge > this, no re-ack
+
+# Deferred interest points: judgement acknowledge → STM-linked queue →
+# low-load retrospective pops and investigates (slow + turn toward bearing).
+interest:
+  enabled: true
+  max_pending: 32
+  ttl_ticks: 800
+  investigate_per_low_load: 1
+  min_novelty_to_enqueue: 0.12
+  investigate_forward_scale: 0.25
+  investigate_turn_gain: 0.7
+  investigate_ttl_ticks: 40
+  merge_bearing_tol: 0.25
+  eye_store_size: 32            # downsample each eye snapshot to NxN
+  max_eye_archives: 64          # keep this many acknowledge eye pairs
+  acknowledge_eye_match_max: 0.4

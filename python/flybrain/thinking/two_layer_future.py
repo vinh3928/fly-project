@@ -241,6 +241,18 @@ def score_candidate(
         from flybrain.phase8 import EXPLORE_CANDIDATE_BONUS
 
         nxt_v = float(nxt_v + EXPLORE_CANDIDATE_BONUS * curiosity_drive)
+    # Eye novelty: new visual stimuli make explore/court more attractive.
+    visual_novelty = float(signals.get("visual_novelty", 0.0))
+    if visual_novelty > 0.15 and name in ("explore", "forward", "court", "turn_left", "turn_right"):
+        bearing = float(signals.get("novelty_bearing", 0.0))
+        bonus = 0.28 * visual_novelty
+        if name == "explore":
+            bonus += 0.12 * visual_novelty
+        if name == "turn_left" and bearing < -0.15:
+            bonus += 0.1 * visual_novelty
+        if name == "turn_right" and bearing > 0.15:
+            bonus += 0.1 * visual_novelty
+        nxt_v = float(nxt_v + bonus)
     peaks = stimulus_peaks if stimulus_peaks is not None else _stimulus_peaks(signals, affect)
     # Calm / novelty: prefer walking over stop/spin-in-place so motor goals stay locomotor.
     calmish = (not peaks) or peaks == ["novelty"]

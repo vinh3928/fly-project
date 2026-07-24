@@ -1,5 +1,6 @@
 using FlySimulation.Environment;
 using FlySimulation.Experiments;
+using FlySimulation.Fly.Sensors;
 using UnityEngine;
 
 namespace FlySimulation.Environment
@@ -29,6 +30,7 @@ namespace FlySimulation.Environment
             ResolveChamberSize();
             ApplyFraming();
             ChamberWallHider.HideWalls();
+            EnsureEyeOverlay();
         }
 
         private void OnEnable()
@@ -36,6 +38,28 @@ namespace FlySimulation.Environment
             ClaimMainCamera();
             ApplyFraming();
             ChamberWallHider.HideWalls();
+            EnsureEyeOverlay();
+        }
+
+        private static void EnsureEyeOverlay()
+        {
+            if (FindFirstObjectByType<FlyEyeViewOverlay>() != null)
+            {
+                return;
+            }
+
+            var host = GameObject.Find("OverviewCamera");
+            if (host == null)
+            {
+                host = Camera.main != null ? Camera.main.gameObject : null;
+            }
+
+            if (host == null)
+            {
+                return;
+            }
+
+            host.AddComponent<FlyEyeViewOverlay>();
         }
 
         private void ResolveChamberSize()

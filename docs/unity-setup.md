@@ -37,6 +37,11 @@ After it runs, open `Assets/Scenes/Chamber.unity` if it is not already open. Sel
 
 Press **Play** and watch the **Game** tab (not only Scene view). You should see the grey floor, yellow/purple pads, and dark fly through the cutaway.
 
+**Fly eye view (Game tab):** On Play, bottom-corner PIP panels show Left/Right eye
+RenderTextures in the **Game** view (Canvas overlay). Press **V** to toggle.
+Do not expect selecting `LeftEye` in the Hierarchy to change the Game camera — those
+cameras stay disabled on purpose. Scene/Simulator camera previews are separate from Game view.
+
 If Play mode looks like a solid blue box with a grey square:
 
 **Tools → Fly → Fix Chamber Visibility**
@@ -58,7 +63,7 @@ ML-Agents `Heuristic` (when connected): Vertical = walk, Horizontal = turn, Spac
 ```bash
 source .venv-mlagents/bin/activate
 cd python
-python -m scripts.run_live_mind --editor --continuous --mind-interval 4
+python -m scripts.run_live_mind --editor --continuous --mind-interval 40
 ```
 
 4. Wait until the terminal prints **`Listening on port 5004`** (from ML-Agents).
@@ -88,7 +93,7 @@ tail -f logs/live_mind.log
 open logs/live_mind_last.json   # or: less / cat / jq
 
 # richer per-MIND* DETAIL JSON lines
-python -m scripts.run_live_mind --editor --continuous --mind-interval 4 -v
+python -m scripts.run_live_mind --editor --continuous --mind-interval 40 -v
 ```
 
 Use `--quiet` only if you want to silence per-step lines.

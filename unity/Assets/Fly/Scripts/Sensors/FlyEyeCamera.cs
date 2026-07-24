@@ -32,6 +32,24 @@ namespace FlySimulation.Fly.Sensors
             Configure(width, height, fieldOfView, grayscale);
         }
 
+        /// <summary>Ensure RenderTexture + camera target exist (safe to call every frame).</summary>
+        public void EnsureRenderTarget()
+        {
+            if (_camera == null)
+            {
+                _camera = GetComponent<Camera>();
+            }
+
+            if (_renderTexture == null || _readback == null || _frameBuffer == null)
+            {
+                Configure(width, height, fieldOfView, grayscale);
+            }
+            else if (_camera != null && _camera.targetTexture != _renderTexture)
+            {
+                _camera.targetTexture = _renderTexture;
+            }
+        }
+
         public void Configure(int w, int h, float fov, bool useGrayscale)
         {
             width = w;

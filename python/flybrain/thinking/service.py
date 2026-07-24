@@ -9,7 +9,7 @@ import numpy as np
 
 from flybrain.memory.pgvector import ShortTermMemory, StmRecord, ThoughtRecord
 from flybrain.thinking.composer import ThoughtResult, compose_thought
-from flybrain.thinking.devils_advocate import LlmClient, critique_draft, make_llm_client
+from flybrain.thinking.devils_advocate import LlmClient, critique_draft, make_llm_client, propose_critique
 from flybrain.thinking.reflection import build_reflection
 from flybrain.thinking.retrospective import (
     OutcomeMemory,
@@ -72,6 +72,8 @@ class ThinkingService:
         )
         self._recent_actions: list[dict[str, Any]] = []
         self._last_retrospective: RetrospectiveResult | None = None
+        self._last_devil_proposal = None
+        self.interest_store = None  # set by LiveMindPipeline when available
 
     def think_on_record(self, stm: StmRecord) -> tuple[ThoughtResult, ThoughtRecord]:
         reflection, _, _ = build_reflection(
@@ -106,8 +108,14 @@ class ThinkingService:
             f"bitter={stm.signals.get('bitter')} survival={stm.affect.get('survival_risk')} "
             f"L1={future.chosen_name} tendency={tend_state.dominant}"
         )
-        critique = critique_draft(
+        proposal = propose_critique(
             self.llm, draft=draft, affect=stm.affect, signals=stm.signals
+        )
+        critique = (
+            f"Counter: {proposal.reason} (risk={proposal.risk}, "
+            f"fwd×{proposal.forward_scale:.2f}, turnΔ={proposal.turn_delta:+.2f})."
+            if proposal.reason
+            else critique_draft(self.llm, draft=draft, affect=stm.affect, signals=stm.signals)
         )
         result = compose_thought(
             signals=stm.signals,
@@ -127,8 +135,10 @@ class ThinkingService:
                 "layer1_values": future.layer1_values,
                 "maturity": self.experience.maturity(),
                 "tendency": tend_state.as_dict(),
+                "devil_proposal": proposal.to_dict(),
             },
         )
+        self._last_devil_proposal = proposal
         thought = self.memory.insert_thought(
             stm_id=stm.id,
             reflection=result.reflection,
@@ -156,6 +166,7 @@ class ThinkingService:
         affect: dict[str, Any],
         fly_id: str | None = None,
         force: bool = False,
+        tick: int = 0,
     ) -> RetrospectiveResult:
         if not self.config.enable_retrospective and not force:
             return RetrospectiveResult(ran=False, reason="disabled")
@@ -171,6 +182,8 @@ class ThinkingService:
             config=self.retrospective_config,
             force=force,
             tendency=self.tendency,
+            interest_store=self.interest_store,
+            tick=tick,
         )
         self._last_retrospective = result
         return result
@@ -198,5 +211,5 @@ class ThinkingService:
         )
         result, thought = self.think_on_record(stm)
         # Low-load retrospective after the hot-path decision.
-        self.maybe_retrospective(signals=signals, affect=affect, fly_id=fly)
+        self.maybe_retrospective(signals=signals, affect=affect, fly_id=fly, tick=step)
         return stm, result, thought

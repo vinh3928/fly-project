@@ -59,6 +59,9 @@ def compose_thought(
     wall_hazard = float(signals.get("wall_hazard", 0.0))
     forward_bias = float(signals.get("forward_bias", 0.0))
     turn_bias = float(signals.get("turn_bias", 0.0))
+    visual_novelty = float(signals.get("visual_novelty", 0.0))
+    novelty_bearing = float(signals.get("novelty_bearing", 0.0))
+    novelty_confidence = float(signals.get("novelty_confidence", 0.0))
 
     hungry = hunger >= 0.3 or energy < 0.7
     draft = (
@@ -74,6 +77,11 @@ def compose_thought(
     # Phase 5 visual nav cues
     forward = 0.55 * forward + 0.45 * forward_bias + 0.25 * target_confidence
     turn = 0.45 * turn + 0.55 * turn_bias + 0.5 * target_bearing * target_confidence
+    # New eye stimuli look interesting → turn/walk toward them when not foraging.
+    if visual_novelty > 0.15 and not hungry:
+        pull = float(np.clip(visual_novelty * (0.45 + 0.55 * novelty_confidence), 0.0, 1.0))
+        turn = float(np.clip((1.0 - 0.7 * pull) * turn + 0.7 * pull * novelty_bearing, -1.0, 1.0))
+        forward = float(np.clip(forward + 0.45 * pull, -1.0, 1.0))
     # Phase 6 food-search
     if hungry:
         forward = 0.5 * forward + 0.5 * (0.55 + 0.4 * sugar - 0.5 * bitter)
@@ -120,13 +128,8 @@ def compose_thought(
             frequency = float(np.clip(frequency, 0.0, 1.0))
             proboscis = float(np.clip(proboscis, 0.0, 1.0))
 
-    # Devil's critique softens aggressive forward if critique mentions fall/toxin
-    critique_l = devil_critique.lower()
-    if "fall" in critique_l or "upright" in critique_l:
-        forward *= 0.5
-    if "toxin" in critique_l or "bitter" in critique_l:
-        forward *= 0.7
-        turn = float(np.clip(turn + 0.2, -1.0, 1.0))
+    # Devil motor influence moved to judgement/blend in live_mind (structured proposals).
+    # critique text is kept for reflection / logging only.
 
     # Phase 8: curiosity / novelty bias when homeostasis allows (signaled upstream).
     curiosity_drive = float(signals.get("curiosity_drive", signals.get("explore_bias", 0.0)))

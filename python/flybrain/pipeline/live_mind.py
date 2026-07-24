@@ -25,10 +25,30 @@ from flybrain.motor import MotorLayer, MotorLayerConfig, goal_from_intent
 from flybrain.phase9 import DEFAULT_MIND_INTERVAL
 from flybrain.signals.builder import SignalBuilder
 from flybrain.thinking.service import ThinkingConfig, ThinkingService
+from flybrain.thinking.visual_thinker import VisualThinker, VisualThinkerConfig
+from flybrain.thinking.personality import PersonalityState
+from flybrain.thinking.judgement import (
+    DevilProposal,
+    JudgementConfig,
+    JudgementModule,
+    apply_proposal,
+    blend_goals,
+)
+from flybrain.thinking.interest import (
+    InterestConfig,
+    InterestPointStore,
+    apply_investigation_goal,
+)
+from flybrain.thinking.devils_advocate import propose_critique
 from flybrain.vision.recurrent_head import (
     RecurrentVisionHead,
     VisionNavCues,
     heuristic_cues_from_frames,
+)
+from flybrain.vision.novelty import (
+    VisualNoveltyConfig,
+    VisualNoveltyTracker,
+    apply_visual_explore_goal,
 )
 from flybrain.world_model.outcomes import LifeExperience
 from flybrain.world_model.predictor import NextStateWorldModel
@@ -106,6 +126,38 @@ def format_live_step_log(
             f",f={float(tend.get('forage', 0)):.2f}"
             f"{',safe' if tend.get('safe_mode') else ''})"
         )
+    viz = info.get("visual_novelty")
+    viz_s = ""
+    if viz is not None:
+        nb = info.get("novelty_bearing")
+        nb_s = f",nb={float(nb):+.2f}" if nb is not None else ""
+        new = "!" if info.get("new_stimulus") else ""
+        viz_s = f" viz={float(viz):.2f}{nb_s}{new}"
+    vthink_s = ""
+    if info.get("visual_thinking"):
+        vthink_s = " vthink=…"
+    else:
+        insight = info.get("visual_insight")
+        if isinstance(insight, dict) and insight.get("ran") and insight.get("decision") != "ignore":
+            vthink_s = f" vthink={insight.get('decision')}(sal={float(insight.get('salience', 0.0)):.2f})"
+    judge_s = ""
+    judgement = info.get("judgement")
+    if isinstance(judgement, dict) and judgement.get("decision"):
+        dec = judgement.get("decision")
+        if dec == "accept":
+            judge_s = f" judge=accept(w={float(judgement.get('blend_weight', 0.0)):.2f})"
+        elif dec == "acknowledge":
+            judge_s = " judge=acknowledge"
+        else:
+            judge_s = f" judge={dec}"
+        eye_m = info.get("eye_match")
+        if eye_m is not None and float(eye_m) > 0.0:
+            judge_s += f"(eye={float(eye_m):.2f})"
+    invest = info.get("investigation")
+    if isinstance(invest, dict) and invest.get("remaining") is not None:
+        judge_s += (
+            f" invest={invest.get('kind')}(rem={int(invest.get('remaining', 0))})"
+        )
 
     thought = " ".join(str(info.get("refined_thought") or "").split())
     critique = " ".join(str(info.get("devil_critique") or "").split())
@@ -117,7 +169,7 @@ def format_live_step_log(
 
     return (
         f"[live {step:04d} {tag}] {goal_s} act=[{fwd:+.2f},{turn:+.2f}]"
-        f"{track_s}{energy_s}{hunger_s}{surv_s}{fear_s}{wall_s}{bearing_s}{cur_s}{bore_s}{tend_s}"
+        f"{track_s}{energy_s}{hunger_s}{surv_s}{fear_s}{wall_s}{bearing_s}{cur_s}{bore_s}{tend_s}{viz_s}{vthink_s}{judge_s}"
         f"{cov_s}{chosen}{l1_s}{thought_s}{critique_s}"
     )
 
@@ -144,6 +196,14 @@ def format_live_mind_detail(step: int, info: dict[str, Any]) -> str:
         "layer1_values": (future or {}).get("layer1_values"),
         "refined_thought": info.get("refined_thought"),
         "devil_critique": info.get("devil_critique"),
+        "devil_proposal": info.get("devil_proposal"),
+        "judgement": info.get("judgement"),
+        "personality": info.get("personality"),
+        "interest_point": info.get("interest_point"),
+        "investigation": info.get("investigation"),
+        "interest_pending": info.get("interest_pending"),
+        "eye_match": info.get("eye_match"),
+        "eye_match_interest_id": info.get("eye_match_interest_id"),
         "curiosity_gated": info.get("curiosity_gated"),
         "energy": info.get("energy"),
         "hunger": info.get("hunger"),
@@ -193,6 +253,7 @@ class LiveMindConfig:
     backend: str = "in_memory"
     dsn: str | None = None
     llm_mock: bool = True
+    llm_kwargs: dict[str, Any] | None = None
     action_clamps: dict[str, float] | None = None
     stimulus_thresholds: dict[str, float] | None = None
     use_vision_head: bool = True
@@ -219,6 +280,11 @@ class LiveMindConfig:
     # Longer mind text + full DETAIL JSON lines on each MIND* tick.
     console_log_verbose: bool = False
     tendency: dict[str, Any] | None = None
+    visual_novelty: VisualNoveltyConfig | None = None
+    visual_thinker: VisualThinkerConfig | None = None
+    personality: dict[str, Any] | None = None
+    judgement: JudgementConfig | None = None
+    interest: InterestConfig | None = None
 
     @classmethod
     def from_yaml(
@@ -234,6 +300,11 @@ class LiveMindConfig:
         boredom_raw = data.get("boredom") or curiosity_raw.get("boredom") or {}
         vn = visual_nav or {}
         vn_live = vn.get("live", {})
+        visual_novelty_raw = data.get("visual_novelty") or (vn.get("visual_novelty") or {})
+        visual_thinker_raw = data.get("visual_thinking") or (vn.get("visual_thinking") or {})
+        personality_raw = data.get("personality") or {}
+        judgement_raw = data.get("judgement") or {}
+        interest_raw = data.get("interest") or {}
         clamps = dict(thinking.get("action_clamps") or {})
         if "wall_hazard_forward_scale" in vn_live:
             clamps["wall_hazard_forward_scale"] = vn_live["wall_hazard_forward_scale"]
@@ -249,6 +320,20 @@ class LiveMindConfig:
             backend=str(db.get("backend", "in_memory")),
             dsn=db.get("dsn"),
             llm_mock=bool(llm.get("mock", True)),
+            llm_kwargs={
+                key: llm[key]
+                for key in (
+                    "base_url",
+                    "model",
+                    "api_key",
+                    "timeout_seconds",
+                    "background",
+                    "max_tokens",
+                    "temperature",
+                    "keep_alive",
+                )
+                if llm.get(key) is not None
+            },
             action_clamps=clamps,
             stimulus_thresholds=dict(thinking.get("stimulus_thresholds") or {}) or None,
             use_vision_head=bool(vn_live.get("use_vision_head", True)),
@@ -274,6 +359,11 @@ class LiveMindConfig:
             log_path=str(live["log_path"]) if live.get("log_path") else None,
             console_log_verbose=bool(live.get("console_log_verbose", False)),
             tendency=dict(data.get("tendency") or {}),
+            visual_novelty=VisualNoveltyConfig.from_dict(visual_novelty_raw),
+            visual_thinker=VisualThinkerConfig.from_dict(visual_thinker_raw),
+            personality=dict(personality_raw),
+            judgement=JudgementConfig.from_dict(judgement_raw),
+            interest=InterestConfig.from_dict(interest_raw),
         )
 
 
@@ -314,6 +404,7 @@ class LiveMindPipeline:
                 action_clamps=self.config.action_clamps,
                 stimulus_thresholds=self.config.stimulus_thresholds,
                 llm_mock=self.config.llm_mock,
+                llm_kwargs=self.config.llm_kwargs,
                 priorities=self.config.priorities,
                 retrospective=self.config.retrospective,
                 enable_retrospective=self.config.enable_retrospective,
@@ -341,6 +432,17 @@ class LiveMindPipeline:
             self.vision_head.reset_state(1)
         self.curiosity = CuriosityDrive(self.config.curiosity or CuriosityConfig())
         self.boredom = BoredomTracker(self.config.boredom or BoredomConfig())
+        self.visual_novelty = VisualNoveltyTracker(
+            self.config.visual_novelty or VisualNoveltyConfig()
+        )
+        self.visual_thinker = VisualThinker(
+            self.config.visual_thinker or VisualThinkerConfig(),
+            novelty_config=self.config.visual_novelty or VisualNoveltyConfig(),
+        )
+        self.personality = PersonalityState.from_config(self.config.personality)
+        self.judgement = JudgementModule(self.config.judgement or JudgementConfig())
+        self.interests = InterestPointStore(self.config.interest or InterestConfig())
+        self.thinking.interest_store = self.interests
         motor_cfg = self.config.motor or MotorLayerConfig()
         if self.config.motor is None and not self.config.enable_motor_layer:
             motor_cfg = MotorLayerConfig(mode="heuristic")
@@ -375,6 +477,10 @@ class LiveMindPipeline:
 
     def close(self) -> None:
         self.memory.close()
+        self.visual_thinker.close()
+        llm_close = getattr(self.thinking.llm, "close", None)
+        if callable(llm_close):
+            llm_close()
         close = getattr(self.env, "close", None)
         if callable(close):
             close()
@@ -387,6 +493,184 @@ class LiveMindPipeline:
         if self.config.use_heuristic_if_untrained:
             return heuristic_cues_from_frames(left, right)
         return None
+
+    def _apply_judgement(
+        self,
+        l1_goal: np.ndarray,
+        *,
+        info: dict[str, Any],
+        signals: dict[str, Any],
+        affect: dict[str, Any],
+        draft: str | None = None,
+        left_eye: np.ndarray | None = None,
+        right_eye: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Trait-weighted judgement of devil proposal → accept-blend / reject / ignore / reconsider."""
+        self.judgement.advance_tick(self._step)
+        proposal = getattr(self.thinking, "_last_devil_proposal", None)
+        if proposal is None:
+            raw = ((info.get("intent") or {}).get("future") or {}).get("devil_proposal")
+            if isinstance(raw, dict):
+                proposal = DevilProposal(
+                    risk=str(raw.get("risk", "none")),
+                    forward_scale=float(raw.get("forward_scale", 1.0)),
+                    turn_delta=float(raw.get("turn_delta", 0.0)),
+                    confidence=float(raw.get("confidence", 0.0)),
+                    reason=str(raw.get("reason", "")),
+                    ran=bool(raw.get("ran", True)),
+                    source=str(raw.get("source", "intent")),
+                )
+        if proposal is None:
+            info["judgement"] = {"decision": "ignore", "reason": "no_proposal", "blend_weight": 0.0}
+            info["personality"] = self.personality.as_dict()
+            return l1_goal
+
+        traits = self.personality.snapshot()
+        judge_signals = dict(signals)
+        judge_signals.setdefault("survival_risk", float(affect.get("survival_risk", 0.0)))
+        kind_hint = (
+            proposal.risk if proposal.risk in ("wall", "toxin", "fall", "energy") else "novelty"
+        )
+        stimuli_sig = {
+            **{k: signals.get(k) for k in ("wall_hazard", "visual_novelty", "novelty_bearing", "bitter", "energy", "sugar")},
+            "survival_risk": judge_signals.get("survival_risk"),
+        }
+        eye_match, matched = self.interests.max_eye_similarity(
+            left_eye,
+            right_eye,
+            kind=kind_hint,
+            stimuli_signature=stimuli_sig,
+        )
+        info["eye_match"] = float(eye_match)
+        if matched is not None:
+            info["eye_match_interest_id"] = matched.id
+
+        result = self.judgement.evaluate(
+            proposal,
+            traits=traits,
+            signals=judge_signals,
+            reconsider_used=0,
+            eye_match_score=eye_match,
+        )
+        if result.decision == "reconsider":
+            prior = proposal.reason or result.reason
+            redraft = draft or str(info.get("refined_thought") or "reconsider plan")
+            proposal = propose_critique(
+                self.thinking.llm,
+                draft=redraft,
+                affect=affect,
+                signals=signals,
+                prior_reason=prior,
+            )
+            self.thinking._last_devil_proposal = proposal
+            result = self.judgement.evaluate(
+                proposal,
+                traits=traits,
+                signals=judge_signals,
+                reconsider_used=1,
+                eye_match_score=eye_match,
+            )
+            if result.decision == "reconsider":
+                result.decision = "ignore"
+                result.reason = "reconsider_budget_exhausted"
+                result.blend_weight = 0.0
+
+        if result.decision == "reject":
+            self.judgement.record_reject(proposal)
+
+        if result.decision == "acknowledge":
+            bearing = float(signals.get("novelty_bearing", signals.get("target_bearing", 0.0)) or 0.0)
+            if abs(bearing) < 0.05 and abs(proposal.turn_delta) > 0.05:
+                bearing = float(np.clip(proposal.turn_delta, -1.0, 1.0))
+            novelty = float(signals.get("visual_novelty", signals.get("novelty", 0.0)) or 0.0)
+            if bool(signals.get("new_stimulus")):
+                novelty = max(novelty, 0.55)
+            if proposal.risk in ("wall", "toxin", "fall"):
+                novelty = max(novelty, 0.35)
+            kind = proposal.risk if proposal.risk in ("wall", "toxin", "fall", "energy") else "novelty"
+            point = self.interests.acknowledge(
+                stm_id=int(info.get("stm_id") or 0),
+                step=int(self._step),
+                tick=int(self._step),
+                kind=kind,
+                bearing=bearing,
+                novelty=novelty,
+                reason=proposal.reason or result.reason,
+                fly_id=self.config.fly_id,
+                proposal_risk=str(proposal.risk),
+                left_eye=left_eye,
+                right_eye=right_eye,
+                stimuli_signature=stimuli_sig,
+            )
+            info["interest_point"] = point.to_dict() if point is not None else None
+            # Re-run retrospective so a just-acknowledged point can start investigation
+            # this tick when survival/toxin load allows.
+            retro = self.thinking.maybe_retrospective(
+                signals=signals,
+                affect=affect,
+                fly_id=self.config.fly_id,
+                tick=self._step,
+            )
+            if retro.investigations:
+                info["investigation"] = retro.investigations[0].to_dict()
+                info["retrospective_ran"] = True
+                info["retrospective_reason"] = retro.reason
+
+        goal = l1_goal
+        if result.decision == "accept" and result.blend_weight > 0.0:
+            proposed = apply_proposal(l1_goal, proposal)
+            goal = blend_goals(l1_goal, proposed, result.blend_weight)
+
+        info["judgement"] = result.to_dict()
+        info["personality"] = self.personality.as_dict()
+        info["devil_proposal"] = proposal.to_dict()
+        info["interest_pending"] = len(self.interests.pending())
+        return goal
+
+    def _apply_active_investigation(self, goal: np.ndarray, info: dict[str, Any]) -> np.ndarray:
+        """Advance / apply any in-flight deferred investigation motor bias."""
+        active = self.interests.advance_tick(self._step)
+        if active is None:
+            active = self.interests.active
+        if active is None:
+            return goal
+        info["investigation"] = active.to_dict()
+        info["interest_pending"] = len(self.interests.pending())
+        return apply_investigation_goal(goal, active)
+
+    def _visual_think(
+        self,
+        goal: np.ndarray,
+        *,
+        info: dict[str, Any],
+        left_eye: np.ndarray | None,
+        right_eye: np.ndarray | None,
+        visual_nov: Any,
+        wall_hazard: float,
+        survival_risk: float,
+    ) -> np.ndarray:
+        """Novelty → low-load vision-LLM thinking; bias motor goal to inspect/approach."""
+        self.visual_thinker.poll()
+        if visual_nov is not None:
+            gate = self.visual_thinker.maybe_think(
+                tick=self._step,
+                visual_novelty=float(visual_nov.visual_novelty),
+                new_stimulus=bool(visual_nov.new_stimulus),
+                wall_hazard=float(wall_hazard),
+                survival_risk=float(survival_risk),
+                left_eye=left_eye,
+                right_eye=right_eye,
+                bearing=float(visual_nov.novelty_bearing),
+            )
+            info["visual_think_gate"] = gate
+        goal = self.visual_thinker.bias_goal(
+            goal, tick=self._step, wall_hazard=float(wall_hazard)
+        )
+        info["visual_thinking"] = self.visual_thinker.is_pending
+        insight = self.visual_thinker.last_insight
+        if insight is not None:
+            info["visual_insight"] = insight.to_dict()
+        return goal
 
     def process_observation(
         self,
@@ -403,10 +687,13 @@ class LiveMindPipeline:
 
         sensory = self.signals.build(observation, left_eye=left_eye, right_eye=right_eye)
         cues = None
+        visual_nov = None
         if left_eye is not None and right_eye is not None:
             cues = self._vision_cues(left_eye, right_eye)
             if cues is not None:
                 sensory.summary.update(cues.to_dict())
+            visual_nov = self.visual_novelty.observe(left_eye, right_eye)
+            sensory.summary.update(visual_nov.to_dict())
 
         # Phase 6: chem gradient bearings from food-search envs (not XYZ in obs).
         bearing_fn = getattr(self.env, "chem_bearings", None)
@@ -425,6 +712,8 @@ class LiveMindPipeline:
         signal_payload = sensory.to_jsonable()
         if cues is not None:
             signal_payload.update(cues.to_dict())
+        if visual_nov is not None:
+            signal_payload.update(visual_nov.to_dict())
         for key in ("sugar_bearing", "bitter_bearing", "hunger", "energy", "proboscis_contact"):
             if key in sensory.summary:
                 signal_payload[key] = sensory.summary[key]
@@ -447,8 +736,13 @@ class LiveMindPipeline:
             chem_vector=chem_vec,
         )
         signal_payload["curiosity"] = curiosity_step.curiosity
-        signal_payload["curiosity_drive"] = curiosity_step.explore_bias
-        signal_payload["explore_bias"] = curiosity_step.explore_bias
+        explore_bias = float(curiosity_step.explore_bias)
+        if visual_nov is not None and visual_nov.visual_novelty > 0.15:
+            explore_bias = float(
+                np.clip(explore_bias + 0.55 * visual_nov.visual_novelty, 0.0, 1.0)
+            )
+        signal_payload["curiosity_drive"] = explore_bias
+        signal_payload["explore_bias"] = explore_bias
         signal_payload["novelty"] = curiosity_step.novelty.novelty_score
         signal_payload["exploration_xp"] = curiosity_step.novelty.exploration_xp
         # Boredom from prior stuck thoughts/body (stimulus-agnostic) biases L1 this tick.
@@ -457,17 +751,22 @@ class LiveMindPipeline:
         signal_payload["force_locomotion"] = bore_pre.force_locomotion
         # Soft-bump affect exploration/novelty for thinking when gate allows.
         affect_payload = affect.to_jsonable()
-        if curiosity_step.gate > 0.05:
+        if curiosity_step.gate > 0.05 or (visual_nov is not None and visual_nov.visual_novelty > 0.15):
+            viz_boost = float(visual_nov.visual_novelty) if visual_nov is not None else 0.0
             affect_payload["exploration"] = float(
                 np.clip(
-                    affect_payload.get("exploration", 0.0) + 0.35 * curiosity_step.explore_bias,
+                    affect_payload.get("exploration", 0.0)
+                    + 0.35 * explore_bias
+                    + 0.4 * viz_boost,
                     0.0,
                     1.0,
                 )
             )
             affect_payload["novelty"] = float(
                 np.clip(
-                    affect_payload.get("novelty", 0.0) + 0.4 * curiosity_step.novelty.novelty_score,
+                    affect_payload.get("novelty", 0.0)
+                    + 0.4 * curiosity_step.novelty.novelty_score
+                    + 0.45 * viz_boost,
                     0.0,
                     1.0,
                 )
@@ -482,7 +781,7 @@ class LiveMindPipeline:
             sim_time=float(sim_time if sim_time is not None else self._step * 0.05),
             fly_id=self.config.fly_id,
         )
-        mind_action = self.curiosity.apply_action_bias(thought.action, curiosity_step.explore_bias)
+        mind_action = self.curiosity.apply_action_bias(thought.action, explore_bias)
         self._mind_ticks += 1
         plan_name = None
         if isinstance(thought.intent, dict):
@@ -507,11 +806,14 @@ class LiveMindPipeline:
             "curiosity": curiosity_step.curiosity,
             "curiosity_gated": curiosity_step.gated_curiosity,
             "curiosity_gate": curiosity_step.gate,
-            "explore_bias": curiosity_step.explore_bias,
+            "explore_bias": explore_bias,
             "coverage": curiosity_step.novelty.coverage,
             "unique_cells": curiosity_step.novelty.unique_cells,
             "exploration_xp": curiosity_step.novelty.exploration_xp,
             "novelty_first_visit": curiosity_step.novelty.first_visit,
+            "visual_novelty": visual_nov.visual_novelty if visual_nov else None,
+            "novelty_bearing": visual_nov.novelty_bearing if visual_nov else None,
+            "new_stimulus": visual_nov.new_stimulus if visual_nov else None,
             "boredom": bore_state.boredom,
             "thought_stuck": bore_state.thought_stuck,
             "physical_stuck": bore_state.physical_stuck,
@@ -526,13 +828,47 @@ class LiveMindPipeline:
         if self.motor is not None:
             # Prefer L1/L2 plan as the motor goal; curiosity may still nudge it.
             raw_goal = goal_from_intent(thought.intent, mind_action)
-            goal = self.curiosity.apply_action_bias(raw_goal, curiosity_step.explore_bias)
+            goal = self.curiosity.apply_action_bias(raw_goal, explore_bias)
+            goal = self._apply_judgement(
+                goal,
+                info=info,
+                signals=signal_payload,
+                affect=affect_payload,
+                draft=thought.refined_thought,
+                left_eye=left_eye,
+                right_eye=right_eye,
+            )
+            # Explore/court toward novel eye stimuli.
+            if visual_nov is not None and str(plan_name) in (
+                "explore",
+                "court",
+                "forward",
+                "turn_left",
+                "turn_right",
+            ):
+                wall = float(signal_payload.get("wall_hazard", 0.0))
+                goal = apply_visual_explore_goal(
+                    goal,
+                    visual_nov,
+                    config=self.visual_novelty.config,
+                    wall_hazard=wall,
+                )
             goal = apply_boredom_escape_goal(
                 goal,
                 bore_state,
                 config=self.boredom.config,
                 escape_sign=self.boredom._escape_sign,
             )
+            goal = self._visual_think(
+                goal,
+                info=info,
+                left_eye=left_eye,
+                right_eye=right_eye,
+                visual_nov=visual_nov,
+                wall_hazard=float(signal_payload.get("wall_hazard", 0.0)),
+                survival_risk=float(affect_payload.get("survival_risk", 0.0)),
+            )
+            goal = self._apply_active_investigation(goal, info)
             self.motor.set_goal(goal)
             set_goal = getattr(self.env, "set_goal", None)
             if callable(set_goal):
@@ -560,7 +896,9 @@ class LiveMindPipeline:
         info = dict(self._last_mind_info)
         info["mind_tick"] = False
         # Keep novelty / curiosity ticking so exploration metrics stay live during motor steps.
-        sensory = self.signals.build(observation)
+        left_eye = getattr(self.env, "left_eye", None)
+        right_eye = getattr(self.env, "right_eye", None)
+        sensory = self.signals.build(observation, left_eye=left_eye, right_eye=right_eye)
         affect = self.affect.estimate(sensory)
         embedding = self.embedder.embed(sensory, affect)
         position = None
@@ -571,6 +909,12 @@ class LiveMindPipeline:
         chem_fn = getattr(self.env, "chem_vector", None)
         if callable(chem_fn):
             chem_vec = np.asarray(chem_fn(), dtype=np.float32)
+        visual_nov = None
+        if left_eye is not None and right_eye is not None:
+            visual_nov = self.visual_novelty.observe(left_eye, right_eye)
+            info["visual_novelty"] = visual_nov.visual_novelty
+            info["novelty_bearing"] = visual_nov.novelty_bearing
+            info["new_stimulus"] = visual_nov.new_stimulus
         curiosity_step = self.curiosity.step(
             embedding=embedding,
             action=self._pending_action,
@@ -604,6 +948,25 @@ class LiveMindPipeline:
             self._pending_action = action.copy()
             return action, info
         bore_pre = self.boredom.state()
+        plan_name = None
+        intent = info.get("intent") if isinstance(info.get("intent"), dict) else {}
+        plan_name = (intent.get("future") or {}).get("chosen_name")
+        if visual_nov is not None and str(plan_name) in (
+            "explore",
+            "court",
+            "forward",
+            "turn_left",
+            "turn_right",
+        ):
+            wall = float((info.get("vision_cues") or {}).get("wall_hazard", 0.0) or 0.0)
+            self.motor.set_goal(
+                apply_visual_explore_goal(
+                    self.motor.goal,
+                    visual_nov,
+                    config=self.visual_novelty.config,
+                    wall_hazard=wall,
+                )
+            )
         if bore_pre.force_locomotion:
             escaped = apply_boredom_escape_goal(
                 self.motor.goal,
@@ -612,6 +975,17 @@ class LiveMindPipeline:
                 escape_sign=self.boredom._escape_sign,
             )
             self.motor.set_goal(escaped)
+        biased = self._visual_think(
+            self.motor.goal,
+            info=info,
+            left_eye=left_eye,
+            right_eye=right_eye,
+            visual_nov=visual_nov,
+            wall_hazard=float((info.get("vision_cues") or {}).get("wall_hazard", 0.0) or 0.0),
+            survival_risk=float((info.get("affect") or {}).get("survival_risk", 0.0)),
+        )
+        biased = self._apply_active_investigation(biased, info)
+        self.motor.set_goal(biased)
         action = self.motor.act(observation)
         self._motor_ticks += 1
         info["motor_goal"] = self.motor.goal.tolist()
@@ -627,6 +1001,10 @@ class LiveMindPipeline:
         self._last_mind_info["thought_stuck"] = bore_state.thought_stuck
         self._last_mind_info["physical_stuck"] = bore_state.physical_stuck
         self._last_mind_info["force_locomotion"] = bore_state.force_locomotion
+        if visual_nov is not None:
+            self._last_mind_info["visual_novelty"] = visual_nov.visual_novelty
+            self._last_mind_info["novelty_bearing"] = visual_nov.novelty_bearing
+            self._last_mind_info["new_stimulus"] = visual_nov.new_stimulus
         self._pending_action = action.copy()
         return action, info
 
@@ -648,6 +1026,10 @@ class LiveMindPipeline:
         self._motor_ticks = 0
         self.curiosity.reset()
         self.boredom.reset()
+        self.visual_novelty.reset()
+        self.visual_thinker.reset()
+        self.judgement.reset()
+        self.interests.reset()
         self._pending_action = None
         self._last_mind_info = {}
         if self.motor is not None:

@@ -1,4 +1,4 @@
-"""Low-load retrospective: label past transitions and update experience lightly."""
+"""Low-load retrospective: label past transitions and investigate deferred interest."""
 
 from __future__ import annotations
 
@@ -9,6 +9,10 @@ import numpy as np
 import torch
 
 from flybrain.memory.pgvector import ShortTermMemory, StmRecord, ThoughtRecord
+from flybrain.thinking.interest import (
+    InterestPointStore,
+    InvestigationDirective,
+)
 from flybrain.thinking.two_layer_future import action_name_from_vector
 from flybrain.world_model.outcomes import LifeExperience, OutcomeLabel, label_transition
 from flybrain.world_model.predictor import NextStateWorldModel
@@ -22,6 +26,7 @@ class RetrospectiveConfig:
     batch_size: int = 8
     wm_train_steps: int = 1
     wm_lr: float = 1e-3
+    investigate_interest: bool = True
 
 
 @dataclass
@@ -45,6 +50,7 @@ class RetrospectiveResult:
     labeled: list[LabeledOutcome] = field(default_factory=list)
     thought: ThoughtRecord | None = None
     wm_loss: float | None = None
+    investigations: list[InvestigationDirective] = field(default_factory=list)
 
 
 def is_low_load(
@@ -62,6 +68,23 @@ def is_low_load(
         and bitter <= cfg.bitter_max
         and wall <= cfg.wall_hazard_max
     )
+
+
+def can_investigate_interest(
+    *,
+    signals: dict[str, Any],
+    affect: dict[str, Any],
+    config: RetrospectiveConfig | None = None,
+) -> bool:
+    """Softer than full low-load: survival/toxin calm is enough to revisit interest.
+
+    Wall hazard alone should not block investigating a deferred wall/novelty point —
+    the investigation directive itself slows and turns.
+    """
+    cfg = config or RetrospectiveConfig()
+    survival = float(affect.get("survival_risk", 0.0))
+    bitter = float(signals.get("bitter", 0.0))
+    return survival <= cfg.survival_risk_max and bitter <= cfg.bitter_max
 
 
 class OutcomeMemory:
@@ -97,25 +120,39 @@ def run_retrospective(
     config: RetrospectiveConfig | None = None,
     force: bool = False,
     tendency: Any | None = None,
+    interest_store: InterestPointStore | None = None,
+    tick: int = 0,
 ) -> RetrospectiveResult:
-    """Label recent STM pairs when decision pressure is low."""
+    """Label recent STM pairs when decision pressure is low; investigate deferred interest."""
     cfg = config or RetrospectiveConfig()
-    if not force and not is_low_load(signals=signals, affect=affect, config=cfg):
+    low = force or is_low_load(signals=signals, affect=affect, config=cfg)
+    can_invest = force or can_investigate_interest(signals=signals, affect=affect, config=cfg)
+
+    investigations: list[InvestigationDirective] = []
+    if (
+        can_invest
+        and interest_store is not None
+        and cfg.investigate_interest
+        and interest_store.config.enabled
+    ):
+        investigations = interest_store.pop_for_investigation(tick=int(tick))
+
+    if not low and not investigations:
         return RetrospectiveResult(ran=False, reason="high_load")
 
-    recent = memory.recent(fly_id=fly_id, limit=max(cfg.batch_size + 1, 4))
-    if len(recent) < 2:
+    recent = memory.recent(fly_id=fly_id, limit=max(cfg.batch_size + 1, 4)) if low else []
+    if low and len(recent) < 2 and not investigations:
         return RetrospectiveResult(ran=False, reason="insufficient_stm")
 
     # Pair consecutive STM records (older → newer).
-    ordered = list(reversed(recent))  # oldest first if recent returns newest-first
+    ordered = list(reversed(recent)) if recent else []
     # Detect order: if first has higher step than last, reverse
     if ordered and recent and ordered[0].step > ordered[-1].step:
         ordered = list(reversed(ordered))
 
     actions = list(recent_actions or [])
     labeled: list[LabeledOutcome] = []
-    pairs = min(cfg.batch_size, len(ordered) - 1)
+    pairs = min(cfg.batch_size, max(0, len(ordered) - 1)) if low else 0
     wm_loss: float | None = None
 
     for i in range(len(ordered) - 1, len(ordered) - 1 - pairs, -1):
@@ -167,29 +204,60 @@ def run_retrospective(
             )
             wm_loss = float(loss) if wm_loss is None else 0.5 * (wm_loss + float(loss))
 
-    if not labeled:
+    thought: ThoughtRecord | None = None
+    if investigations:
+        inv = investigations[0]
+        stm_ref = inv.point.stm_id
+        if ordered:
+            stm_ref = ordered[-1].id
+        thought = memory.insert_thought(
+            stm_id=stm_ref,
+            reflection=(
+                f"Low-load investigation of deferred {inv.point.kind} "
+                f"(stm={inv.point.stm_id}, hits={inv.point.hits})."
+            ),
+            devil_critique="n/a",
+            refined_thought=(
+                f"Investigate interest#{inv.point.id}: {inv.point.reason or inv.point.kind} "
+                f"bearing={inv.point.bearing:+.2f}"
+            ),
+            intent={
+                "retrospective": True,
+                "investigation": inv.to_dict(),
+                "interest_point": inv.point.to_dict(),
+                "maturity": experience.maturity(),
+            },
+        )
+    elif labeled:
+        summary = "; ".join(
+            f"{x.action_name}:{x.label.kind}({x.label.score:.2f})" for x in labeled[:5]
+        )
+        thought = memory.insert_thought(
+            stm_id=labeled[-1].stm_id,
+            reflection=f"Retrospective labeled {len(labeled)} transitions.",
+            devil_critique="n/a",
+            refined_thought=f"Low-load retrospective: {summary}",
+            intent={
+                "retrospective": True,
+                "labeled": [x.to_dict() for x in labeled],
+                "maturity": experience.maturity(),
+            },
+        )
+    elif not investigations:
         return RetrospectiveResult(ran=True, reason="nothing_new", labeled=[], wm_loss=wm_loss)
 
-    summary = "; ".join(
-        f"{x.action_name}:{x.label.kind}({x.label.score:.2f})" for x in labeled[:5]
-    )
-    thought = memory.insert_thought(
-        stm_id=labeled[-1].stm_id,
-        reflection=f"Retrospective labeled {len(labeled)} transitions.",
-        devil_critique="n/a",
-        refined_thought=f"Low-load retrospective: {summary}",
-        intent={
-            "retrospective": True,
-            "labeled": [x.to_dict() for x in labeled],
-            "maturity": experience.maturity(),
-        },
-    )
+    reason = "ok"
+    if investigations and labeled:
+        reason = "ok_investigate_and_label"
+    elif investigations:
+        reason = "ok_investigate"
     return RetrospectiveResult(
         ran=True,
-        reason="ok",
+        reason=reason,
         labeled=labeled,
         thought=thought,
         wm_loss=wm_loss,
+        investigations=investigations,
     )
 
 
