@@ -3,14 +3,28 @@ from __future__ import annotations
 import numpy as np
 
 from flybrain.affect import AffectEstimator
-from flybrain.phase4 import AFFECT_DIM, AFFECT_KEYS, HIGH_LEVEL_ACTION_DIM, TOTAL_EMBEDDING_DIM
+from flybrain.phase4 import (
+    AFFECT_DIM,
+    AFFECT_KEYS,
+    AFFECT_VEC_DIM,
+    EYE_VEC_DIM,
+    HIGH_LEVEL_ACTION_DIM,
+    SENSORS_VEC_DIM,
+    STATUS_VEC_DIM,
+    STM_TABLE,
+    TOTAL_EMBEDDING_DIM,
+)
 from flybrain.signals import SignalBuilder
 
 
 def test_phase4_constants() -> None:
     assert TOTAL_EMBEDDING_DIM == 272
-    assert len(AFFECT_KEYS) == AFFECT_DIM
+    assert len(AFFECT_KEYS) == AFFECT_DIM == AFFECT_VEC_DIM
     assert HIGH_LEVEL_ACTION_DIM == 5
+    assert EYE_VEC_DIM == 128
+    assert SENSORS_VEC_DIM == 192
+    assert STATUS_VEC_DIM == 32
+    assert STM_TABLE == "fly_mind.short_term_memory"
 
 
 def test_signal_builder_reads_unity_energy_index() -> None:

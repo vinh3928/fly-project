@@ -198,6 +198,11 @@ class ThinkingService:
         step: int = 0,
         sim_time: float = 0.0,
         fly_id: str | None = None,
+        left_eye_vec: np.ndarray | None = None,
+        right_eye_vec: np.ndarray | None = None,
+        sensors_vec: np.ndarray | None = None,
+        status_vec: np.ndarray | None = None,
+        affect_vec: np.ndarray | None = None,
     ) -> tuple[StmRecord, ThoughtResult, ThoughtRecord]:
         fly = fly_id or self.config.fly_id
         stm = self.memory.insert_embedding(
@@ -208,6 +213,11 @@ class ThinkingService:
             step=step,
             sim_time=sim_time,
             fly_id=fly,
+            left_eye_vec=left_eye_vec,
+            right_eye_vec=right_eye_vec,
+            sensors_vec=sensors_vec,
+            status_vec=status_vec,
+            affect_vec=affect_vec,
         )
         result, thought = self.think_on_record(stm)
         # Low-load retrospective after the hot-path decision.

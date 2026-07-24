@@ -43,14 +43,34 @@ class MultimodalEncoder(nn.Module):
         chemical: torch.Tensor,
         internal: torch.Tensor,
     ) -> torch.Tensor:
+        parts = self.encode_parts(left_eye, right_eye, body, chemical, internal)
+        return parts["latent"]
+
+    def encode_parts(
+        self,
+        left_eye: torch.Tensor,
+        right_eye: torch.Tensor,
+        body: torch.Tensor,
+        chemical: torch.Tensor,
+        internal: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Return per-modality encodings plus the fused latent."""
         left = self.vision(left_eye)
         right = self.vision(right_eye)
         vision = 0.5 * (left + right)
-        parts = torch.cat(
-            [vision, self.body(body), self.chemical(chemical), self.internal(internal)],
-            dim=-1,
-        )
-        return self.fuse(parts)
+        body_z = self.body(body)
+        chem_z = self.chemical(chemical)
+        status_z = self.internal(internal)
+        sensors = torch.cat([body_z, chem_z], dim=-1)
+        fused_in = torch.cat([vision, body_z, chem_z, status_z], dim=-1)
+        latent = self.fuse(fused_in)
+        return {
+            "left_eye": left,
+            "right_eye": right,
+            "sensors": sensors,
+            "status": status_z,
+            "latent": latent,
+        }
 
     def forward(
         self,

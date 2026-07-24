@@ -6,8 +6,9 @@ database:
   # Override with FLY_MIND_DSN
   dsn: "postgresql://fly:fly@127.0.0.1:5433/fly_mind"
   schema: fly_mind
-  # Use in_memory when Postgres is unavailable (tests / local smoke)
-  backend: in_memory  # in_memory | pgvector
+  # Multi-vector STM in fly_mind.short_term_memory (pgvector).
+  # Tests should pass backend=in_memory explicitly; live runs use pgvector.
+  backend: pgvector  # in_memory | pgvector
 
 embedding:
   latent_dim: 256

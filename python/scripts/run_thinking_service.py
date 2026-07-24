@@ -51,12 +51,17 @@ def main(argv: list[str] | None = None) -> int:
     sensory.summary["bitter"] = 0.1
     sensory.summary["energy"] = 0.4
     affect = affect_est.estimate(sensory)
-    embedding = embedder.embed(sensory, affect)
+    parts = embedder.embed_parts(sensory, affect)
     stm, thought, thought_rec = service.think_on_embedding(
-        embedding=embedding,
+        embedding=parts.embedding,
         signals=sensory.to_jsonable(),
         affect=affect.to_jsonable(),
         fly_id=cfg.fly_id,
+        left_eye_vec=parts.left_eye_vec,
+        right_eye_vec=parts.right_eye_vec,
+        sensors_vec=parts.sensors_vec,
+        status_vec=parts.status_vec,
+        affect_vec=parts.affect_vec,
     )
     memory.close()
 

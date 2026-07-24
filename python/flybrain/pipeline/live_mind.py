@@ -708,7 +708,8 @@ class LiveMindPipeline:
                 flush=True,
             )
         affect = self.affect.estimate(sensory)
-        embedding = self.embedder.embed(sensory, affect)
+        parts = self.embedder.embed_parts(sensory, affect)
+        embedding = parts.embedding
         signal_payload = sensory.to_jsonable()
         if cues is not None:
             signal_payload.update(cues.to_dict())
@@ -780,6 +781,11 @@ class LiveMindPipeline:
             step=self._step,
             sim_time=float(sim_time if sim_time is not None else self._step * 0.05),
             fly_id=self.config.fly_id,
+            left_eye_vec=parts.left_eye_vec,
+            right_eye_vec=parts.right_eye_vec,
+            sensors_vec=parts.sensors_vec,
+            status_vec=parts.status_vec,
+            affect_vec=parts.affect_vec,
         )
         mind_action = self.curiosity.apply_action_bias(thought.action, explore_bias)
         self._mind_ticks += 1

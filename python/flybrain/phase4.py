@@ -4,6 +4,14 @@ EMBEDDING_LATENT_DIM = 256
 AFFECT_DIM = 16
 TOTAL_EMBEDDING_DIM = EMBEDDING_LATENT_DIM + AFFECT_DIM  # 272
 
+# Per-modality STM vector sizes (pgvector columns on short_term_memory).
+EYE_VEC_DIM = 128
+BODY_VEC_DIM = 128
+CHEMICAL_VEC_DIM = 64
+SENSORS_VEC_DIM = BODY_VEC_DIM + CHEMICAL_VEC_DIM  # 192
+STATUS_VEC_DIM = 32
+AFFECT_VEC_DIM = AFFECT_DIM  # 16
+
 HIGH_LEVEL_ACTION_DIM = 5
 DEFAULT_OBS_DIM = 197
 
@@ -26,5 +34,16 @@ AFFECT_KEYS = (
     "novelty",
 )
 
-STM_TABLE = "fly_mind.stm_embeddings"
+STM_TABLE = "fly_mind.short_term_memory"
+STM_TABLE_LEGACY = "fly_mind.stm_embeddings"
 THOUGHTS_TABLE = "fly_mind.thoughts"
+
+# Modality names accepted by ShortTermMemory.similar_by
+STM_MODALITIES = (
+    "embedding",
+    "left_eye",
+    "right_eye",
+    "sensors",
+    "status",
+    "affect",
+)

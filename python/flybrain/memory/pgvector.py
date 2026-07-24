@@ -6,11 +6,61 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
-from flybrain.phase4 import TOTAL_EMBEDDING_DIM
+from flybrain.phase4 import (
+    AFFECT_VEC_DIM,
+    EYE_VEC_DIM,
+    SENSORS_VEC_DIM,
+    STATUS_VEC_DIM,
+    STM_MODALITIES,
+    TOTAL_EMBEDDING_DIM,
+)
+
+Modality = Literal["embedding", "left_eye", "right_eye", "sensors", "status", "affect"]
+
+_MODALITY_ATTR = {
+    "embedding": "embedding",
+    "left_eye": "left_eye_vec",
+    "right_eye": "right_eye_vec",
+    "sensors": "sensors_vec",
+    "status": "status_vec",
+    "affect": "affect_vec",
+}
+
+_MODALITY_DIM = {
+    "embedding": TOTAL_EMBEDDING_DIM,
+    "left_eye": EYE_VEC_DIM,
+    "right_eye": EYE_VEC_DIM,
+    "sensors": SENSORS_VEC_DIM,
+    "status": STATUS_VEC_DIM,
+    "affect": AFFECT_VEC_DIM,
+}
+
+
+def _pad_vec(vec: Any | None, dim: int) -> np.ndarray:
+    """Coerce a numpy array / list / pgvector.Vector into a fixed-length float32 vector."""
+    if vec is None:
+        return np.zeros(dim, dtype=np.float32)
+    # pgvector.Vector: to_numpy / to_list (not ndarray.tolist) — np.asarray(Vector) raises.
+    if hasattr(vec, "to_numpy"):
+        arr = np.asarray(vec.to_numpy(), dtype=np.float32).reshape(-1)
+    elif hasattr(vec, "to_list"):
+        arr = np.asarray(vec.to_list(), dtype=np.float32).reshape(-1)
+    elif isinstance(vec, np.ndarray):
+        arr = np.asarray(vec, dtype=np.float32).reshape(-1)
+    elif hasattr(vec, "tolist") and not isinstance(vec, (str, bytes)):
+        arr = np.asarray(vec.tolist(), dtype=np.float32).reshape(-1)
+    else:
+        arr = np.asarray(vec, dtype=np.float32).reshape(-1)
+    if arr.shape[0] == dim:
+        return arr.copy()
+    out = np.zeros(dim, dtype=np.float32)
+    n = min(dim, arr.shape[0])
+    out[:n] = arr[:n]
+    return out
 
 
 @dataclass
@@ -23,6 +73,11 @@ class StmRecord:
     embedding: np.ndarray
     signals: dict[str, Any]
     affect: dict[str, Any]
+    left_eye_vec: np.ndarray = field(default_factory=lambda: np.zeros(EYE_VEC_DIM, dtype=np.float32))
+    right_eye_vec: np.ndarray = field(default_factory=lambda: np.zeros(EYE_VEC_DIM, dtype=np.float32))
+    sensors_vec: np.ndarray = field(default_factory=lambda: np.zeros(SENSORS_VEC_DIM, dtype=np.float32))
+    status_vec: np.ndarray = field(default_factory=lambda: np.zeros(STATUS_VEC_DIM, dtype=np.float32))
+    affect_vec: np.ndarray = field(default_factory=lambda: np.zeros(AFFECT_VEC_DIM, dtype=np.float32))
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -48,9 +103,23 @@ class ShortTermMemory(Protocol):
         step: int = 0,
         sim_time: float = 0.0,
         fly_id: str = "fly_001",
+        left_eye_vec: np.ndarray | None = None,
+        right_eye_vec: np.ndarray | None = None,
+        sensors_vec: np.ndarray | None = None,
+        status_vec: np.ndarray | None = None,
+        affect_vec: np.ndarray | None = None,
     ) -> StmRecord: ...
 
     def similar(self, embedding: np.ndarray, *, fly_id: str, top_k: int = 5) -> list[StmRecord]: ...
+
+    def similar_by(
+        self,
+        query: np.ndarray,
+        *,
+        modality: Modality,
+        fly_id: str,
+        top_k: int = 5,
+    ) -> list[StmRecord]: ...
 
     def recent(self, *, fly_id: str, limit: int = 8) -> list[StmRecord]: ...
 
@@ -75,6 +144,11 @@ def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
     return float(1.0 - np.dot(a, b) / (na * nb))
 
 
+def _modality_vector(rec: StmRecord, modality: Modality) -> np.ndarray:
+    attr = _MODALITY_ATTR[modality]
+    return np.asarray(getattr(rec, attr), dtype=np.float32).reshape(-1)
+
+
 class InMemoryShortTermMemory:
     """Process-local STM used for tests and when Postgres is unavailable."""
 
@@ -95,31 +169,47 @@ class InMemoryShortTermMemory:
         step: int = 0,
         sim_time: float = 0.0,
         fly_id: str = "fly_001",
+        left_eye_vec: np.ndarray | None = None,
+        right_eye_vec: np.ndarray | None = None,
+        sensors_vec: np.ndarray | None = None,
+        status_vec: np.ndarray | None = None,
+        affect_vec: np.ndarray | None = None,
     ) -> StmRecord:
-        vec = np.asarray(embedding, dtype=np.float32).reshape(-1)
-        if vec.shape[0] != self.dim:
-            padded = np.zeros(self.dim, dtype=np.float32)
-            n = min(self.dim, vec.shape[0])
-            padded[:n] = vec[:n]
-            vec = padded
         rec = StmRecord(
             id=self._next_stm,
             episode_id=episode_id,
             step=step,
             sim_time=sim_time,
             fly_id=fly_id,
-            embedding=vec.copy(),
+            embedding=_pad_vec(embedding, self.dim),
             signals=dict(signals),
             affect=dict(affect),
+            left_eye_vec=_pad_vec(left_eye_vec, EYE_VEC_DIM),
+            right_eye_vec=_pad_vec(right_eye_vec, EYE_VEC_DIM),
+            sensors_vec=_pad_vec(sensors_vec, SENSORS_VEC_DIM),
+            status_vec=_pad_vec(status_vec, STATUS_VEC_DIM),
+            affect_vec=_pad_vec(affect_vec, AFFECT_VEC_DIM),
         )
         self._next_stm += 1
         self._stm.append(rec)
         return rec
 
     def similar(self, embedding: np.ndarray, *, fly_id: str, top_k: int = 5) -> list[StmRecord]:
-        query = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        return self.similar_by(embedding, modality="embedding", fly_id=fly_id, top_k=top_k)
+
+    def similar_by(
+        self,
+        query: np.ndarray,
+        *,
+        modality: Modality,
+        fly_id: str,
+        top_k: int = 5,
+    ) -> list[StmRecord]:
+        if modality not in STM_MODALITIES:
+            raise ValueError(f"Unknown modality {modality!r}; expected one of {STM_MODALITIES}")
+        q = _pad_vec(query, _MODALITY_DIM[modality])
         scored = [
-            (_cosine_distance(query, r.embedding), r)
+            (_cosine_distance(q, _modality_vector(r, modality)), r)
             for r in self._stm
             if r.fly_id == fly_id
         ]
@@ -156,7 +246,7 @@ class InMemoryShortTermMemory:
 
 
 class PgVectorShortTermMemory:
-    """Postgres + pgvector STM client."""
+    """Postgres + pgvector STM client writing fly_mind.short_term_memory."""
 
     def __init__(self, dsn: str, dim: int = TOTAL_EMBEDDING_DIM, schema: str = "fly_mind") -> None:
         try:
@@ -169,6 +259,7 @@ class PgVectorShortTermMemory:
 
         self.dim = dim
         self.schema = schema
+        self._table = f"{schema}.short_term_memory"
         self._conn = psycopg.connect(dsn)
         register_vector(self._conn)
         self._ensure_schema()
@@ -179,12 +270,17 @@ class PgVectorShortTermMemory:
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {self.schema}")
             cur.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS {self.schema}.stm_embeddings (
+                CREATE TABLE IF NOT EXISTS {self._table} (
                     id BIGSERIAL PRIMARY KEY,
                     episode_id TEXT NOT NULL DEFAULT 'live',
                     step BIGINT NOT NULL DEFAULT 0,
                     sim_time DOUBLE PRECISION NOT NULL DEFAULT 0,
                     fly_id TEXT NOT NULL DEFAULT 'fly_001',
+                    left_eye_vec vector({EYE_VEC_DIM}) NOT NULL,
+                    right_eye_vec vector({EYE_VEC_DIM}) NOT NULL,
+                    sensors_vec vector({SENSORS_VEC_DIM}) NOT NULL,
+                    status_vec vector({STATUS_VEC_DIM}) NOT NULL,
+                    affect_vec vector({AFFECT_VEC_DIM}) NOT NULL,
                     embedding vector({self.dim}) NOT NULL,
                     signals JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                     affect JSONB NOT NULL DEFAULT '{{}}'::jsonb,
@@ -192,6 +288,20 @@ class PgVectorShortTermMemory:
                 )
                 """
             )
+            # Cosine indexes for fused recall + eye revisit (ivfflat needs rows; use hnsw when available).
+            for col in ("embedding", "left_eye_vec", "right_eye_vec"):
+                idx = f"stm_{col}_hnsw"
+                cur.execute(
+                    f"""
+                    DO $$ BEGIN
+                        CREATE INDEX IF NOT EXISTS {idx}
+                        ON {self._table}
+                        USING hnsw ({col} vector_cosine_ops);
+                    EXCEPTION WHEN OTHERS THEN
+                        NULL;  -- older pgvector without hnsw: skip
+                    END $$;
+                    """
+                )
             cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.schema}.thoughts (
@@ -217,19 +327,26 @@ class PgVectorShortTermMemory:
         step: int = 0,
         sim_time: float = 0.0,
         fly_id: str = "fly_001",
+        left_eye_vec: np.ndarray | None = None,
+        right_eye_vec: np.ndarray | None = None,
+        sensors_vec: np.ndarray | None = None,
+        status_vec: np.ndarray | None = None,
+        affect_vec: np.ndarray | None = None,
     ) -> StmRecord:
-        vec = np.asarray(embedding, dtype=np.float32).reshape(-1)
-        if vec.shape[0] != self.dim:
-            padded = np.zeros(self.dim, dtype=np.float32)
-            n = min(self.dim, vec.shape[0])
-            padded[:n] = vec[:n]
-            vec = padded
+        emb = _pad_vec(embedding, self.dim)
+        left = _pad_vec(left_eye_vec, EYE_VEC_DIM)
+        right = _pad_vec(right_eye_vec, EYE_VEC_DIM)
+        sensors = _pad_vec(sensors_vec, SENSORS_VEC_DIM)
+        status = _pad_vec(status_vec, STATUS_VEC_DIM)
+        aff_v = _pad_vec(affect_vec, AFFECT_VEC_DIM)
         with self._conn.cursor() as cur:
             cur.execute(
                 f"""
-                INSERT INTO {self.schema}.stm_embeddings
-                    (episode_id, step, sim_time, fly_id, embedding, signals, affect)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                INSERT INTO {self._table}
+                    (episode_id, step, sim_time, fly_id,
+                     left_eye_vec, right_eye_vec, sensors_vec, status_vec, affect_vec,
+                     embedding, signals, affect)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
                 RETURNING id, created_at
                 """,
                 (
@@ -237,7 +354,12 @@ class PgVectorShortTermMemory:
                     step,
                     sim_time,
                     fly_id,
-                    vec.tolist(),
+                    left.tolist(),
+                    right.tolist(),
+                    sensors.tolist(),
+                    status.tolist(),
+                    aff_v.tolist(),
+                    emb.tolist(),
                     json.dumps(signals),
                     json.dumps(affect),
                 ),
@@ -251,21 +373,41 @@ class PgVectorShortTermMemory:
             step=step,
             sim_time=sim_time,
             fly_id=fly_id,
-            embedding=vec.copy(),
+            embedding=emb,
             signals=dict(signals),
             affect=dict(affect),
+            left_eye_vec=left,
+            right_eye_vec=right,
+            sensors_vec=sensors,
+            status_vec=status,
+            affect_vec=aff_v,
             created_at=row[1],
         )
 
     def similar(self, embedding: np.ndarray, *, fly_id: str, top_k: int = 5) -> list[StmRecord]:
-        vec = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        return self.similar_by(embedding, modality="embedding", fly_id=fly_id, top_k=top_k)
+
+    def similar_by(
+        self,
+        query: np.ndarray,
+        *,
+        modality: Modality,
+        fly_id: str,
+        top_k: int = 5,
+    ) -> list[StmRecord]:
+        if modality not in _MODALITY_ATTR:
+            raise ValueError(f"Unknown modality {modality!r}; expected one of {STM_MODALITIES}")
+        col = _MODALITY_ATTR[modality]
+        vec = _pad_vec(query, _MODALITY_DIM[modality])
         with self._conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT id, episode_id, step, sim_time, fly_id, embedding, signals, affect, created_at
-                FROM {self.schema}.stm_embeddings
+                SELECT id, episode_id, step, sim_time, fly_id,
+                       left_eye_vec, right_eye_vec, sensors_vec, status_vec, affect_vec,
+                       embedding, signals, affect, created_at
+                FROM {self._table}
                 WHERE fly_id = %s
-                ORDER BY embedding <=> %s::vector
+                ORDER BY {col} <=> %s::vector
                 LIMIT %s
                 """,
                 (fly_id, vec.tolist(), top_k),
@@ -277,8 +419,10 @@ class PgVectorShortTermMemory:
         with self._conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT id, episode_id, step, sim_time, fly_id, embedding, signals, affect, created_at
-                FROM {self.schema}.stm_embeddings
+                SELECT id, episode_id, step, sim_time, fly_id,
+                       left_eye_vec, right_eye_vec, sensors_vec, status_vec, affect_vec,
+                       embedding, signals, affect, created_at
+                FROM {self._table}
                 WHERE fly_id = %s
                 ORDER BY created_at DESC
                 LIMIT %s
@@ -330,24 +474,28 @@ class PgVectorShortTermMemory:
         self._conn.close()
 
     @staticmethod
-    def _row_to_stm(row: tuple[Any, ...]) -> StmRecord:
-        emb = row[5]
-        if hasattr(emb, "tolist"):
-            emb = np.asarray(emb, dtype=np.float32)
-        else:
-            emb = np.asarray(emb, dtype=np.float32)
-        signals = row[6] if isinstance(row[6], dict) else json.loads(row[6])
-        affect = row[7] if isinstance(row[7], dict) else json.loads(row[7])
+    def _as_f32(val: Any, dim: int) -> np.ndarray:
+        return _pad_vec(val, dim)
+
+    @classmethod
+    def _row_to_stm(cls, row: tuple[Any, ...]) -> StmRecord:
+        signals = row[11] if isinstance(row[11], dict) else json.loads(row[11])
+        affect = row[12] if isinstance(row[12], dict) else json.loads(row[12])
         return StmRecord(
             id=int(row[0]),
             episode_id=str(row[1]),
             step=int(row[2]),
             sim_time=float(row[3]),
             fly_id=str(row[4]),
-            embedding=emb,
+            left_eye_vec=cls._as_f32(row[5], EYE_VEC_DIM),
+            right_eye_vec=cls._as_f32(row[6], EYE_VEC_DIM),
+            sensors_vec=cls._as_f32(row[7], SENSORS_VEC_DIM),
+            status_vec=cls._as_f32(row[8], STATUS_VEC_DIM),
+            affect_vec=cls._as_f32(row[9], AFFECT_VEC_DIM),
+            embedding=cls._as_f32(row[10], TOTAL_EMBEDDING_DIM),
             signals=signals,
             affect=affect,
-            created_at=row[8],
+            created_at=row[13],
         )
 
 

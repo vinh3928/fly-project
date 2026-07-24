@@ -114,10 +114,12 @@ python -m scripts.run_live_mind --fake-explore --steps 120
 python -m scripts.run_live_mind --fake-explore --no-curiosity --steps 120
 ```
 
-Optional pgvector STM:
+pgvector STM (`fly_mind.short_term_memory`, DSN `postgresql://fly:fly@127.0.0.1:5433/fly_mind`):
 
 ```bash
 docker compose -f docker/docker-compose.mind.yml up -d
+# mind.yaml defaults to backend: pgvector; override with -- or database.backend: in_memory
+python -m scripts.run_live_mind --fake
 python -m scripts.run_live_mind --fake --pgvector
 ```
 

@@ -1,6 +1,6 @@
 """Short-term memory backends."""
 
-from .embedder import MindEmbedder
+from .embedder import EmbeddingParts, MindEmbedder
 from .pgvector import (
     InMemoryShortTermMemory,
     PgVectorShortTermMemory,
@@ -11,6 +11,7 @@ from .pgvector import (
 )
 
 __all__ = [
+    "EmbeddingParts",
     "InMemoryShortTermMemory",
     "MindEmbedder",
     "PgVectorShortTermMemory",
