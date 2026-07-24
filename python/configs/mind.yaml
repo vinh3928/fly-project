@@ -120,3 +120,31 @@ curiosity:
     first_visit_bonus: 1.0
     repeat_decay: 0.85
     arena_half_extent: 0.25
+
+# Stimulus-agnostic: rises when thoughts repeat and/or body stays still; forces turn+crawl.
+boredom:
+  enabled: true
+  thought_weight: 0.55
+  physical_weight: 0.55
+  thought_horizon_ticks: 3
+  physical_horizon_steps: 10
+  motion_eps: 0.002
+  action_eps: 0.08
+  force_threshold: 0.55
+  stop_penalty: 0.35
+  locomotor_bonus: 0.22
+  escape_forward: 0.45
+  escape_turn: 0.55
+
+# Safe-mode default drive: juvenile → curiosity/explore; adult → sex/court; shaped by outcomes.
+tendency:
+  enabled: true
+  juvenile_curiosity: 0.85
+  juvenile_sex: 0.05
+  juvenile_forage: 0.10
+  adult_curiosity: 0.35
+  adult_sex: 0.45
+  adult_forage: 0.20
+  outcome_lr: 0.08
+  base_bonus: 0.06
+  safe_mode_bonus: 0.30

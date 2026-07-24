@@ -17,6 +17,7 @@ from flybrain.thinking.retrospective import (
     RetrospectiveResult,
     run_retrospective,
 )
+from flybrain.thinking.tendency import TendencyConfig, TendencyDrive
 from flybrain.thinking.two_layer_future import predict_present_future
 from flybrain.world_model.outcomes import LifeExperience
 from flybrain.world_model.predictor import NextStateWorldModel
@@ -34,6 +35,7 @@ class ThinkingConfig:
     priorities: dict[str, Any] | None = None
     retrospective: dict[str, Any] | None = None
     enable_retrospective: bool = True
+    tendency: dict[str, Any] | None = None
 
 
 class ThinkingService:
@@ -48,6 +50,7 @@ class ThinkingService:
         experience: LifeExperience | None = None,
         outcome_memory: OutcomeMemory | None = None,
         world_model: NextStateWorldModel | None = None,
+        tendency: TendencyDrive | None = None,
     ) -> None:
         self.memory = memory
         self.config = config or ThinkingConfig()
@@ -57,6 +60,9 @@ class ThinkingService:
         self.experience = experience or LifeExperience.from_config(self.config.priorities)
         self.outcome_memory = outcome_memory or OutcomeMemory()
         self.world_model = world_model
+        self.tendency = tendency or TendencyDrive(
+            TendencyConfig.from_dict(self.config.tendency)
+        )
         self.retrospective_config = RetrospectiveConfig(
             **{
                 k: v
@@ -83,12 +89,22 @@ class ThinkingService:
             world_model=self.world_model,
             embedding=stm.embedding,
             stimulus_thresholds=self.config.stimulus_thresholds,
+            tendency=self.tendency,
+        )
+        from flybrain.thinking.tendency import TendencyDrive
+        from flybrain.thinking.two_layer_future import _stimulus_peaks
+
+        peaks = _stimulus_peaks(stm.signals, stm.affect, self.config.stimulus_thresholds)
+        safe_mode = TendencyDrive.is_safe_mode(stm.signals, peaks)
+        tend_state = self.tendency.state(
+            maturity=self.experience.maturity(),
+            safe_mode=safe_mode,
         )
         present_future = future.as_present_future()
         draft = (
             f"Considering step={stm.step}: sugar={stm.signals.get('sugar')} "
             f"bitter={stm.signals.get('bitter')} survival={stm.affect.get('survival_risk')} "
-            f"L1={future.chosen_name}"
+            f"L1={future.chosen_name} tendency={tend_state.dominant}"
         )
         critique = critique_draft(
             self.llm, draft=draft, affect=stm.affect, signals=stm.signals
@@ -110,6 +126,7 @@ class ThinkingService:
                 "priority_weights": future.priority_weights,
                 "layer1_values": future.layer1_values,
                 "maturity": self.experience.maturity(),
+                "tendency": tend_state.as_dict(),
             },
         )
         thought = self.memory.insert_thought(
@@ -153,6 +170,7 @@ class ThinkingService:
             world_model=self.world_model,
             config=self.retrospective_config,
             force=force,
+            tendency=self.tendency,
         )
         self._last_retrospective = result
         return result

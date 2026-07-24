@@ -29,6 +29,8 @@ _CANDIDATES: list[tuple[str, np.ndarray]] = [
     ("stop", np.asarray([0.0, 0.0, 0.5, 0.3, 0.0], dtype=np.float32)),
     ("feed", np.asarray([0.25, 0.0, 0.5, 0.45, 0.9], dtype=np.float32)),
     ("explore", np.asarray([0.75, 0.2, 0.5, 0.8, 0.0], dtype=np.float32)),
+    # Mate-seeking roam (sex tendency); locomotor, not object-tied.
+    ("court", np.asarray([0.55, 0.45, 0.5, 0.75, 0.0], dtype=np.float32)),
 ]
 
 # Lower than historical defaults so sugar / novelty / hunger fire earlier → walk sooner.
@@ -247,6 +249,23 @@ def score_candidate(
             nxt_v = float(nxt_v + 0.12)
         elif name == "stop":
             nxt_v = float(nxt_v - 0.08)
+    # Stimulus-agnostic boredom: stuck thoughts/body punish stop and reward motion.
+    from flybrain.curiosity.boredom import apply_boredom_to_candidate_value
+
+    nxt_v = apply_boredom_to_candidate_value(
+        name=name,
+        value=nxt_v,
+        boredom=float(signals.get("boredom", 0.0)),
+    )
+    # Developmental tendency (curiosity early / sex later) — especially in safe mode.
+    tendency = signals.get("_tendency_drive")
+    if tendency is not None:
+        nxt_v = tendency.apply_bonus(
+            action_name=name,
+            value=nxt_v,
+            maturity=float(signals.get("maturity", 0.0)),
+            safe_mode=bool(signals.get("safe_mode", False)),
+        )
     return Layer1Result(
         name=name,
         action=np.asarray(action, dtype=np.float32),
@@ -267,21 +286,41 @@ def layer1_quick_scan(
     embedding: np.ndarray | None = None,
     candidates: list[tuple[str, np.ndarray]] | None = None,
     stimulus_thresholds: dict[str, float] | None = None,
+    tendency: Any | None = None,
 ) -> tuple[Layer1Result, list[Layer1Result], PriorityWeights]:
     """Scan latent stimuli / candidate actions; pick best priority-improving action."""
+    from flybrain.thinking.tendency import TendencyDrive
+
     survival_risk = float(affect.get("survival_risk", 0.0))
     weights = experience.priority_weights(survival_risk=survival_risk)
     peaks = _stimulus_peaks(signals, affect, stimulus_thresholds)
     pool = list(candidates or _CANDIDATES)
+    maturity = float(experience.maturity())
+    safe_mode = TendencyDrive.is_safe_mode(signals, peaks)
+    # Inject into signals for score_candidate (avoid threading many kwargs).
+    signals = dict(signals)
+    signals["maturity"] = maturity
+    signals["safe_mode"] = safe_mode
+    if tendency is not None:
+        signals["_tendency_drive"] = tendency
 
     # Bias pool toward stimuli (still score all, but ensure relevant actions present).
     if "bitter" in peaks or "wall" in peaks:
-        pool = [c for c in pool if c[0] in ("turn_left", "turn_right", "stop", "forward", "explore", "feed")]
+        pool = [
+            c
+            for c in pool
+            if c[0] in ("turn_left", "turn_right", "stop", "forward", "explore", "feed", "court")
+        ]
     if "sugar" in peaks or "low_energy" in peaks:
         # Prefer feed/forward early in list for tie-breaks
         pool = sorted(pool, key=lambda c: 0 if c[0] in ("feed", "forward") else 1)
-    if not peaks or peaks == ["novelty"]:
-        pool = sorted(pool, key=lambda c: 0 if c[0] in ("forward", "explore") else 1)
+    if not peaks or peaks == ["novelty"] or safe_mode:
+        # Safe / calm: prefer tendency-aligned actions over feed loophole.
+        if tendency is not None and getattr(tendency, "config", None) and tendency.config.enabled:
+            preferred = set(tendency.preferred_actions(maturity=maturity, top_k=3))
+            pool = sorted(pool, key=lambda c: 0 if c[0] in preferred else 1)
+        else:
+            pool = sorted(pool, key=lambda c: 0 if c[0] in ("forward", "explore") else 1)
 
     scored = [
         score_candidate(
@@ -302,6 +341,29 @@ def layer1_quick_scan(
     for cand in scored:
         if cand.improves:
             best = cand
+            break
+    # Boredom force: never settle on stop when stuck in thought/body.
+    if bool(signals.get("force_locomotion")) and best.name == "stop":
+        for cand in scored:
+            if cand.name != "stop":
+                best = cand
+                break
+    # Safe-mode: never default to feed with nothing to eat — follow tendency.
+    if (
+        safe_mode
+        and tendency is not None
+        and getattr(tendency, "config", None)
+        and tendency.config.enabled
+        and best.name == "feed"
+    ):
+        preferred = tendency.preferred_actions(maturity=maturity, top_k=4)
+        for name in preferred:
+            for cand in scored:
+                if cand.name == name and cand.name != "feed":
+                    best = cand
+                    break
+            else:
+                continue
             break
     return best, scored, weights
 
@@ -386,6 +448,7 @@ def predict_present_future(
     world_model: NextStateWorldModel | None = None,
     embedding: np.ndarray | None = None,
     stimulus_thresholds: dict[str, float] | None = None,
+    tendency: Any | None = None,
 ) -> FuturePrediction:
     best, scored, weights = layer1_quick_scan(
         signals=signals,
@@ -394,6 +457,7 @@ def predict_present_future(
         world_model=world_model,
         embedding=embedding,
         stimulus_thresholds=stimulus_thresholds,
+        tendency=tendency,
     )
     chosen, overridden, reason = layer2_reflect_outcomes(
         layer1=best,

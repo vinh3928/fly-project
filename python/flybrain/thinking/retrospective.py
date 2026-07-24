@@ -96,6 +96,7 @@ def run_retrospective(
     world_model: NextStateWorldModel | None = None,
     config: RetrospectiveConfig | None = None,
     force: bool = False,
+    tendency: Any | None = None,
 ) -> RetrospectiveResult:
     """Label recent STM pairs when decision pressure is low."""
     cfg = config or RetrospectiveConfig()
@@ -149,6 +150,12 @@ def run_retrospective(
         labeled.append(entry)
         outcome_memory.add(entry.to_dict())
         experience.record_label(1)
+        if tendency is not None and hasattr(tendency, "update_from_outcome"):
+            tendency.update_from_outcome(
+                action_name=action_name,
+                outcome_score=float(label.score),
+                kind=str(label.kind),
+            )
 
         if world_model is not None and action_vec is not None and cfg.wm_train_steps > 0:
             loss = _wm_train_step(

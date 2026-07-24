@@ -13,6 +13,11 @@ import yaml
 
 from flybrain.affect.estimator import AffectEstimator
 from flybrain.curiosity import CuriosityConfig, CuriosityDrive
+from flybrain.curiosity.boredom import (
+    BoredomConfig,
+    BoredomTracker,
+    apply_boredom_escape_goal,
+)
 from flybrain.env import FakeFlyEnv
 from flybrain.memory.embedder import MindEmbedder
 from flybrain.memory.pgvector import ShortTermMemory, open_short_term_memory
@@ -89,6 +94,18 @@ def format_live_step_log(
     bearing_s = f" bear={float(bearing):+.2f}" if bearing is not None else ""
     cur = info.get("curiosity_gated")
     cur_s = f" cur={float(cur):.3f}" if cur is not None else ""
+    bore = info.get("boredom")
+    bore_s = f" bore={float(bore):.2f}" if bore is not None else ""
+    tend = info.get("tendency") if isinstance(info.get("tendency"), dict) else None
+    tend_s = ""
+    if tend and tend.get("dominant"):
+        tend_s = (
+            f" tend={tend.get('dominant')}"
+            f"(c={float(tend.get('curiosity', 0)):.2f}"
+            f",s={float(tend.get('sex', 0)):.2f}"
+            f",f={float(tend.get('forage', 0)):.2f}"
+            f"{',safe' if tend.get('safe_mode') else ''})"
+        )
 
     thought = " ".join(str(info.get("refined_thought") or "").split())
     critique = " ".join(str(info.get("devil_critique") or "").split())
@@ -100,7 +117,7 @@ def format_live_step_log(
 
     return (
         f"[live {step:04d} {tag}] {goal_s} act=[{fwd:+.2f},{turn:+.2f}]"
-        f"{track_s}{energy_s}{hunger_s}{surv_s}{fear_s}{wall_s}{bearing_s}{cur_s}"
+        f"{track_s}{energy_s}{hunger_s}{surv_s}{fear_s}{wall_s}{bearing_s}{cur_s}{bore_s}{tend_s}"
         f"{cov_s}{chosen}{l1_s}{thought_s}{critique_s}"
     )
 
@@ -189,6 +206,7 @@ class LiveMindConfig:
     retrospective: dict[str, Any] | None = None
     enable_retrospective: bool = True
     curiosity: CuriosityConfig | None = None
+    boredom: BoredomConfig | None = None
     seed: int = 42
     # Phase 9 architecture B: mind goals at mind_interval; motor tracks every step.
     enable_motor_layer: bool = True
@@ -200,6 +218,7 @@ class LiveMindConfig:
     log_path: str | None = None
     # Longer mind text + full DETAIL JSON lines on each MIND* tick.
     console_log_verbose: bool = False
+    tendency: dict[str, Any] | None = None
 
     @classmethod
     def from_yaml(
@@ -211,6 +230,8 @@ class LiveMindConfig:
         llm = data.get("llm", {})
         wm = data.get("world_model", {}) or {}
         motor_raw = data.get("motor", {}) or {}
+        curiosity_raw = data.get("curiosity") or {}
+        boredom_raw = data.get("boredom") or curiosity_raw.get("boredom") or {}
         vn = visual_nav or {}
         vn_live = vn.get("live", {})
         clamps = dict(thinking.get("action_clamps") or {})
@@ -240,7 +261,8 @@ class LiveMindConfig:
             priorities=dict(wm.get("priorities") or {}),
             retrospective=dict(wm.get("retrospective") or {}),
             enable_retrospective=bool(thinking.get("enable_retrospective", True)),
-            curiosity=CuriosityConfig.from_dict(data.get("curiosity")),
+            curiosity=CuriosityConfig.from_dict(curiosity_raw),
+            boredom=BoredomConfig.from_dict(boredom_raw),
             seed=int(data.get("seed", live.get("seed", 42))),
             enable_motor_layer=bool(motor_raw.get("enabled", live.get("enable_motor_layer", True))),
             mind_interval=int(
@@ -251,6 +273,7 @@ class LiveMindConfig:
             console_log_every=max(1, int(live.get("console_log_every", 1))),
             log_path=str(live["log_path"]) if live.get("log_path") else None,
             console_log_verbose=bool(live.get("console_log_verbose", False)),
+            tendency=dict(data.get("tendency") or {}),
         )
 
 
@@ -294,6 +317,7 @@ class LiveMindPipeline:
                 priorities=self.config.priorities,
                 retrospective=self.config.retrospective,
                 enable_retrospective=self.config.enable_retrospective,
+                tendency=self.config.tendency,
             ),
             experience=self.experience,
             world_model=wm_for_thinking,
@@ -316,6 +340,7 @@ class LiveMindPipeline:
             self.vision_head.eval()
             self.vision_head.reset_state(1)
         self.curiosity = CuriosityDrive(self.config.curiosity or CuriosityConfig())
+        self.boredom = BoredomTracker(self.config.boredom or BoredomConfig())
         motor_cfg = self.config.motor or MotorLayerConfig()
         if self.config.motor is None and not self.config.enable_motor_layer:
             motor_cfg = MotorLayerConfig(mode="heuristic")
@@ -426,6 +451,10 @@ class LiveMindPipeline:
         signal_payload["explore_bias"] = curiosity_step.explore_bias
         signal_payload["novelty"] = curiosity_step.novelty.novelty_score
         signal_payload["exploration_xp"] = curiosity_step.novelty.exploration_xp
+        # Boredom from prior stuck thoughts/body (stimulus-agnostic) biases L1 this tick.
+        bore_pre = self.boredom.state()
+        signal_payload["boredom"] = bore_pre.boredom
+        signal_payload["force_locomotion"] = bore_pre.force_locomotion
         # Soft-bump affect exploration/novelty for thinking when gate allows.
         affect_payload = affect.to_jsonable()
         if curiosity_step.gate > 0.05:
@@ -455,6 +484,13 @@ class LiveMindPipeline:
         )
         mind_action = self.curiosity.apply_action_bias(thought.action, curiosity_step.explore_bias)
         self._mind_ticks += 1
+        plan_name = None
+        if isinstance(thought.intent, dict):
+            plan_name = (thought.intent.get("future") or {}).get("chosen_name")
+        bore_state = self.boredom.observe_thought(
+            plan_name=plan_name,
+            refined_thought=thought.refined_thought,
+        )
         retro = self.thinking._last_retrospective
         info = {
             "stm_id": stm.id,
@@ -476,6 +512,11 @@ class LiveMindPipeline:
             "unique_cells": curiosity_step.novelty.unique_cells,
             "exploration_xp": curiosity_step.novelty.exploration_xp,
             "novelty_first_visit": curiosity_step.novelty.first_visit,
+            "boredom": bore_state.boredom,
+            "thought_stuck": bore_state.thought_stuck,
+            "physical_stuck": bore_state.physical_stuck,
+            "force_locomotion": bore_state.force_locomotion,
+            "tendency": (thought.intent.get("future") or {}).get("tendency"),
             "mind_tick": True,
             "energy": signal_payload.get("energy", sensory.summary.get("energy")),
             "hunger": signal_payload.get("hunger", sensory.summary.get("hunger")),
@@ -486,6 +527,12 @@ class LiveMindPipeline:
             # Prefer L1/L2 plan as the motor goal; curiosity may still nudge it.
             raw_goal = goal_from_intent(thought.intent, mind_action)
             goal = self.curiosity.apply_action_bias(raw_goal, curiosity_step.explore_bias)
+            goal = apply_boredom_escape_goal(
+                goal,
+                bore_state,
+                config=self.boredom.config,
+                escape_sign=self.boredom._escape_sign,
+            )
             self.motor.set_goal(goal)
             set_goal = getattr(self.env, "set_goal", None)
             if callable(set_goal):
@@ -499,6 +546,12 @@ class LiveMindPipeline:
         else:
             action = mind_action
             info["architecture"] = "A"
+        bore_state = self.boredom.observe_physical(position=position, action=action)
+        info["boredom"] = bore_state.boredom
+        info["thought_stuck"] = bore_state.thought_stuck
+        info["physical_stuck"] = bore_state.physical_stuck
+        info["force_locomotion"] = bore_state.force_locomotion
+        self._last_mind_info = dict(info)
         self._pending_action = action.copy()
         return action, info
 
@@ -543,13 +596,37 @@ class LiveMindPipeline:
                 else np.asarray([0.0, 0.0, 0.5, 0.5, 0.0], dtype=np.float32)
             )
             info["architecture"] = "A"
+            bore_state = self.boredom.observe_physical(position=position, action=action)
+            info["boredom"] = bore_state.boredom
+            info["thought_stuck"] = bore_state.thought_stuck
+            info["physical_stuck"] = bore_state.physical_stuck
+            info["force_locomotion"] = bore_state.force_locomotion
+            self._pending_action = action.copy()
             return action, info
+        bore_pre = self.boredom.state()
+        if bore_pre.force_locomotion:
+            escaped = apply_boredom_escape_goal(
+                self.motor.goal,
+                bore_pre,
+                config=self.boredom.config,
+                escape_sign=self.boredom._escape_sign,
+            )
+            self.motor.set_goal(escaped)
         action = self.motor.act(observation)
         self._motor_ticks += 1
         info["motor_goal"] = self.motor.goal.tolist()
         info["motor_action"] = action.tolist()
         info["motor_tracking_error"] = self.motor.tracking_error()
         info["architecture"] = "B"
+        bore_state = self.boredom.observe_physical(position=position, action=action)
+        info["boredom"] = bore_state.boredom
+        info["thought_stuck"] = bore_state.thought_stuck
+        info["physical_stuck"] = bore_state.physical_stuck
+        info["force_locomotion"] = bore_state.force_locomotion
+        self._last_mind_info["boredom"] = bore_state.boredom
+        self._last_mind_info["thought_stuck"] = bore_state.thought_stuck
+        self._last_mind_info["physical_stuck"] = bore_state.physical_stuck
+        self._last_mind_info["force_locomotion"] = bore_state.force_locomotion
         self._pending_action = action.copy()
         return action, info
 
@@ -570,6 +647,7 @@ class LiveMindPipeline:
         self._mind_ticks = 0
         self._motor_ticks = 0
         self.curiosity.reset()
+        self.boredom.reset()
         self._pending_action = None
         self._last_mind_info = {}
         if self.motor is not None:
