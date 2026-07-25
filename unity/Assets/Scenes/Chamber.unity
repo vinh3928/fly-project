@@ -6477,7 +6477,7 @@ MonoBehaviour:
   width: 64
   height: 64
   fieldOfView: 140
-  grayscale: 1
+  grayscale: 0
   isLeftEye: 0
 --- !u!20 &2005206167
 Camera:
@@ -6578,7 +6578,7 @@ MonoBehaviour:
   width: 64
   height: 64
   fieldOfView: 140
-  grayscale: 1
+  grayscale: 0
   isLeftEye: 1
 --- !u!20 &2047704017
 Camera:

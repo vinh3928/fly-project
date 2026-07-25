@@ -60,6 +60,7 @@ class MindEmbedder:
             body_dim=body_dim,
             chemical_dim=chemical_dim,
             internal_dim=internal_dim,
+            vision_channels=3,
             latent_dim=latent_dim,
             use_memory=False,
         ).to(self.device)

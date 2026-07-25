@@ -430,6 +430,7 @@ namespace FlySimulation.EditorTools
             leftCam.depth = -10;
             var leftEye = leftEyeGo.AddComponent<FlyEyeCamera>();
             SetPrivate(leftEye, "isLeftEye", true);
+            SetPrivate(leftEye, "grayscale", false);
 
             var rightEyeGo = new GameObject("RightEye");
             rightEyeGo.transform.SetParent(head.transform, false);
@@ -439,6 +440,7 @@ namespace FlySimulation.EditorTools
             rightCam.depth = -10;
             var rightEye = rightEyeGo.AddComponent<FlyEyeCamera>();
             SetPrivate(rightEye, "isLeftEye", false);
+            SetPrivate(rightEye, "grayscale", false);
 
             var leftAntennaGo = new GameObject("LeftAntenna");
             leftAntennaGo.transform.SetParent(head.transform, false);

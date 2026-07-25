@@ -36,6 +36,14 @@ from .retrospective import (
     run_retrospective,
 )
 from .service import ThinkingConfig, ThinkingService
+from .stimulus_interrupt import (
+    PatchGridHistoryCache,
+    RelativeHistoryBaseline,
+    StimulusInterruptConfig,
+    StimulusInterruptDecision,
+    STOP_GOAL,
+    evaluate_stimulus_interrupt,
+)
 from .two_layer_future import FuturePrediction, predict_present_future
 from .visual_thinker import (
     VisualInsight,
@@ -59,6 +67,11 @@ __all__ = [
     "PersonalityState",
     "PersonalityTraits",
     "RetrospectiveConfig",
+    "PatchGridHistoryCache",
+    "RelativeHistoryBaseline",
+    "STOP_GOAL",
+    "StimulusInterruptConfig",
+    "StimulusInterruptDecision",
     "ThinkingConfig",
     "ThinkingService",
     "ThoughtResult",
@@ -72,6 +85,7 @@ __all__ = [
     "can_investigate_interest",
     "compose_thought",
     "critique_draft",
+    "evaluate_stimulus_interrupt",
     "eye_pair_similarity",
     "frame_similarity",
     "is_low_load",

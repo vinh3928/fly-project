@@ -1,6 +1,7 @@
 """Vision navigation helpers."""
 
 from .novelty import (
+    PatchNovelty,
     VisualNoveltyConfig,
     VisualNoveltyCues,
     VisualNoveltyTracker,
@@ -13,6 +14,7 @@ __all__ = [
     "RecurrentVisionHead",
     "SyntheticNavSample",
     "VisionNavCues",
+    "PatchNovelty",
     "VisualNoveltyConfig",
     "VisualNoveltyCues",
     "VisualNoveltyTracker",

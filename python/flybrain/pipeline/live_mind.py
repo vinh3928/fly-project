@@ -40,6 +40,14 @@ from flybrain.thinking.interest import (
     apply_investigation_goal,
 )
 from flybrain.thinking.devils_advocate import propose_critique
+from flybrain.thinking.retrospective import RetrospectiveConfig, can_investigate_interest
+from flybrain.thinking.stimulus_interrupt import (
+    STOP_GOAL,
+    PatchGridHistoryCache,
+    RelativeHistoryBaseline,
+    StimulusInterruptConfig,
+    evaluate_stimulus_interrupt,
+)
 from flybrain.vision.recurrent_head import (
     RecurrentVisionHead,
     VisionNavCues,
@@ -159,6 +167,24 @@ def format_live_step_log(
             f" invest={invest.get('kind')}(rem={int(invest.get('remaining', 0))})"
         )
 
+    si_s = ""
+    si_dbg = info.get("interrupt_debug")
+    if isinstance(si_dbg, dict):
+        scores = si_dbg.get("scores") or {}
+        bases = si_dbg.get("baselines") or {}
+        sc_s = ",".join(f"{k[:1]}{k[-1]}={scores[k]:.3f}" for k in scores)
+        base_s = ",".join(f"{k[:1]}{k[-1]}={bases[k]:.3f}" for k in bases) if bases else "-"
+        wc = si_dbg.get("worst_cell")
+        wc_s = f" wc={int(wc)}" if isinstance(wc, (int, float)) and int(wc) >= 0 else ""
+        si_s = (
+            f" si[{si_dbg.get('reason')} cue={si_dbg.get('cue')}"
+            f" sim({sc_s}) base({base_s}){wc_s}"
+            f" novel={','.join(si_dbg.get('novel') or []) or '-'}"
+            f" soft={int(bool(si_dbg.get('soft_low_load')))}"
+            f" miss={int(bool(si_dbg.get('history_miss')))}"
+            f" armed={int(bool(si_dbg.get('armed')))}]"
+        )
+
     thought = " ".join(str(info.get("refined_thought") or "").split())
     critique = " ".join(str(info.get("devil_critique") or "").split())
     thought_limit = 500 if verbose else 220
@@ -170,7 +196,7 @@ def format_live_step_log(
     return (
         f"[live {step:04d} {tag}] {goal_s} act=[{fwd:+.2f},{turn:+.2f}]"
         f"{track_s}{energy_s}{hunger_s}{surv_s}{fear_s}{wall_s}{bearing_s}{cur_s}{bore_s}{tend_s}{viz_s}{vthink_s}{judge_s}"
-        f"{cov_s}{chosen}{l1_s}{thought_s}{critique_s}"
+        f"{si_s}{cov_s}{chosen}{l1_s}{thought_s}{critique_s}"
     )
 
 
@@ -285,6 +311,7 @@ class LiveMindConfig:
     personality: dict[str, Any] | None = None
     judgement: JudgementConfig | None = None
     interest: InterestConfig | None = None
+    stimulus_interrupt: StimulusInterruptConfig | None = None
 
     @classmethod
     def from_yaml(
@@ -305,6 +332,7 @@ class LiveMindConfig:
         personality_raw = data.get("personality") or {}
         judgement_raw = data.get("judgement") or {}
         interest_raw = data.get("interest") or {}
+        interrupt_raw = data.get("stimulus_interrupt") or {}
         clamps = dict(thinking.get("action_clamps") or {})
         if "wall_hazard_forward_scale" in vn_live:
             clamps["wall_hazard_forward_scale"] = vn_live["wall_hazard_forward_scale"]
@@ -364,6 +392,7 @@ class LiveMindConfig:
             personality=dict(personality_raw),
             judgement=JudgementConfig.from_dict(judgement_raw),
             interest=InterestConfig.from_dict(interest_raw),
+            stimulus_interrupt=StimulusInterruptConfig.from_dict(interrupt_raw),
         )
 
 
@@ -443,6 +472,14 @@ class LiveMindPipeline:
         self.judgement = JudgementModule(self.config.judgement or JudgementConfig())
         self.interests = InterestPointStore(self.config.interest or InterestConfig())
         self.thinking.interest_store = self.interests
+        self.stimulus_interrupt = self.config.stimulus_interrupt or StimulusInterruptConfig()
+        self._history_baseline = RelativeHistoryBaseline.from_config(self.stimulus_interrupt)
+        self._patch_history = PatchGridHistoryCache.from_config(self.stimulus_interrupt)
+        self._interrupt_pending = False
+        self._interrupt_reason = ""
+        self._interrupt_meta: dict[str, Any] = {}
+        self._interrupt_patch_vec: np.ndarray | None = None
+        self._interrupt_cooldown_until = 0
         motor_cfg = self.config.motor or MotorLayerConfig()
         if self.config.motor is None and not self.config.enable_motor_layer:
             motor_cfg = MotorLayerConfig(mode="heuristic")
@@ -452,6 +489,146 @@ class LiveMindPipeline:
         self._last_mind_info: dict[str, Any] = {}
         self._mind_ticks = 0
         self._motor_ticks = 0
+
+    def _retrospective_cfg(self) -> RetrospectiveConfig:
+        raw = dict(self.config.retrospective or {})
+        known = {f.name for f in RetrospectiveConfig.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        return RetrospectiveConfig(**{k: v for k, v in raw.items() if k in known})
+
+    def _arm_stimulus_interrupt(
+        self,
+        *,
+        observation: np.ndarray,
+        left_eye: np.ndarray | None,
+        right_eye: np.ndarray | None,
+        sensory: Any,
+        affect: Any,
+        visual_nov: Any | None,
+        info: dict[str, Any] | None = None,
+    ) -> None:
+        """Evaluate 3×3 cue vs STM patch history; arm interrupt when novel under soft load."""
+        if self._interrupt_pending:
+            return
+        cfg = self.stimulus_interrupt
+        if not cfg.enabled:
+            return
+        signals = sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else dict(sensory.summary)
+        affect_payload = affect.to_jsonable() if hasattr(affect, "to_jsonable") else dict(affect)
+        parts = None
+        if str(cfg.history_backend).lower() == "stm":
+            parts = self.embedder.embed_parts(sensory, affect)
+        decision = evaluate_stimulus_interrupt(
+            memory=self.memory,
+            parts=parts,
+            signals=signals,
+            affect=affect_payload,
+            fly_id=self.config.fly_id,
+            step=int(self._step),
+            cooldown_until_step=int(self._interrupt_cooldown_until),
+            config=cfg,
+            stimulus_thresholds=self.config.stimulus_thresholds,
+            retrospective=self._retrospective_cfg(),
+            visual_novelty=float(visual_nov.visual_novelty) if visual_nov is not None else 0.0,
+            new_stimulus=bool(visual_nov.new_stimulus) if visual_nov is not None else False,
+            baseline=self._history_baseline,
+            patch_cache=self._patch_history,
+            left_eye=left_eye,
+            right_eye=right_eye,
+        )
+        # Debug: expose *why* an interrupt did / didn't arm whenever a cue was present.
+        if decision.candidate:
+            debug = {
+                "reason": decision.reason,
+                "cue": decision.cue,
+                "backend": str(cfg.history_backend),
+                "min_sim": round(float(decision.best_similarity), 4),
+                "scores": {k: round(float(v), 4) for k, v in decision.modality_scores.items()},
+                "baselines": {
+                    k: round(float(v), 4) for k, v in decision.history_baselines.items()
+                },
+                "novel": list(decision.novel_modalities),
+                "worst_cell": int(decision.patch_worst_cell),
+                "soft_low_load": bool(decision.soft_low_load),
+                "history_miss": bool(decision.history_miss),
+                "armed": bool(decision.should_arm),
+            }
+            if info is not None:
+                info["interrupt_debug"] = debug
+            if self.config.console_log:
+                print(f"si_debug step={self._step} {debug}", flush=True)
+        if decision.should_arm:
+            self._interrupt_pending = True
+            self._interrupt_reason = decision.reason
+            self._interrupt_meta = {
+                "cue": decision.cue,
+                "backend": str(cfg.history_backend),
+                "best_similarity": decision.best_similarity,
+                "modality_scores": dict(decision.modality_scores),
+                "history_baselines": dict(decision.history_baselines),
+                "novel_modalities": list(decision.novel_modalities),
+                "reason": decision.reason,
+            }
+            # Hold the 3×3 embedding until the interrupt is confirmed (mind tick).
+            if decision.patch_embedding is not None:
+                self._interrupt_patch_vec = np.asarray(
+                    decision.patch_embedding, dtype=np.float32
+                ).copy()
+            else:
+                self._interrupt_patch_vec = None
+
+    def _clear_stimulus_interrupt(self) -> None:
+        cfg = self.stimulus_interrupt
+        # Confirmed interrupt: persist the 3×3 embedding into STM so the next
+        # matching novelty cue becomes a history_hit (not-novel path).
+        patch = self._interrupt_patch_vec
+        if patch is not None and float(np.linalg.norm(patch)) > 1e-6:
+            try:
+                self.memory.insert_embedding(
+                    embedding=np.zeros(self.embedder.total_dim, dtype=np.float32),
+                    signals={
+                        "stimulus_interrupt": True,
+                        "interrupt_reason": self._interrupt_reason,
+                        "cue": (self._interrupt_meta or {}).get("cue"),
+                    },
+                    affect={},
+                    episode_id=self.config.experiment_id,
+                    step=int(self._step),
+                    sim_time=float(self._step) * 0.05,
+                    fly_id=self.config.fly_id,
+                    patch_vec=patch,
+                )
+                if self.config.console_log:
+                    print(
+                        f"si_saved_patch_stm step={self._step} "
+                        f"reason={self._interrupt_reason}",
+                        flush=True,
+                    )
+            except Exception as exc:  # pragma: no cover - DB optional in some runs
+                if self.config.console_log:
+                    print(f"si_save_patch_stm_failed step={self._step} err={exc}", flush=True)
+        self._interrupt_pending = False
+        self._interrupt_reason = ""
+        self._interrupt_meta = {}
+        self._interrupt_patch_vec = None
+        self._interrupt_cooldown_until = int(self._step) + int(cfg.cooldown_steps)
+
+    def _apply_hard_stop(self, info: dict[str, Any], observation: np.ndarray | None = None) -> np.ndarray:
+        """Emit a hard-stop motor action while an interrupt is pending."""
+        assert self.motor is not None
+        self.motor.set_goal(STOP_GOAL.copy())
+        set_goal = getattr(self.env, "set_goal", None)
+        if callable(set_goal):
+            set_goal(STOP_GOAL.copy())
+        action = self.motor.act(observation)
+        info["stimulus_interrupt"] = True
+        info["stimulus_interrupt_pending"] = True
+        info["stimulus_interrupt_reason"] = self._interrupt_reason
+        info["stimulus_interrupt_meta"] = dict(self._interrupt_meta)
+        info["motor_goal"] = self.motor.goal.tolist()
+        info["motor_action"] = action.tolist()
+        info["architecture"] = "B"
+        info["mind_tick"] = False
+        return action
 
     def _load_world_model(self) -> NextStateWorldModel | None:
         model = NextStateWorldModel(
@@ -829,6 +1006,11 @@ class LiveMindPipeline:
             "energy": signal_payload.get("energy", sensory.summary.get("energy")),
             "hunger": signal_payload.get("hunger", sensory.summary.get("hunger")),
         }
+        resolving_interrupt = bool(self._interrupt_pending)
+        if resolving_interrupt:
+            info["stimulus_interrupt"] = True
+            info["stimulus_interrupt_reason"] = self._interrupt_reason
+            info["stimulus_interrupt_meta"] = dict(self._interrupt_meta)
         self._last_mind_info = dict(info)
 
         if self.motor is not None:
@@ -844,37 +1026,38 @@ class LiveMindPipeline:
                 left_eye=left_eye,
                 right_eye=right_eye,
             )
-            # Explore/court toward novel eye stimuli.
-            if visual_nov is not None and str(plan_name) in (
-                "explore",
-                "court",
-                "forward",
-                "turn_left",
-                "turn_right",
-            ):
-                wall = float(signal_payload.get("wall_hazard", 0.0))
-                goal = apply_visual_explore_goal(
+            # Interrupt handoff: judgement/L1 owns the objective — skip explore/boredom nudges.
+            if not resolving_interrupt:
+                if visual_nov is not None and str(plan_name) in (
+                    "explore",
+                    "court",
+                    "forward",
+                    "turn_left",
+                    "turn_right",
+                ):
+                    wall = float(signal_payload.get("wall_hazard", 0.0))
+                    goal = apply_visual_explore_goal(
+                        goal,
+                        visual_nov,
+                        config=self.visual_novelty.config,
+                        wall_hazard=wall,
+                    )
+                goal = apply_boredom_escape_goal(
                     goal,
-                    visual_nov,
-                    config=self.visual_novelty.config,
-                    wall_hazard=wall,
+                    bore_state,
+                    config=self.boredom.config,
+                    escape_sign=self.boredom._escape_sign,
                 )
-            goal = apply_boredom_escape_goal(
-                goal,
-                bore_state,
-                config=self.boredom.config,
-                escape_sign=self.boredom._escape_sign,
-            )
-            goal = self._visual_think(
-                goal,
-                info=info,
-                left_eye=left_eye,
-                right_eye=right_eye,
-                visual_nov=visual_nov,
-                wall_hazard=float(signal_payload.get("wall_hazard", 0.0)),
-                survival_risk=float(affect_payload.get("survival_risk", 0.0)),
-            )
-            goal = self._apply_active_investigation(goal, info)
+                goal = self._visual_think(
+                    goal,
+                    info=info,
+                    left_eye=left_eye,
+                    right_eye=right_eye,
+                    visual_nov=visual_nov,
+                    wall_hazard=float(signal_payload.get("wall_hazard", 0.0)),
+                    survival_risk=float(affect_payload.get("survival_risk", 0.0)),
+                )
+                goal = self._apply_active_investigation(goal, info)
             self.motor.set_goal(goal)
             set_goal = getattr(self.env, "set_goal", None)
             if callable(set_goal):
@@ -885,9 +1068,15 @@ class LiveMindPipeline:
             info["motor_action"] = action.tolist()
             info["motor_tracking_error"] = self.motor.tracking_error()
             info["architecture"] = "B"
+            if resolving_interrupt:
+                self._clear_stimulus_interrupt()
+                info["stimulus_interrupt_pending"] = False
         else:
             action = mind_action
             info["architecture"] = "A"
+            if resolving_interrupt:
+                self._clear_stimulus_interrupt()
+                info["stimulus_interrupt_pending"] = False
         bore_state = self.boredom.observe_physical(position=position, action=action)
         info["boredom"] = bore_state.boredom
         info["thought_stuck"] = bore_state.thought_stuck
@@ -921,6 +1110,33 @@ class LiveMindPipeline:
             info["visual_novelty"] = visual_nov.visual_novelty
             info["novelty_bearing"] = visual_nov.novelty_bearing
             info["new_stimulus"] = visual_nov.new_stimulus
+
+        # Candidate novel-vs-STM → arm interrupt (hard-stop until forced mind tick).
+        self._arm_stimulus_interrupt(
+            observation=observation,
+            left_eye=left_eye,
+            right_eye=right_eye,
+            sensory=sensory,
+            affect=affect,
+            visual_nov=visual_nov,
+            info=info,
+        )
+        if self._interrupt_pending and self.motor is not None:
+            action = self._apply_hard_stop(info, observation)
+            self._motor_ticks += 1
+            bore_state = self.boredom.observe_physical(position=position, action=action)
+            info["boredom"] = bore_state.boredom
+            info["thought_stuck"] = bore_state.thought_stuck
+            info["physical_stuck"] = bore_state.physical_stuck
+            info["force_locomotion"] = bore_state.force_locomotion
+            info["interrupt_force_think"] = can_investigate_interest(
+                signals=sensory.to_jsonable(),
+                affect=affect.to_jsonable(),
+                config=self._retrospective_cfg(),
+            )
+            self._pending_action = action.copy()
+            return action, info
+
         curiosity_step = self.curiosity.step(
             embedding=embedding,
             action=self._pending_action,
@@ -1036,6 +1252,13 @@ class LiveMindPipeline:
         self.visual_thinker.reset()
         self.judgement.reset()
         self.interests.reset()
+        self._history_baseline.reset()
+        self._patch_history.reset()
+        self._interrupt_pending = False
+        self._interrupt_reason = ""
+        self._interrupt_meta = {}
+        self._interrupt_patch_vec = None
+        self._interrupt_cooldown_until = 0
         self._pending_action = None
         self._last_mind_info = {}
         if self.motor is not None:
@@ -1063,18 +1286,47 @@ class LiveMindPipeline:
             )
         while step_limit is None or self._step < step_limit:
             tick_start = time.perf_counter()
+            soft_ready = False
+            if self._interrupt_pending:
+                # Soft low-load: survival/bitter calm (wall alone does not block).
+                soft_ready = True  # pending already required soft load at arm; re-check below
             should_think = (
-                (self.motor is None) or (self._step % interval == 0) or not self._last_mind_info
+                (self.motor is None)
+                or (self._step % interval == 0)
+                or not self._last_mind_info
+                or (self._interrupt_pending and soft_ready)
             )
-            if should_think:
+            if should_think and self._interrupt_pending:
+                # Prefer interrupt mind tick over motor-only stop when armed.
+                if self.config.console_log:
+                    print(
+                        f"live_mind_interrupt step={self._step} "
+                        f"reason={self._interrupt_reason}",
+                        flush=True,
+                    )
+                action, info = self.process_observation(obs)
+            elif should_think:
                 if self.config.console_log and self._step == 0:
                     print("live_mind_thinking step=0 …", flush=True)
                 action, info = self.process_observation(obs)
             else:
                 action, info = self.process_motor_only(obs)
+                # Same-step force mind when motor_only just armed under soft load.
+                if info.get("interrupt_force_think") and self._interrupt_pending:
+                    if self.config.console_log:
+                        print(
+                            f"live_mind_interrupt step={self._step} "
+                            f"reason={self._interrupt_reason}",
+                            flush=True,
+                        )
+                    action, info = self.process_observation(obs)
             # Blend food-search heuristic into the *goal* path when mind just thought.
             food_policy = getattr(self.env, "food_policy_action", None)
-            if callable(food_policy) and info.get("mind_tick"):
+            if (
+                callable(food_policy)
+                and info.get("mind_tick")
+                and not info.get("stimulus_interrupt")
+            ):
                 food_action = food_policy()
                 if self.motor is not None:
                     blended = action.copy()

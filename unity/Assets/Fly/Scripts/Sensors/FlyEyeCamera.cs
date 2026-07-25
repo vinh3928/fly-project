@@ -11,7 +11,7 @@ namespace FlySimulation.Fly.Sensors
         [SerializeField] private int width = 64;
         [SerializeField] private int height = 64;
         [SerializeField] private float fieldOfView = 140f;
-        [SerializeField] private bool grayscale = true;
+        [SerializeField] private bool grayscale = false;
         [SerializeField] private bool isLeftEye = true;
 
         private Camera _camera;

@@ -41,3 +41,25 @@ The project combines:
 3. Homeostatic objectives (energy, hydration, damage, effort, stability)
 
 It is **not** purely unsupervised learning.
+
+## Vision representation follow-up
+
+The current 3×3 eye-patch representation is intentionally minimal. Each square
+stores only five features: mean R/G/B, luminance standard deviation, and one
+vertical-edge statistic. Across both eyes this produces the 90-dimensional STM
+`patch_vec` (`2 eyes × 9 squares × 5 features`).
+
+When revisiting the eye/vision architecture, increase the per-square feature
+extraction before treating this representation as biologically or perceptually
+rich. Candidate additions include:
+
+- horizontal, vertical, and diagonal edge/orientation responses
+- local contrast, gradients, and multi-scale spatial-frequency features
+- hue, saturation, opponent-color, and chromatic-gradient features
+- motion/optic-flow direction and magnitude
+- texture statistics, temporal change, and flicker
+- learned per-patch features trained with contrastive or predictive objectives
+
+Preserve independent left/right and per-square identity when expanding the
+vector, and migrate the pgvector `patch_vec` dimension and existing STM rows
+together.

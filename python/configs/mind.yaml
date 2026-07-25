@@ -19,6 +19,7 @@ embedding:
   chemical_dim: 64
   internal_dim: 8
   vision_size: 64
+  vision_channels: 3  # RGB eyes (Unity CameraSensor Grayscale=false)
 
 stm:
   top_k_similar: 5
@@ -161,10 +162,12 @@ tendency:
   base_bonus: 0.06
   safe_mode_bonus: 0.30
 
-# Eye novelty: new visual patches pull explore motor toward their bearing.
+# Eye novelty: each eye is a 3×3 grid of independent squares (no stereo merge).
+# Scalar viz / bearing used by motor+interrupt = peak patch (argmax), not a blend.
 visual_novelty:
   enabled: true
-  n_columns: 8
+  grid_rows: 3
+  grid_cols: 3
   first_visit_bonus: 1.0
   repeat_decay: 0.7
   change_weight: 0.45
@@ -172,12 +175,12 @@ visual_novelty:
   turn_gain: 0.85
   forward_gain: 0.55
   min_novelty_for_pull: 0.18
-  # Habituation: staring at the same view (a wall) slowly loses novelty; a
-  # genuinely changing scene recovers it. Prevents ambient walls staying "novel".
+  eye_bearing_offset: 0.2         # left eye shifts bearing left; right shifts right
+  # Habituation is per-square: a static cell loses novelty; change recovers it.
   habituation_enabled: true
-  static_change_threshold: 0.08   # frame change below this ⇒ "same view"
+  static_change_threshold: 0.08   # patch change below this ⇒ "same view"
   habituation_rate: 0.02          # slow decay toward habituated when static (~50 ticks)
-  dishabituation_rate: 0.5        # fast recovery when the scene changes
+  dishabituation_rate: 0.5        # fast recovery when the patch changes
   habituation_strength: 0.9       # up to 90% of novelty suppressed when fully habituated
 
 # Novelty-triggered vision-LLM "thinking mode": when the eyes see something
@@ -227,7 +230,30 @@ judgement:
   acknowledge_threshold: 0.18
   acknowledge_novelty_min: 0.15
   acknowledge_load_min: 0.45
-  acknowledge_eye_match_max: 0.4   # if eyes match a stored acknowledge > this, no re-ack
+  acknowledge_eye_match_max: 0.4
+
+# Interrupt Architecture-B motor ticks when eyes/sensors look novel vs STM.
+# Hard-stops locomotion until a forced mind+judgement tick installs an L1 goal.
+stimulus_interrupt:
+  enabled: true
+  # 3×3 novelty cue → check STM patch_vec; on confirm, save patch_vec to STM.
+  # Next matching 3×3 cue ⇒ history_hit (not-novel); nothing written to a local cache.
+  history_backend: patch_grid
+  patch_match_min: 0.92
+  patch_grid_rows: 3
+  patch_grid_cols: 3
+  min_visual_novelty: 0.18
+  cooldown_steps: 20
+  # Legacy STM-CNN backend knobs (only when history_backend: stm):
+  history_relative: true
+  history_baseline_window: 40
+  history_relative_drop: 0.04
+  history_min_baseline_samples: 8
+  history_bootstrap_baseline: 1.0
+  history_match_min: 0.55
+  modalities: [left_eye, right_eye, sensors]
+  # Soft low-load gate uses world_model.retrospective survival/bitter caps
+  # (wall alone does not block — otherwise interrupts starve facing walls).
 
 # Deferred interest points: judgement acknowledge → STM-linked queue →
 # low-load retrospective pops and investigates (slow + turn toward bearing).

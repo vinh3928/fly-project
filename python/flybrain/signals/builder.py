@@ -145,15 +145,21 @@ class SignalBuilder:
         arr = np.asarray(frame, dtype=np.float32)
         if arr.ndim == 2:
             arr = arr[None, ...]
-        if arr.ndim == 3 and arr.shape[0] not in (1, 3):
-            # HWC -> CHW grayscale mean
-            arr = arr.mean(axis=-1, keepdims=True).transpose(2, 0, 1)
+        elif arr.ndim == 3 and arr.shape[0] not in (1, 3):
+            # HWC -> CHW; keep RGB when present.
+            if arr.shape[-1] >= 3:
+                arr = np.moveaxis(arr[..., :3], -1, 0)
+            else:
+                arr = arr.mean(axis=-1, keepdims=True).transpose(2, 0, 1)
         if arr.shape[-2:] != (self.vision_size, self.vision_size):
             # Nearest-neighbor resize without extra deps
             h, w = arr.shape[-2], arr.shape[-1]
             ys = (np.linspace(0, h - 1, self.vision_size)).astype(np.int32)
             xs = (np.linspace(0, w - 1, self.vision_size)).astype(np.int32)
             arr = arr[..., ys][..., xs]
-        if arr.shape[0] != 1:
+        # Preserve 1 or 3 channels (do not collapse RGB to gray).
+        if arr.shape[0] not in (1, 3):
             arr = arr[:1]
-        return arr
+        if float(arr.max()) > 1.5:
+            arr = arr / 255.0
+        return np.clip(arr, 0.0, 1.0).astype(np.float32)

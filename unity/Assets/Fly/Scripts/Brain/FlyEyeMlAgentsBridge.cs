@@ -72,8 +72,8 @@ namespace FlySimulation.Fly.Brain
                 // Leave spatial sort as-is; Capture still works for stereo bars.
             }
 
-            BindOrCreate("LeftEye", left.GetComponent<Camera>(), grayscale: true);
-            BindOrCreate("RightEye", right.GetComponent<Camera>(), grayscale: true);
+            BindOrCreate("LeftEye", left.GetComponent<Camera>(), grayscale: false);
+            BindOrCreate("RightEye", right.GetComponent<Camera>(), grayscale: false);
         }
 
         private void BindOrCreate(string sensorName, Camera cam, bool grayscale)

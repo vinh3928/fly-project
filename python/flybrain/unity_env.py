@@ -46,45 +46,80 @@ def default_build_path() -> Path | None:
     return None
 
 
+def to_eye_frame(
+    arr: np.ndarray,
+    *,
+    size: int = DEFAULT_VISION_SIZE,
+    prefer_color: bool = True,
+) -> np.ndarray:
+    """Normalize a visual observation to (C, H, W) float32 in [0, 1].
+
+    When ``prefer_color`` is True and the source has 3 channels, returns C=3 RGB.
+    Otherwise returns C=1 grayscale (luminance mean of RGB when needed).
+    """
+    x = np.asarray(arr, dtype=np.float32)
+    if x.ndim == 4:
+        x = x[0]
+
+    rgb: np.ndarray | None = None
+    gray: np.ndarray | None = None
+
+    if x.ndim == 3:
+        # CHW (C,H,W) or HWC (H,W,C)
+        if x.shape[0] in (1, 3) and x.shape[0] < x.shape[-1]:
+            if x.shape[0] == 1:
+                gray = x[0]
+            else:
+                rgb = x
+                gray = x.mean(axis=0)
+        else:
+            if x.shape[-1] == 1:
+                gray = x[..., 0]
+            elif x.shape[-1] >= 3:
+                rgb = np.moveaxis(x[..., :3], -1, 0)
+                gray = rgb.mean(axis=0)
+            else:
+                gray = x.mean(axis=-1)
+    elif x.ndim == 2:
+        gray = x
+    elif x.ndim == 1:
+        n = int(np.sqrt(x.size))
+        if n * n == x.size:
+            gray = x.reshape(n, n)
+        elif n * n * 3 == x.size:
+            rgb = x.reshape(3, n, n)
+            gray = rgb.mean(axis=0)
+        else:
+            gray = np.zeros((size, size), dtype=np.float32)
+    else:
+        gray = np.zeros((size, size), dtype=np.float32)
+
+    def _resize2d(img: np.ndarray) -> np.ndarray:
+        if img.shape != (size, size):
+            ys = (np.linspace(0, img.shape[0] - 1, size)).astype(np.int32)
+            xs = (np.linspace(0, img.shape[1] - 1, size)).astype(np.int32)
+            img = img[ys][:, xs]
+        return img
+
+    if prefer_color and rgb is not None:
+        chans = [_resize2d(np.asarray(rgb[c], dtype=np.float32)) for c in range(3)]
+        out = np.stack(chans, axis=0)
+    else:
+        g = _resize2d(np.asarray(gray if gray is not None else np.zeros((size, size), dtype=np.float32)))
+        out = g[None, ...]
+
+    if float(out.max()) > 1.5:
+        out = out / 255.0
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
 def to_grayscale_eye(
     arr: np.ndarray,
     *,
     size: int = DEFAULT_VISION_SIZE,
 ) -> np.ndarray:
     """Normalize a visual observation to shape (1, H, W) float32 in [0, 1]."""
-    x = np.asarray(arr, dtype=np.float32)
-    if x.ndim == 4:
-        x = x[0]
-    if x.ndim == 3:
-        # CHW (C,H,W) or HWC (H,W,C)
-        if x.shape[0] in (1, 3) and x.shape[0] < x.shape[-1]:
-            if x.shape[0] == 1:
-                x = x[0]
-            else:
-                x = x.mean(axis=0)
-        else:
-            if x.shape[-1] == 1:
-                x = x[..., 0]
-            elif x.shape[-1] >= 3:
-                x = x[..., :3].mean(axis=-1)
-            else:
-                x = x.mean(axis=-1)
-    elif x.ndim == 1:
-        n = int(np.sqrt(x.size))
-        if n * n == x.size:
-            x = x.reshape(n, n)
-        else:
-            x = np.zeros((size, size), dtype=np.float32)
-    if x.ndim != 2:
-        x = np.zeros((size, size), dtype=np.float32)
-    if x.shape != (size, size):
-        # Nearest resize without depending on cv2/PIL.
-        ys = (np.linspace(0, x.shape[0] - 1, size)).astype(np.int32)
-        xs = (np.linspace(0, x.shape[1] - 1, size)).astype(np.int32)
-        x = x[ys][:, xs]
-    if float(x.max()) > 1.5:
-        x = x / 255.0
-    return np.clip(x, 0.0, 1.0).astype(np.float32)[None, ...]
+    return to_eye_frame(arr, size=size, prefer_color=False)
 
 
 def unpack_unity_observations(
@@ -93,11 +128,13 @@ def unpack_unity_observations(
     *,
     vector_dim: int = DEFAULT_OBS_DIM,
     vision_size: int = DEFAULT_VISION_SIZE,
+    prefer_color: bool = True,
 ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
     """Split ML-Agents step observations into vector + optional stereo eyes.
 
     Camera sensors registered as ``LeftEye`` / ``RightEye`` are preferred by name;
     otherwise the first two non-vector visual tensors are used.
+    Eyes are returned as (C, H, W) with C=3 when color is available, else C=1.
     """
     vector: np.ndarray | None = None
     left: np.ndarray | None = None
@@ -135,7 +172,7 @@ def unpack_unity_observations(
             continue
 
         if arr.ndim >= 2 or (len(shape) >= 2 and shape[0] != vector_dim):
-            eye = to_grayscale_eye(arr, size=vision_size)
+            eye = to_eye_frame(arr, size=vision_size, prefer_color=prefer_color)
             if "left" in name:
                 left = eye
             elif "right" in name:

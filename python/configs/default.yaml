@@ -23,7 +23,7 @@ chamber:
 
 observations:
   eye_resolution: [64, 64]
-  grayscale: true
+  grayscale: false
   joint_count: 18
   chemical_channels: 8
 

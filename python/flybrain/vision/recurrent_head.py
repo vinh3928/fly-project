@@ -80,9 +80,14 @@ class RecurrentVisionHead(nn.Module):
         dev = torch.device(device)
         left_t = torch.as_tensor(left, device=dev, dtype=torch.float32)
         right_t = torch.as_tensor(right, device=dev, dtype=torch.float32)
-        if left_t.ndim == 3:
+        # Accept (H,W), (1|3,H,W), (B,C,H,W) — VisionEncoder converts RGB→luma when needed.
+        if left_t.ndim == 2:
+            left_t = left_t.unsqueeze(0).unsqueeze(0)
+        elif left_t.ndim == 3:
             left_t = left_t.unsqueeze(0)
-        if right_t.ndim == 3:
+        if right_t.ndim == 2:
+            right_t = right_t.unsqueeze(0).unsqueeze(0)
+        elif right_t.ndim == 3:
             right_t = right_t.unsqueeze(0)
         if self._hidden is None or self._hidden.shape[1] != left_t.shape[0]:
             self.reset_state(batch_size=left_t.shape[0], device=dev)
@@ -102,10 +107,21 @@ def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNav
 
     Synthetic dark wall bars (Phase 5) and Unity light/near-field walls both raise
     ``wall_hazard`` so live Chamber play can avoid obstacles without a trained head.
+    Accepts grayscale (H,W)/(1,H,W) or RGB (3,H,W)/(H,W,3); wall cues use luminance.
     """
-    l = np.asarray(left, dtype=np.float32).reshape(-1, left.shape[-2], left.shape[-1])
-    r = np.asarray(right, dtype=np.float32).reshape(-1, right.shape[-2], right.shape[-1])
-    frame = 0.5 * (l[0] + r[0])
+    def _luma(eye: np.ndarray) -> np.ndarray:
+        x = np.asarray(eye, dtype=np.float32)
+        if x.ndim == 2:
+            return x
+        if x.ndim == 3 and x.shape[0] in (1, 3):
+            return x[0] if x.shape[0] == 1 else x.mean(axis=0)
+        if x.ndim == 3 and x.shape[-1] in (1, 3):
+            return x[..., 0] if x.shape[-1] == 1 else x[..., :3].mean(axis=-1)
+        return np.asarray(x, dtype=np.float32).reshape(x.shape[-2], x.shape[-1])
+
+    l = _luma(left)
+    r = _luma(right)
+    frame = 0.5 * (l + r)
     h, w = frame.shape
     # Bright mass centroid → bearing
     bright = np.clip(frame - 0.6, 0.0, 1.0)
@@ -128,7 +144,7 @@ def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNav
 
     light_edge = max(_uniform_bright(left_bar, left_std), _uniform_bright(right_bar, right_std))
     # Frontal fill: low stereo difference + low spatial variance ⇒ near wall.
-    stereo = float(np.mean(np.abs(l[0] - r[0])))
+    stereo = float(np.mean(np.abs(l - r)))
     global_std = float(frame.std())
     frontal = 0.0
     if stereo < 0.06 and global_std < 0.12:

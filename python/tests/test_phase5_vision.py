@@ -6,6 +6,7 @@ import torch
 from flybrain.env_visual_nav import FakeVisualNavEnv
 from flybrain.phase5 import AGENT_OBS_HAS_TARGET_XYZ, SUCCESS_RADIUS, VISION_SIZE
 from flybrain.unity_env import DEFAULT_OBS_DIM
+from flybrain.encoders import VisionEncoder
 from flybrain.vision import (
     RecurrentVisionHead,
     heuristic_cues_from_frames,
@@ -76,3 +77,24 @@ def test_fake_visual_nav_can_approach_with_heuristic() -> None:
     assert info["has_target_xyz_in_obs"] is False
     assert obs.shape[0] == DEFAULT_OBS_DIM
     assert info["distance_to_target"] <= start - 0.05 or info.get("success", False)
+
+
+def test_vision_encoder_accepts_rgb_when_built_for_grayscale() -> None:
+    enc = VisionEncoder(in_channels=1, latent_dim=32)
+    rgb = torch.rand(2, 3, 64, 64)
+    out = enc(rgb)
+    assert out.shape == (2, 32)
+
+
+def test_vision_encoder_accepts_gray_when_built_for_rgb() -> None:
+    enc = VisionEncoder(in_channels=3, latent_dim=32)
+    gray = torch.rand(2, 1, 64, 64)
+    out = enc(gray)
+    assert out.shape == (2, 32)
+
+
+def test_recurrent_head_infer_cues_rgb() -> None:
+    head = RecurrentVisionHead()
+    rgb = np.random.rand(3, 64, 64).astype(np.float32)
+    cues = head.infer_cues(rgb, rgb)
+    assert 0.0 <= cues.wall_hazard <= 1.0

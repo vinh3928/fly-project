@@ -11,6 +11,10 @@ CHEMICAL_VEC_DIM = 64
 SENSORS_VEC_DIM = BODY_VEC_DIM + CHEMICAL_VEC_DIM  # 192
 STATUS_VEC_DIM = 32
 AFFECT_VEC_DIM = AFFECT_DIM  # 16
+# Flattened stereo 3×3 patch features (9 cells × 5 feats × 2 eyes).
+PATCH_CELL_FEAT_DIM = 5
+PATCH_GRID_CELLS = 9  # 3×3
+PATCH_VEC_DIM = PATCH_GRID_CELLS * PATCH_CELL_FEAT_DIM * 2  # 90
 
 HIGH_LEVEL_ACTION_DIM = 5
 DEFAULT_OBS_DIM = 197
@@ -46,4 +50,5 @@ STM_MODALITIES = (
     "sensors",
     "status",
     "affect",
+    "patches",
 )

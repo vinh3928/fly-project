@@ -17,12 +17,13 @@ class MultimodalEncoder(nn.Module):
         body_dim: int,
         chemical_dim: int = 64,
         internal_dim: int = 8,
-        vision_channels: int = 1,
+        vision_channels: int = 3,
         latent_dim: int = 256,
         use_memory: bool = True,
     ) -> None:
         super().__init__()
-        self.vision = VisionEncoder(in_channels=vision_channels, latent_dim=128)
+        self.vision_channels = int(vision_channels)
+        self.vision = VisionEncoder(in_channels=self.vision_channels, latent_dim=128)
         self.body = BodyEncoder(input_dim=body_dim, latent_dim=128)
         self.chemical = ChemicalEncoder(input_dim=chemical_dim, latent_dim=64)
         self.internal = InternalStateEncoder(input_dim=internal_dim, latent_dim=32)
@@ -34,6 +35,24 @@ class MultimodalEncoder(nn.Module):
         self.use_memory = use_memory
         self.latent_dim = latent_dim
         self.memory = nn.GRU(latent_dim, latent_dim, batch_first=True) if use_memory else None
+
+    def _prepare_vision(self, images: torch.Tensor) -> torch.Tensor:
+        """Accept (B,H,W), (B,1,H,W), or (B,3,H,W) and match ``vision_channels``."""
+        if images.ndim == 3:
+            images = images.unsqueeze(1)
+        c = int(images.shape[1])
+        want = self.vision_channels
+        if c == want:
+            return images
+        if c == 1 and want == 3:
+            return images.repeat(1, 3, 1, 1)
+        if c == 3 and want == 1:
+            return images.mean(dim=1, keepdim=True)
+        if c > want:
+            return images[:, :want]
+        # Pad missing channels by repeating the last.
+        pad = images[:, -1:].repeat(1, want - c, 1, 1)
+        return torch.cat([images, pad], dim=1)
 
     def encode_step(
         self,
@@ -55,8 +74,8 @@ class MultimodalEncoder(nn.Module):
         internal: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         """Return per-modality encodings plus the fused latent."""
-        left = self.vision(left_eye)
-        right = self.vision(right_eye)
+        left = self.vision(self._prepare_vision(left_eye))
+        right = self.vision(self._prepare_vision(right_eye))
         vision = 0.5 * (left + right)
         body_z = self.body(body)
         chem_z = self.chemical(chemical)
