@@ -70,7 +70,8 @@ Interrupt Architecture-B arms on a candidate cue under soft load, then runs an
 **80-step deep-thought freeze** (`deep_thought_steps`). While the freeze is
 active:
 
-- motor is forced to `STOP_GOAL` every step (no locomotion)
+- mind pushes an ``idle`` motor directive (act-state bus); motor holds `STOP_GOAL`
+  every step (no locomotion)
 - scheduled mind ticks (every `deep_thought_mind_interval`, default 4) run a
   deep-thought stub: senses are amplified by `deep_thought_gain` (default ×10)
   for the devil LLM / mind view only — including antenna `odor` /
@@ -89,6 +90,22 @@ active:
 - **conditioning STM**: hazard entries are snapshotted into short-term memory
   (`signals.conditioning` JSON on checkpoint / mind-tick rows) and rehydrated
   at the start of `run()` from the newest matching STM row
+
+### Motor act-state (mind push)
+
+Architecture B motor control is a small act-state machine above `MotorLayer`:
+
+| Mode | Meaning | Motor behavior |
+|------|---------|----------------|
+| `act_anything` | Execute an L1 plan (explore, forward, turn_*, …) | Hold mind goal; `motor.act` each tick |
+| `still` | Intentional non-action (`stop` plan) | Hold `STOP_GOAL` |
+| `idle` | Deep processing (stimulus interrupt) | Hold `STOP_GOAL`; deep-thought mind cadence |
+
+When a mind think completes, live mind **pushes** a `MotorDirective` (mode + goal +
+plan name). Between pushes, `process_motor_only` only tracks that directive — no
+per-tick embed, curiosity, place map, or explore replan. Stimulus interrupt arms
+by pushing `idle` on the same bus (mind interrupting motor), not a parallel freeze
+channel.
 
 Cues include contact taste, visual novelty / new stimulus, and **STM-first smell
 novelty**: a non-zero antenna `smell_vec` that is unfamiliar versus recent STM

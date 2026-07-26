@@ -87,6 +87,8 @@ class MotorLayerConfig:
     obs_dim: int = 197
     goal_dim: int = MOTOR_GOAL_DIM
     action_dim: int = MOTOR_ACTION_DIM
+    # Mind pushes act_anything / still / idle directives; motor tracks until next push.
+    act_state_enabled: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> MotorLayerConfig:

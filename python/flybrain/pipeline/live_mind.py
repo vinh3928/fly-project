@@ -23,7 +23,14 @@ from flybrain.memory.embedder import MindEmbedder
 from flybrain.memory.pgvector import ShortTermMemory, open_short_term_memory
 from flybrain.memory.place_graph import PlaceGraphConfig, open_place_graph
 from flybrain.sensors.mapped_feedback import MappedSensorFeedback
-from flybrain.motor import MotorLayer, MotorLayerConfig, goal_from_intent
+from flybrain.motor import (
+    MotorActController,
+    MotorLayer,
+    MotorLayerConfig,
+    goal_from_intent,
+    make_directive,
+    mode_for_plan,
+)
 from flybrain.phase9 import DEFAULT_MIND_INTERVAL
 from flybrain.signals.builder import SignalBuilder
 from flybrain.thinking.service import ThinkingConfig, ThinkingService
@@ -583,6 +590,9 @@ class LiveMindPipeline:
         if self.config.motor is None and not self.config.enable_motor_layer:
             motor_cfg = MotorLayerConfig(mode="heuristic")
         self.motor = MotorLayer(motor_cfg) if self.config.enable_motor_layer else None
+        self.act_controller: MotorActController | None = None
+        if self.motor is not None and bool(getattr(motor_cfg, "act_state_enabled", True)):
+            self.act_controller = MotorActController(self.motor)
         self._step = 0
         self._pending_action: np.ndarray | None = None
         self._last_mind_info: dict[str, Any] = {}
@@ -632,6 +642,38 @@ class LiveMindPipeline:
         signal_payload.update(self.conditioning.to_signals())
         signal_payload["conditioning"] = self.conditioning.to_dict()
 
+    def _stamp_act_state(self, info: dict[str, Any]) -> None:
+        """Expose current mind-pushed act mode on the live info dict."""
+        if self.act_controller is None:
+            return
+        d = self.act_controller.current
+        info["act_mode"] = d.mode
+        info["act_plan"] = d.plan_name
+        info["act_reason"] = d.reason
+
+    def _push_motor_directive(
+        self,
+        *,
+        mode: str | None = None,
+        plan_name: str | None = None,
+        goal: np.ndarray | None = None,
+        reason: str = "",
+    ) -> Any:
+        """Mind → motor interrupt: push a directive onto the act-state controller."""
+        if self.act_controller is None or self.motor is None:
+            return None
+        directive = make_directive(
+            mode=mode,  # type: ignore[arg-type]
+            plan_name=plan_name,
+            goal=goal,
+            reason=reason,
+            step=int(self._step),
+        )
+        self.act_controller.push(directive)
+        set_goal = getattr(self.env, "set_goal", None)
+        if callable(set_goal):
+            set_goal(self.motor.goal.copy())
+        return directive
 
     def _arm_stimulus_interrupt(
         self,
@@ -653,18 +695,14 @@ class LiveMindPipeline:
             return
         signals = sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else dict(sensory.summary)
         affect_payload = affect.to_jsonable() if hasattr(affect, "to_jsonable") else dict(affect)
-        backend = str(cfg.history_backend).lower()
-        parts = None
-        sensors = None
-        if backend in ("stm", "joint"):
-            parts = self.embedder.embed_parts(sensory, affect)
-            sensors = np.asarray(parts.sensors_vec, dtype=np.float32)
+        # Avoid per-tick embed on the motor path. Joint SI pads missing sensors; patch
+        # comes from eyes inside evaluate; smell from the antenna vector.
         smell = None
         if hasattr(sensory, "smell_vec"):
             smell = np.asarray(sensory.smell_vec, dtype=np.float32)
         decision = evaluate_stimulus_interrupt(
             memory=self.memory,
-            parts=parts,
+            parts=None,
             signals=signals,
             affect=affect_payload,
             fly_id=self.config.fly_id,
@@ -680,7 +718,7 @@ class LiveMindPipeline:
             left_eye=left_eye,
             right_eye=right_eye,
             smell_vec=smell,
-            sensors_vec=sensors,
+            sensors_vec=None,
             passive_smell=self._passive_smell,
         )
         # Debug: expose *why* an interrupt did / didn't arm whenever a cue was present.
@@ -723,6 +761,13 @@ class LiveMindPipeline:
                 "reason": decision.reason,
                 "deep_thought_steps": int(self._interrupt_remaining),
             }
+            # Mind → motor: idle for deep thought (single directive bus).
+            self._push_motor_directive(
+                mode="idle",
+                plan_name="idle",
+                goal=STOP_GOAL.copy(),
+                reason=str(decision.reason or "stimulus_interrupt"),
+            )
             # Hold patch+smell+sensors+joint until the freeze clears.
             if decision.patch_embedding is not None:
                 self._interrupt_patch_vec = np.asarray(
@@ -798,11 +843,37 @@ class LiveMindPipeline:
         # Natural / early unlock: install last accept blend so motion resumes conditioned.
         if self._resume_goal is not None and self.motor is not None:
             goal = np.asarray(self._resume_goal, dtype=np.float32).copy()
-            self.motor.set_goal(goal)
-            set_goal = getattr(self.env, "set_goal", None)
-            if callable(set_goal):
-                set_goal(goal)
-            self._pending_action = goal.copy()
+            plan_name = None
+            intent = (
+                self._last_mind_info.get("intent")
+                if isinstance(self._last_mind_info.get("intent"), dict)
+                else {}
+            )
+            if isinstance(intent, dict):
+                plan_name = (intent.get("future") or {}).get("chosen_name")
+            if self.act_controller is not None:
+                resume_mode = mode_for_plan(plan_name)
+                if resume_mode == "idle":
+                    resume_mode = "act_anything"
+                self._push_motor_directive(
+                    mode=resume_mode,
+                    plan_name=str(plan_name or "explore"),
+                    goal=goal,
+                    reason="si_clear",
+                )
+            else:
+                self.motor.set_goal(goal)
+                set_goal = getattr(self.env, "set_goal", None)
+                if callable(set_goal):
+                    set_goal(goal)
+            self._pending_action = self.motor.goal.copy()
+        elif self.act_controller is not None:
+            self._push_motor_directive(
+                mode="still",
+                plan_name="stop",
+                goal=STOP_GOAL.copy(),
+                reason="si_clear",
+            )
         self._resume_goal = None
         # Persist post-freeze conditioning (acks + hits) for later sessions.
         self._persist_conditioning_to_stm()
@@ -816,11 +887,21 @@ class LiveMindPipeline:
     ) -> np.ndarray:
         """Emit a hard-stop motor action while an interrupt freeze is active."""
         assert self.motor is not None
-        self.motor.set_goal(STOP_GOAL.copy())
-        set_goal = getattr(self.env, "set_goal", None)
-        if callable(set_goal):
-            set_goal(STOP_GOAL.copy())
-        action = self.motor.act(observation)
+        if self.act_controller is not None:
+            if self.act_controller.mode != "idle":
+                self._push_motor_directive(
+                    mode="idle",
+                    plan_name="idle",
+                    goal=STOP_GOAL.copy(),
+                    reason=str(self._interrupt_reason or "stimulus_interrupt"),
+                )
+            action = self.act_controller.apply_tick(observation)
+        else:
+            self.motor.set_goal(STOP_GOAL.copy())
+            set_goal = getattr(self.env, "set_goal", None)
+            if callable(set_goal):
+                set_goal(STOP_GOAL.copy())
+            action = self.motor.act(observation)
         info["stimulus_interrupt"] = True
         info["stimulus_interrupt_pending"] = True
         info["stimulus_interrupt_reason"] = self._interrupt_reason
@@ -831,6 +912,7 @@ class LiveMindPipeline:
         info["motor_action"] = action.tolist()
         info["architecture"] = "B"
         info["mind_tick"] = bool(mind_tick)
+        self._stamp_act_state(info)
         return action
 
     def _tick_interrupt_freeze(self) -> None:
@@ -1058,17 +1140,36 @@ class LiveMindPipeline:
                 if decision == "accept":
                     self._resume_goal = np.asarray(goal, dtype=np.float32).copy()
                 goal = self._apply_active_investigation(np.asarray(goal, dtype=np.float32), info)
-                self.motor.set_goal(goal)
-                set_goal = getattr(self.env, "set_goal", None)
-                if callable(set_goal):
-                    set_goal(goal)
-                action = self.motor.act(observation)
+                plan_name = None
+                if isinstance(thought.intent, dict):
+                    plan_name = (thought.intent.get("future") or {}).get("chosen_name")
+                if self.act_controller is not None:
+                    resume_mode = mode_for_plan(plan_name)
+                    if resume_mode == "idle":
+                        resume_mode = "act_anything"
+                    if decision != "accept" and abs(float(goal[0])) < 0.08 and abs(float(goal[1])) < 0.08:
+                        resume_mode = "still"
+                        plan_name = plan_name or "stop"
+                    self._push_motor_directive(
+                        mode=resume_mode,
+                        plan_name=str(plan_name or resume_mode),
+                        goal=goal,
+                        reason="si_early_unlock",
+                    )
+                    action = self.act_controller.apply_tick(observation)
+                else:
+                    self.motor.set_goal(goal)
+                    set_goal = getattr(self.env, "set_goal", None)
+                    if callable(set_goal):
+                        set_goal(goal)
+                    action = self.motor.act(observation)
                 self._motor_ticks += 1
-                info["motor_goal"] = goal.tolist()
+                info["motor_goal"] = self.motor.goal.tolist()
                 info["motor_action"] = action.tolist()
                 info["architecture"] = "B"
                 info["mind_tick"] = True
                 info["stimulus_interrupt"] = False
+                self._stamp_act_state(info)
                 self._pending_action = action.copy()
             else:
                 action = (
@@ -1709,16 +1810,27 @@ class LiveMindPipeline:
                 survival_risk=float(affect_payload.get("survival_risk", 0.0)),
             )
             goal = self._apply_active_investigation(goal, info)
-            self.motor.set_goal(goal)
-            set_goal = getattr(self.env, "set_goal", None)
-            if callable(set_goal):
-                set_goal(goal)
-            action = self.motor.act(observation)
+            # Mind push: think result → act_anything / still directive.
+            if self.act_controller is not None:
+                self._push_motor_directive(
+                    mode=mode_for_plan(plan_name),
+                    plan_name=str(plan_name or mode_for_plan(plan_name)),
+                    goal=goal,
+                    reason="mind_think",
+                )
+                action = self.act_controller.apply_tick(observation)
+            else:
+                self.motor.set_goal(goal)
+                set_goal = getattr(self.env, "set_goal", None)
+                if callable(set_goal):
+                    set_goal(goal)
+                action = self.motor.act(observation)
             self._motor_ticks += 1
-            info["motor_goal"] = goal.tolist()
+            info["motor_goal"] = self.motor.goal.tolist()
             info["motor_action"] = action.tolist()
             info["motor_tracking_error"] = self.motor.tracking_error()
             info["architecture"] = "B"
+            self._stamp_act_state(info)
         else:
             action = mind_action
             info["architecture"] = "A"
@@ -1732,60 +1844,35 @@ class LiveMindPipeline:
         return action, info
 
     def process_motor_only(self, observation: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
-        """Motor tick without a new mind thought (architecture B)."""
+        """Motor tick without a new mind thought (architecture B).
+
+        With act-state enabled: track the last mind-pushed directive only — no
+        embed, curiosity, place map, or explore replan. Cheap SI cue arming may
+        still push ``idle`` onto the same mind→motor bus.
+        """
         info = dict(self._last_mind_info)
         info["mind_tick"] = False
-        # Keep novelty / curiosity ticking so exploration metrics stay live during motor steps.
         left_eye = getattr(self.env, "left_eye", None)
         right_eye = getattr(self.env, "right_eye", None)
         sensory = self.signals.build(observation, left_eye=left_eye, right_eye=right_eye)
         affect = self.affect.estimate(sensory)
-        embedding = self.embedder.embed(sensory, affect)
         info["antenna_debug"] = antenna_debug_payload(sensory)
         position = None
         pos_fn = getattr(self.env, "agent_position", None)
         if callable(pos_fn):
             position = np.asarray(pos_fn(), dtype=np.float32)
-        chem_vec = None
-        chem_fn = getattr(self.env, "chem_vector", None)
-        if callable(chem_fn):
-            chem_vec = np.asarray(chem_fn(), dtype=np.float32)
         visual_nov = None
         if left_eye is not None and right_eye is not None:
             visual_nov = self.visual_novelty.observe(left_eye, right_eye)
             info["visual_novelty"] = visual_nov.visual_novelty
             info["novelty_bearing"] = visual_nov.novelty_bearing
             info["new_stimulus"] = visual_nov.new_stimulus
-            cues = self._vision_cues(left_eye, right_eye)
-            if cues is not None:
-                signal_payload = dict(cues.to_dict())
-                sensory_json = (
-                    sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else sensory.summary
-                )
-                for channel in ("odor", "odor_left", "odor_right", "bitter", "sugar"):
-                    if channel in sensory_json:
-                        signal_payload[channel] = float(sensory_json[channel] or 0.0)
-                if not isinstance(info.get("vision_cues"), dict):
-                    info["vision_cues"] = dict(cues.to_dict())
-                self._apply_place_map(
-                    left_eye=left_eye,
-                    right_eye=right_eye,
-                    signal_payload=signal_payload,
-                    info=info,
-                    cues=cues,
-                    smell_vec=np.asarray(getattr(sensory, "smell_vec", []), dtype=np.float32),
-                )
-                if info.get("place"):
-                    self._last_mind_info["place"] = info["place"]
-                    self._last_mind_info["vision_cues"] = info.get("vision_cues")
-                    if info.get("mapped_sensors"):
-                        self._last_mind_info["mapped_sensors"] = info["mapped_sensors"]
-                # Keep motor path vision wall in sync with reported sensor.
-                wall_r = signal_payload.get("wall_hazard")
-                if wall_r is not None and isinstance(info.get("vision_cues"), dict):
-                    info["vision_cues"]["wall_hazard"] = float(wall_r)
 
-        # Candidate novel-vs-STM → arm interrupt (hard-stop freeze + deep thought).
+        summary = sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else sensory.summary
+        info["energy"] = summary.get("energy", sensory.summary.get("energy"))
+        info["hunger"] = summary.get("hunger", sensory.summary.get("hunger"))
+
+        # Candidate novel-vs-STM → mind pushes idle (deep-thought freeze).
         self._arm_stimulus_interrupt(
             observation=observation,
             left_eye=left_eye,
@@ -1806,24 +1893,6 @@ class LiveMindPipeline:
             self._pending_action = action.copy()
             return action, info
 
-        curiosity_step = self.curiosity.step(
-            embedding=embedding,
-            action=self._pending_action,
-            signals=sensory.to_jsonable(),
-            affect=affect.to_jsonable(),
-            position=position,
-            chem_vector=chem_vec,
-        )
-        info["curiosity"] = curiosity_step.curiosity
-        info["curiosity_gated"] = curiosity_step.gated_curiosity
-        info["curiosity_gate"] = curiosity_step.gate
-        info["explore_bias"] = curiosity_step.explore_bias
-        info["coverage"] = curiosity_step.novelty.coverage
-        info["unique_cells"] = curiosity_step.novelty.unique_cells
-        info["exploration_xp"] = curiosity_step.novelty.exploration_xp
-        summary = sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else sensory.summary
-        info["energy"] = summary.get("energy", sensory.summary.get("energy"))
-        info["hunger"] = summary.get("hunger", sensory.summary.get("hunger"))
         if self.motor is None:
             action = (
                 self._pending_action
@@ -1838,51 +1907,17 @@ class LiveMindPipeline:
             info["force_locomotion"] = bore_state.force_locomotion
             self._pending_action = action.copy()
             return action, info
-        bore_pre = self.boredom.state()
-        plan_name = None
-        intent = info.get("intent") if isinstance(info.get("intent"), dict) else {}
-        plan_name = (intent.get("future") or {}).get("chosen_name")
-        if visual_nov is not None and str(plan_name) in (
-            "explore",
-            "court",
-            "forward",
-            "turn_left",
-            "turn_right",
-        ):
-            wall = float((info.get("vision_cues") or {}).get("wall_hazard", 0.0) or 0.0)
-            self.motor.set_goal(
-                apply_visual_explore_goal(
-                    self.motor.goal,
-                    visual_nov,
-                    config=self.visual_novelty.config,
-                    wall_hazard=wall,
-                )
-            )
-        if bore_pre.force_locomotion:
-            escaped = apply_boredom_escape_goal(
-                self.motor.goal,
-                bore_pre,
-                config=self.boredom.config,
-                escape_sign=self.boredom._escape_sign,
-            )
-            self.motor.set_goal(escaped)
-        biased = self._visual_think(
-            self.motor.goal,
-            info=info,
-            left_eye=left_eye,
-            right_eye=right_eye,
-            visual_nov=visual_nov,
-            wall_hazard=float((info.get("vision_cues") or {}).get("wall_hazard", 0.0) or 0.0),
-            survival_risk=float((info.get("affect") or {}).get("survival_risk", 0.0)),
-        )
-        biased = self._apply_active_investigation(biased, info)
-        self.motor.set_goal(biased)
-        action = self.motor.act(observation)
+
+        if self.act_controller is not None:
+            action = self.act_controller.apply_tick(observation)
+        else:
+            action = self.motor.act(observation)
         self._motor_ticks += 1
         info["motor_goal"] = self.motor.goal.tolist()
         info["motor_action"] = action.tolist()
         info["motor_tracking_error"] = self.motor.tracking_error()
         info["architecture"] = "B"
+        self._stamp_act_state(info)
         bore_state = self.boredom.observe_physical(position=position, action=action)
         info["boredom"] = bore_state.boredom
         info["thought_stuck"] = bore_state.thought_stuck
@@ -1896,6 +1931,10 @@ class LiveMindPipeline:
             self._last_mind_info["visual_novelty"] = visual_nov.visual_novelty
             self._last_mind_info["novelty_bearing"] = visual_nov.novelty_bearing
             self._last_mind_info["new_stimulus"] = visual_nov.new_stimulus
+        if self.act_controller is not None:
+            self._last_mind_info["act_mode"] = info.get("act_mode")
+            self._last_mind_info["act_plan"] = info.get("act_plan")
+            self._last_mind_info["act_reason"] = info.get("act_reason")
         self._pending_action = action.copy()
         return action, info
 

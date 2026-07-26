@@ -1,5 +1,12 @@
 """Motor layer package (Phase 9 architecture B)."""
 
+from .act_state import (
+    ActMode,
+    MotorActController,
+    MotorDirective,
+    make_directive,
+    mode_for_plan,
+)
 from .layer import (
     HeuristicMotorTracker,
     LearnedMotorTracker,
@@ -13,8 +20,11 @@ from .layer import (
 from .rewards import compute_locomotion_reward
 
 __all__ = [
+    "ActMode",
     "HeuristicMotorTracker",
     "LearnedMotorTracker",
+    "MotorActController",
+    "MotorDirective",
     "MotorLayer",
     "MotorLayerConfig",
     "MotorPolicyNet",
@@ -22,4 +32,6 @@ __all__ = [
     "compute_locomotion_reward",
     "ensure_locomotion_floor",
     "goal_from_intent",
+    "make_directive",
+    "mode_for_plan",
 ]

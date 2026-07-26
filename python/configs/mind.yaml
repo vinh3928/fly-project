@@ -136,10 +136,11 @@ live:
   console_log_every: 1  # every decision step; mind text is included on motor ticks too
   console_log_verbose: false  # set true or pass -v for full MIND* DETAIL JSON lines
 
-# Phase 9 architecture B: mind emits goals; motor layer tracks every step.
+# Phase 9 architecture B: mind pushes act directives; motor tracks until next push.
 motor:
   enabled: true
   mind_interval: 40  # ~10× less often than 4; motor still tracks every step
+  act_state_enabled: true  # act_anything / still / idle via mind push (no motor poll)
   mode: heuristic  # heuristic | learned
   smoothing: 0.55
   max_delta: 0.75
