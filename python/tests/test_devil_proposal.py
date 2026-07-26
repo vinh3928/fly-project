@@ -38,6 +38,88 @@ def test_heuristic_propose_critique_wall() -> None:
     assert isinstance(prop, DevilProposal)
     assert prop.ran and prop.source == "heuristic"
     assert prop.risk == "wall"
+
+
+def test_heuristic_propose_critique_prefers_heightened_odor() -> None:
+    """Deep-thought ×10 odor should beat ambient wall in the heuristic."""
+    prop = propose_critique(
+        HeuristicDevilClient(),
+        draft="Considering step=1 L1=explore odor=3.7",
+        affect={"survival_risk": 1.0},
+        signals={
+            "wall_hazard": 0.81,
+            "energy": 0.9,
+            "odor": 3.7,
+            "odor_left": 3.7,
+            "odor_right": 3.71,
+        },
+    )
+    assert prop.risk == "odor"
+    assert "odor" in prop.reason
+    assert prop.turn_delta > 0  # right plume slightly stronger
+
+
+def test_heuristic_no_false_odor_or_wall_from_draft_keywords() -> None:
+    """Draft always prints 'odor=' and 'L1=explore'; must not force odor/wall."""
+    prop = propose_critique(
+        HeuristicDevilClient(),
+        draft="Considering step=1 sugar=0.0 bitter=0.0 odor=0.0 L1=explore tendency=curiosity",
+        affect={"survival_risk": 0.1},
+        signals={
+            "wall_hazard": 0.2,
+            "energy": 0.9,
+            "odor": 0.0,
+            "odor_left": 0.0,
+            "odor_right": 0.0,
+        },
+    )
+    assert prop.risk == "none"
+
+
+def test_heuristic_deep_thought_owns_smell_interrupt() -> None:
+    """Smell interrupt: reason must name the cue even with wall noise present."""
+    prop = propose_critique(
+        HeuristicDevilClient(),
+        draft="Considering step=1 L1=explore odor=3.7 | INTERRUPT cue=smell_novelty",
+        affect={"survival_risk": 1.0},
+        signals={
+            "wall_hazard": 0.81,
+            "odor": 3.7,
+            "odor_left": 3.7,
+            "odor_right": 3.71,
+            "stimulus_interrupt": True,
+            "deep_thought": True,
+            "interrupt_remaining": 40,
+            "interrupt_cue": "smell_novelty",
+            "interrupt_reason": "novel_vs_smell",
+        },
+    )
+    assert prop.risk == "odor"
+    assert "interrupt" in prop.reason
+    assert "smell_novelty" in prop.reason
+
+
+def test_heuristic_deep_thought_visual_cue_without_plume() -> None:
+    """Visual interrupt with zero odor should not fabricate an odor counter."""
+    prop = propose_critique(
+        HeuristicDevilClient(),
+        draft="Considering step=1 L1=explore odor=0.0 | INTERRUPT cue=visual_novelty",
+        affect={"survival_risk": 0.2},
+        signals={
+            "wall_hazard": 0.2,
+            "odor": 0.0,
+            "odor_left": 0.0,
+            "odor_right": 0.0,
+            "stimulus_interrupt": True,
+            "deep_thought": True,
+            "interrupt_remaining": 40,
+            "interrupt_cue": "visual_novelty",
+            "interrupt_reason": "empty_joint_stm",
+        },
+    )
+    assert prop.risk != "odor"
+    assert "visual_novelty" in prop.reason
+
     assert prop.forward_scale < 1.0
 
 
@@ -109,7 +191,14 @@ def test_propose_critique_requests_json_schema() -> None:
     prop = propose_critique(spy, draft="d", affect={}, signals={"wall_hazard": 0.9})
     assert spy.response_format == PROPOSAL_SCHEMA
     schema = PROPOSAL_SCHEMA["json_schema"]["schema"]
-    assert schema["properties"]["risk"]["enum"] == ["wall", "toxin", "fall", "energy", "none"]
+    assert schema["properties"]["risk"]["enum"] == [
+        "wall",
+        "toxin",
+        "odor",
+        "fall",
+        "energy",
+        "none",
+    ]
     assert schema["additionalProperties"] is False
     assert prop.source == "llm" and prop.risk == "wall"
 

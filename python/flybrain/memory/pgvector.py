@@ -13,15 +13,25 @@ import numpy as np
 from flybrain.phase4 import (
     AFFECT_VEC_DIM,
     EYE_VEC_DIM,
+    INTERRUPT_JOINT_VEC_DIM,
     PATCH_VEC_DIM,
     SENSORS_VEC_DIM,
+    SMELL_VEC_DIM,
     STATUS_VEC_DIM,
     STM_MODALITIES,
     TOTAL_EMBEDDING_DIM,
 )
 
 Modality = Literal[
-    "embedding", "left_eye", "right_eye", "sensors", "status", "affect", "patches"
+    "embedding",
+    "left_eye",
+    "right_eye",
+    "sensors",
+    "status",
+    "affect",
+    "patches",
+    "smell",
+    "joint",
 ]
 
 _MODALITY_ATTR = {
@@ -32,6 +42,8 @@ _MODALITY_ATTR = {
     "status": "status_vec",
     "affect": "affect_vec",
     "patches": "patch_vec",
+    "smell": "smell_vec",
+    "joint": "joint_vec",
 }
 
 _MODALITY_DIM = {
@@ -42,7 +54,12 @@ _MODALITY_DIM = {
     "status": STATUS_VEC_DIM,
     "affect": AFFECT_VEC_DIM,
     "patches": PATCH_VEC_DIM,
+    "smell": SMELL_VEC_DIM,
+    "joint": INTERRUPT_JOINT_VEC_DIM,
 }
+
+# Modalities whose zero-norm rows are skipped during neighbor retrieval.
+_SKIP_ZERO_NORM_MODALITIES = frozenset({"patches", "smell", "joint"})
 
 
 def _pad_vec(vec: Any | None, dim: int) -> np.ndarray:
@@ -84,6 +101,10 @@ class StmRecord:
     status_vec: np.ndarray = field(default_factory=lambda: np.zeros(STATUS_VEC_DIM, dtype=np.float32))
     affect_vec: np.ndarray = field(default_factory=lambda: np.zeros(AFFECT_VEC_DIM, dtype=np.float32))
     patch_vec: np.ndarray = field(default_factory=lambda: np.zeros(PATCH_VEC_DIM, dtype=np.float32))
+    smell_vec: np.ndarray = field(default_factory=lambda: np.zeros(SMELL_VEC_DIM, dtype=np.float32))
+    joint_vec: np.ndarray = field(
+        default_factory=lambda: np.zeros(INTERRUPT_JOINT_VEC_DIM, dtype=np.float32)
+    )
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -115,6 +136,8 @@ class ShortTermMemory(Protocol):
         status_vec: np.ndarray | None = None,
         affect_vec: np.ndarray | None = None,
         patch_vec: np.ndarray | None = None,
+        smell_vec: np.ndarray | None = None,
+        joint_vec: np.ndarray | None = None,
     ) -> StmRecord: ...
 
     def similar(self, embedding: np.ndarray, *, fly_id: str, top_k: int = 5) -> list[StmRecord]: ...
@@ -182,6 +205,8 @@ class InMemoryShortTermMemory:
         status_vec: np.ndarray | None = None,
         affect_vec: np.ndarray | None = None,
         patch_vec: np.ndarray | None = None,
+        smell_vec: np.ndarray | None = None,
+        joint_vec: np.ndarray | None = None,
     ) -> StmRecord:
         rec = StmRecord(
             id=self._next_stm,
@@ -198,6 +223,8 @@ class InMemoryShortTermMemory:
             status_vec=_pad_vec(status_vec, STATUS_VEC_DIM),
             affect_vec=_pad_vec(affect_vec, AFFECT_VEC_DIM),
             patch_vec=_pad_vec(patch_vec, PATCH_VEC_DIM),
+            smell_vec=_pad_vec(smell_vec, SMELL_VEC_DIM),
+            joint_vec=_pad_vec(joint_vec, INTERRUPT_JOINT_VEC_DIM),
         )
         self._next_stm += 1
         self._stm.append(rec)
@@ -222,7 +249,7 @@ class InMemoryShortTermMemory:
             if r.fly_id != fly_id:
                 continue
             vec = _modality_vector(r, modality)
-            if modality == "patches" and float(np.linalg.norm(vec)) < 1e-6:
+            if modality in _SKIP_ZERO_NORM_MODALITIES and float(np.linalg.norm(vec)) < 1e-6:
                 continue
             scored.append((_cosine_distance(q, vec), r))
         scored.sort(key=lambda t: t[0])
@@ -294,6 +321,8 @@ class PgVectorShortTermMemory:
                     status_vec vector({STATUS_VEC_DIM}) NOT NULL,
                     affect_vec vector({AFFECT_VEC_DIM}) NOT NULL,
                     patch_vec vector({PATCH_VEC_DIM}),
+                    smell_vec vector({SMELL_VEC_DIM}),
+                    joint_vec vector({INTERRUPT_JOINT_VEC_DIM}),
                     embedding vector({self.dim}) NOT NULL,
                     signals JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                     affect JSONB NOT NULL DEFAULT '{{}}'::jsonb,
@@ -301,15 +330,34 @@ class PgVectorShortTermMemory:
                 )
                 """
             )
-            # Migrate older tables that predate patch_vec.
+            # Migrate older tables that predate patch_vec / smell_vec / joint_vec.
             cur.execute(
                 f"""
                 ALTER TABLE {self._table}
                 ADD COLUMN IF NOT EXISTS patch_vec vector({PATCH_VEC_DIM})
                 """
             )
-            # Cosine indexes for fused recall + eye revisit + interrupt patch grids.
-            for col in ("embedding", "left_eye_vec", "right_eye_vec", "patch_vec"):
+            cur.execute(
+                f"""
+                ALTER TABLE {self._table}
+                ADD COLUMN IF NOT EXISTS smell_vec vector({SMELL_VEC_DIM})
+                """
+            )
+            cur.execute(
+                f"""
+                ALTER TABLE {self._table}
+                ADD COLUMN IF NOT EXISTS joint_vec vector({INTERRUPT_JOINT_VEC_DIM})
+                """
+            )
+            # Cosine indexes for fused recall + eye revisit + interrupt modalities.
+            for col in (
+                "embedding",
+                "left_eye_vec",
+                "right_eye_vec",
+                "patch_vec",
+                "smell_vec",
+                "joint_vec",
+            ):
                 idx = f"stm_{col}_hnsw"
                 cur.execute(
                     f"""
@@ -353,6 +401,8 @@ class PgVectorShortTermMemory:
         status_vec: np.ndarray | None = None,
         affect_vec: np.ndarray | None = None,
         patch_vec: np.ndarray | None = None,
+        smell_vec: np.ndarray | None = None,
+        joint_vec: np.ndarray | None = None,
     ) -> StmRecord:
         emb = _pad_vec(embedding, self.dim)
         left = _pad_vec(left_eye_vec, EYE_VEC_DIM)
@@ -361,14 +411,16 @@ class PgVectorShortTermMemory:
         status = _pad_vec(status_vec, STATUS_VEC_DIM)
         aff_v = _pad_vec(affect_vec, AFFECT_VEC_DIM)
         patches = _pad_vec(patch_vec, PATCH_VEC_DIM)
+        smell = _pad_vec(smell_vec, SMELL_VEC_DIM)
+        joint = _pad_vec(joint_vec, INTERRUPT_JOINT_VEC_DIM)
         with self._conn.cursor() as cur:
             cur.execute(
                 f"""
                 INSERT INTO {self._table}
                     (episode_id, step, sim_time, fly_id,
                      left_eye_vec, right_eye_vec, sensors_vec, status_vec, affect_vec,
-                     patch_vec, embedding, signals, affect)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                     patch_vec, smell_vec, joint_vec, embedding, signals, affect)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
                 RETURNING id, created_at
                 """,
                 (
@@ -382,6 +434,8 @@ class PgVectorShortTermMemory:
                     status.tolist(),
                     aff_v.tolist(),
                     patches.tolist(),
+                    smell.tolist(),
+                    joint.tolist(),
                     emb.tolist(),
                     json.dumps(signals),
                     json.dumps(affect),
@@ -405,6 +459,8 @@ class PgVectorShortTermMemory:
             status_vec=status,
             affect_vec=aff_v,
             patch_vec=patches,
+            smell_vec=smell,
+            joint_vec=joint,
             created_at=row[1],
         )
 
@@ -423,25 +479,31 @@ class PgVectorShortTermMemory:
             raise ValueError(f"Unknown modality {modality!r}; expected one of {STM_MODALITIES}")
         col = _MODALITY_ATTR[modality]
         vec = _pad_vec(query, _MODALITY_DIM[modality])
+        select_cols = (
+            "id, episode_id, step, sim_time, fly_id, "
+            "left_eye_vec, right_eye_vec, sensors_vec, status_vec, affect_vec, "
+            "patch_vec, smell_vec, joint_vec, embedding, signals, affect, created_at"
+        )
         with self._conn.cursor() as cur:
-            if modality == "patches":
+            if modality in _SKIP_ZERO_NORM_MODALITIES:
                 cur.execute(
                     f"""
-                    SELECT id, episode_id, step, sim_time, fly_id,
-                           left_eye_vec, right_eye_vec, sensors_vec, status_vec, affect_vec,
-                           patch_vec, embedding, signals, affect, created_at
+                    SELECT {select_cols}
                     FROM {self._table}
                     WHERE fly_id = %s
-                      AND patch_vec IS NOT NULL
-                    ORDER BY patch_vec <=> %s::vector
+                      AND {col} IS NOT NULL
+                    ORDER BY {col} <=> %s::vector
                     LIMIT %s
                     """,
                     (fly_id, vec.tolist(), top_k * 4),
                 )
                 rows = cur.fetchall()
                 kept = []
+                dim = _MODALITY_DIM[modality]
+                # Column index in select_cols: patch=10, smell=11, joint=12
+                col_idx = {"patches": 10, "smell": 11, "joint": 12}[modality]
                 for r in rows:
-                    pv = self._as_f32(r[10], PATCH_VEC_DIM)
+                    pv = self._as_f32(r[col_idx], dim)
                     if float(np.linalg.norm(pv)) < 1e-6:
                         continue
                     kept.append(r)
@@ -450,9 +512,7 @@ class PgVectorShortTermMemory:
                 return [self._row_to_stm(r) for r in kept]
             cur.execute(
                 f"""
-                SELECT id, episode_id, step, sim_time, fly_id,
-                       left_eye_vec, right_eye_vec, sensors_vec, status_vec, affect_vec,
-                       patch_vec, embedding, signals, affect, created_at
+                SELECT {select_cols}
                 FROM {self._table}
                 WHERE fly_id = %s
                 ORDER BY {col} <=> %s::vector
@@ -469,7 +529,7 @@ class PgVectorShortTermMemory:
                 f"""
                 SELECT id, episode_id, step, sim_time, fly_id,
                        left_eye_vec, right_eye_vec, sensors_vec, status_vec, affect_vec,
-                       patch_vec, embedding, signals, affect, created_at
+                       patch_vec, smell_vec, joint_vec, embedding, signals, affect, created_at
                 FROM {self._table}
                 WHERE fly_id = %s
                 ORDER BY created_at DESC
@@ -527,7 +587,53 @@ class PgVectorShortTermMemory:
 
     @classmethod
     def _row_to_stm(cls, row: tuple[Any, ...]) -> StmRecord:
-        # Supports both pre-patch (14 cols) and post-patch (15 cols) SELECT shapes.
+        # 17 cols: … patch, smell, joint, embedding, signals, affect, created_at
+        # 16 cols: … patch, smell, embedding, signals, affect, created_at (pre-joint)
+        # 15 cols: … patch, embedding, signals, affect, created_at (pre-smell)
+        # 14 cols: … embedding, signals, affect, created_at (pre-patch)
+        if len(row) >= 17:
+            signals = row[14] if isinstance(row[14], dict) else json.loads(row[14])
+            affect = row[15] if isinstance(row[15], dict) else json.loads(row[15])
+            return StmRecord(
+                id=int(row[0]),
+                episode_id=str(row[1]),
+                step=int(row[2]),
+                sim_time=float(row[3]),
+                fly_id=str(row[4]),
+                left_eye_vec=cls._as_f32(row[5], EYE_VEC_DIM),
+                right_eye_vec=cls._as_f32(row[6], EYE_VEC_DIM),
+                sensors_vec=cls._as_f32(row[7], SENSORS_VEC_DIM),
+                status_vec=cls._as_f32(row[8], STATUS_VEC_DIM),
+                affect_vec=cls._as_f32(row[9], AFFECT_VEC_DIM),
+                patch_vec=cls._as_f32(row[10], PATCH_VEC_DIM),
+                smell_vec=cls._as_f32(row[11], SMELL_VEC_DIM),
+                joint_vec=cls._as_f32(row[12], INTERRUPT_JOINT_VEC_DIM),
+                embedding=cls._as_f32(row[13], TOTAL_EMBEDDING_DIM),
+                signals=signals,
+                affect=affect,
+                created_at=row[16],
+            )
+        if len(row) >= 16:
+            signals = row[13] if isinstance(row[13], dict) else json.loads(row[13])
+            affect = row[14] if isinstance(row[14], dict) else json.loads(row[14])
+            return StmRecord(
+                id=int(row[0]),
+                episode_id=str(row[1]),
+                step=int(row[2]),
+                sim_time=float(row[3]),
+                fly_id=str(row[4]),
+                left_eye_vec=cls._as_f32(row[5], EYE_VEC_DIM),
+                right_eye_vec=cls._as_f32(row[6], EYE_VEC_DIM),
+                sensors_vec=cls._as_f32(row[7], SENSORS_VEC_DIM),
+                status_vec=cls._as_f32(row[8], STATUS_VEC_DIM),
+                affect_vec=cls._as_f32(row[9], AFFECT_VEC_DIM),
+                patch_vec=cls._as_f32(row[10], PATCH_VEC_DIM),
+                smell_vec=cls._as_f32(row[11], SMELL_VEC_DIM),
+                embedding=cls._as_f32(row[12], TOTAL_EMBEDDING_DIM),
+                signals=signals,
+                affect=affect,
+                created_at=row[15],
+            )
         if len(row) >= 15:
             signals = row[12] if isinstance(row[12], dict) else json.loads(row[12])
             affect = row[13] if isinstance(row[13], dict) else json.loads(row[13])

@@ -1,6 +1,13 @@
 """Thinking service: reflection, two-layer future, devil's advocate, composer."""
 
 from .composer import ThoughtResult, compose_thought
+from .conditioning import (
+    ConditioningConfig,
+    HazardConditioning,
+    conditioning_snapshot_signals,
+    load_conditioning_from_stm,
+    rewrite_present_after_judgement,
+)
 from .devils_advocate import (
     HeuristicDevilClient,
     critique_draft,
@@ -37,14 +44,17 @@ from .retrospective import (
 )
 from .service import ThinkingConfig, ThinkingService
 from .stimulus_interrupt import (
+    PassiveSmellGate,
+    PassiveSmellSample,
     PatchGridHistoryCache,
     RelativeHistoryBaseline,
     StimulusInterruptConfig,
     StimulusInterruptDecision,
     STOP_GOAL,
     evaluate_stimulus_interrupt,
+    heighten_sensory_for_deep_thought,
 )
-from .two_layer_future import FuturePrediction, predict_present_future
+from .two_layer_future import FuturePrediction, format_present_line, predict_present_future
 from .visual_thinker import (
     VisualInsight,
     VisualThinker,
@@ -53,8 +63,10 @@ from .visual_thinker import (
 )
 
 __all__ = [
+    "ConditioningConfig",
     "DevilProposal",
     "FuturePrediction",
+    "HazardConditioning",
     "HeuristicDevilClient",
     "InterestConfig",
     "InterestPoint",
@@ -67,6 +79,8 @@ __all__ = [
     "PersonalityState",
     "PersonalityTraits",
     "RetrospectiveConfig",
+    "PassiveSmellGate",
+    "PassiveSmellSample",
     "PatchGridHistoryCache",
     "RelativeHistoryBaseline",
     "STOP_GOAL",
@@ -84,16 +98,21 @@ __all__ = [
     "build_reflection",
     "can_investigate_interest",
     "compose_thought",
+    "conditioning_snapshot_signals",
     "critique_draft",
     "evaluate_stimulus_interrupt",
     "eye_pair_similarity",
+    "format_present_line",
     "frame_similarity",
+    "heighten_sensory_for_deep_thought",
     "is_low_load",
+    "load_conditioning_from_stm",
     "make_llm_client",
     "make_visual_client",
     "parse_proposal",
     "predict_present_future",
     "present_future_stub",
     "propose_critique",
+    "rewrite_present_after_judgement",
     "run_retrospective",
 ]

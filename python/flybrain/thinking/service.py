@@ -105,9 +105,22 @@ class ThinkingService:
         present_future = future.as_present_future()
         draft = (
             f"Considering step={stm.step}: sugar={stm.signals.get('sugar')} "
-            f"bitter={stm.signals.get('bitter')} survival={stm.affect.get('survival_risk')} "
+            f"bitter={stm.signals.get('bitter')} "
+            f"odor={stm.signals.get('odor')} "
+            f"survival={stm.affect.get('survival_risk')} "
             f"L1={future.chosen_name} tendency={tend_state.dominant}"
         )
+        if stm.signals.get("deep_thought") or stm.signals.get("stimulus_interrupt"):
+            draft += (
+                " | INTERRUPT: body frozen for "
+                f"{stm.signals.get('interrupt_remaining')} ticks, deliberating only; "
+                f"cue={stm.signals.get('interrupt_cue')} "
+                f"reason={stm.signals.get('interrupt_reason')} "
+                "(senses heightened; reason about the cue, plan for when motion resumes)"
+            )
+        cond = stm.signals.get("conditioning_summary")
+        if cond:
+            draft += f" | {cond}"
         proposal = propose_critique(
             self.llm, draft=draft, affect=stm.affect, signals=stm.signals
         )

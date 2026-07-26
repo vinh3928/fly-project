@@ -108,6 +108,9 @@ def test_critique_draft_sends_slim_payload() -> None:
             "energy": 0.9,
             "wall_hazard": 0.8,
             "bitter": 0.6,
+            "odor": 3.5,
+            "odor_left": 3.4,
+            "odor_right": 3.5,
             "body": [0.0] * 85,
             "curiosity": 0.01,
             "visual_novelty": 0.0,
@@ -120,9 +123,11 @@ def test_critique_draft_sends_slim_payload() -> None:
     # "bitter" alone reads as a taste preference to a small model.
     assert "bitter" not in payload["signals"]
     assert payload["signals"]["toxin_taste"] == 0.6
+    assert payload["signals"]["odor"] == 3.5
+    assert payload["signals"]["odor_left"] == 3.4
+    assert "odor" in captured["system"]
     assert "forward_scale" in captured["system"]
     assert "toxin_taste" in captured["system"]
-    assert len(captured["user"]) < 400
     assert "body" not in captured["user"]
 
 

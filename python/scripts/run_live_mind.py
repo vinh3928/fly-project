@@ -115,6 +115,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Longer mind text + full DETAIL JSON on each MIND* tick",
     )
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Verbose debug logs, including raw left/right antenna Sugar/Bitter/Odor each step",
+    )
+    parser.add_argument(
         "--mind-interval",
         type=int,
         default=None,
@@ -228,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         # Fresh run so "tail -f" is unambiguous.
         log_file.parent.mkdir(parents=True, exist_ok=True)
         log_file.write_text("", encoding="utf-8")
-    if args.verbose:
+    if args.verbose or args.debug:
         cfg.console_log_verbose = True
     if args.mind_interval is not None:
         cfg.mind_interval = max(1, int(args.mind_interval))

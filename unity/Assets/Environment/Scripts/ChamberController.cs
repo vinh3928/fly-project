@@ -111,7 +111,10 @@ namespace FlySimulation.Environment
             if (sugarSource != null)
             {
                 sugarSource.transform.localPosition = config.SugarSourcePosition;
-                sugarSource.Configure(ChemicalSource.SourceType.Sugar, config.SugarStrength, config.ChemicalSpread);
+                sugarSource.Configure(
+                    ChemicalSource.SourceType.Sugar,
+                    config.SugarStrength,
+                    config.ResolvedChemicalSpread);
                 var surface = sugarSource.GetComponent<SurfaceChemistry>();
                 if (surface != null)
                 {
@@ -122,7 +125,10 @@ namespace FlySimulation.Environment
             if (bitterSource != null)
             {
                 bitterSource.transform.localPosition = config.BitterSourcePosition;
-                bitterSource.Configure(ChemicalSource.SourceType.Bitter, config.BitterStrength, config.ChemicalSpread);
+                bitterSource.Configure(
+                    ChemicalSource.SourceType.Bitter,
+                    config.BitterStrength,
+                    config.ResolvedChemicalSpread);
                 var surface = bitterSource.GetComponent<SurfaceChemistry>();
                 if (surface != null)
                 {

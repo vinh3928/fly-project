@@ -3111,7 +3111,7 @@ MonoBehaviour:
     BitterSourcePosition: {x: -0.15, y: 0.01, z: -0.15}
     SugarStrength: 1
     BitterStrength: 1
-    ChemicalSpread: 0.125
+    ChemicalSpread: 0.100
     ObstaclePositions: []
     FlySpawnPosition: {x: 0, y: 0.03799182, z: 0}
     FlySpawnEuler: {x: 0, y: 0, z: 0}
@@ -3199,7 +3199,7 @@ MonoBehaviour:
     BitterSourcePosition: {x: -0.15, y: 0.01, z: -0.15}
     SugarStrength: 1
     BitterStrength: 1
-    ChemicalSpread: 0.125
+    ChemicalSpread: 0.100
     ObstaclePositions: []
     FlySpawnPosition: {x: 0, y: 0.03799182, z: 0}
     FlySpawnEuler: {x: 0, y: 0, z: 0}
@@ -4546,7 +4546,7 @@ MonoBehaviour:
     BitterSourcePosition: {x: -0.15, y: 0.01, z: -0.15}
     SugarStrength: 1
     BitterStrength: 1
-    ChemicalSpread: 0.125
+    ChemicalSpread: 0.100
     ObstaclePositions: []
     FlySpawnPosition: {x: 0, y: 0.03799182, z: 0}
     FlySpawnEuler: {x: 0, y: 0, z: 0}
@@ -5337,7 +5337,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: FlySimulation.Runtime::FlySimulation.Environment.ChemicalSource
   sourceType: 1
   strength: 1
-  spread: 0.125
+  spread: 0.100
 --- !u!23 &1644022410
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -5670,7 +5670,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: FlySimulation.Runtime::FlySimulation.Environment.ChemicalSource
   sourceType: 0
   strength: 1
-  spread: 0.125
+  spread: 0.100
 --- !u!23 &1763306561
 MeshRenderer:
   m_ObjectHideFlags: 0

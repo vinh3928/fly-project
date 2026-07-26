@@ -35,15 +35,21 @@ CREATE TABLE IF NOT EXISTS fly_mind.short_term_memory (
     status_vec      vector(32) NOT NULL,
     affect_vec      vector(16) NOT NULL,
     patch_vec       vector(90),
+    smell_vec       vector(16),
+    joint_vec       vector(298),
     embedding       vector(272) NOT NULL,
     signals         JSONB NOT NULL DEFAULT '{}'::jsonb,
     affect          JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Existing deployments: add patch_vec if missing.
+-- Existing deployments: add patch_vec / smell_vec / joint_vec if missing.
 ALTER TABLE fly_mind.short_term_memory
     ADD COLUMN IF NOT EXISTS patch_vec vector(90);
+ALTER TABLE fly_mind.short_term_memory
+    ADD COLUMN IF NOT EXISTS smell_vec vector(16);
+ALTER TABLE fly_mind.short_term_memory
+    ADD COLUMN IF NOT EXISTS joint_vec vector(298);
 
 CREATE INDEX IF NOT EXISTS stm_embedding_hnsw
     ON fly_mind.short_term_memory
@@ -60,6 +66,14 @@ CREATE INDEX IF NOT EXISTS stm_right_eye_hnsw
 CREATE INDEX IF NOT EXISTS stm_patch_vec_hnsw
     ON fly_mind.short_term_memory
     USING hnsw (patch_vec vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS stm_smell_vec_hnsw
+    ON fly_mind.short_term_memory
+    USING hnsw (smell_vec vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS stm_joint_vec_hnsw
+    ON fly_mind.short_term_memory
+    USING hnsw (joint_vec vector_cosine_ops);
 
 CREATE INDEX IF NOT EXISTS stm_fly_created
     ON fly_mind.short_term_memory (fly_id, created_at DESC);

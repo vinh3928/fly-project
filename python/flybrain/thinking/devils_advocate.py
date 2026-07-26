@@ -30,13 +30,24 @@ _SIGNAL_KEYS = (
     "hunger",
     "sugar",
     "bitter",
+    "odor",
+    "odor_left",
+    "odor_right",
     "wall_hazard",
     "visual_novelty",
     "novelty_bearing",
     "boredom",
     "explore_bias",
     "instability",
+    # Interrupt / deep-thought perspective (motor frozen; deliberate on the cue).
+    "stimulus_interrupt",
+    "deep_thought",
+    "interrupt_remaining",
+    "interrupt_cue",
+    "interrupt_reason",
 )
+# String signals passed through verbatim (short) instead of coerced to float.
+_PASSTHROUGH_STR_KEYS = {"interrupt_cue", "interrupt_reason"}
 _AFFECT_KEYS = (
     "survival_risk",
     "fear",
@@ -227,6 +238,9 @@ def _slim(src: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
             out[label] = round(float(val), 3)
         elif val is None:
             continue
+        elif key in _PASSTHROUGH_STR_KEYS and isinstance(val, str):
+            if val:
+                out[label] = val[:40]
         else:
             # Skip arrays / nested blobs — they only slow generation.
             try:
@@ -238,25 +252,35 @@ def _slim(src: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
 
 _PROPOSAL_SYSTEM = (
     "You are a devil's advocate for a fly flying in a small chamber. "
-    "You get the fly's draft plan plus sensor signals in 0..1: "
+    "You get the fly's draft plan plus sensor signals (may exceed 1 when senses "
+    "are heightened in deep thought): "
     "wall_hazard (proximity to a wall), toxin_taste (toxin nearby), "
+    "odor / odor_left / odor_right (antenna plume intensity), "
     "energy (1=full), visual_novelty (something new in view). "
-    "Name the single biggest risk the draft ignores, and say how to soften it: "
+    "When stimulus_interrupt / deep_thought is set the body is already frozen "
+    "for interrupt_remaining ticks: do not fight the freeze, instead reason about "
+    "interrupt_cue (what stopped the fly, e.g. smell_novelty) and say what to do "
+    "when motion resumes. Center your reason on that cue when present. "
+    "Name the single biggest risk or cue the draft ignores, and say how to soften it: "
     "forward_scale is the fraction of planned speed to keep, "
-    "turn_delta steers away from the risk (negative left, positive right), "
+    "turn_delta steers toward/away (negative left, positive right), "
     "confidence is how strongly the signals back you up, reason is under 10 words. "
+    "Prefer odor when the plume is the strongest new signal. "
     "Do not invent a risk the signals do not show.\n"
     "Examples:\n"
-    'in {"signals":{"energy":0.9,"toxin_taste":0.0,"wall_hazard":0.85,"visual_novelty":0.1}} '
+    'in {"signals":{"energy":0.9,"toxin_taste":0.0,"wall_hazard":0.85,"visual_novelty":0.1,"odor":0.0}} '
     'out {"risk":"wall","forward_scale":0.4,"turn_delta":-0.5,"confidence":0.8,'
     '"reason":"wall close ahead"}\n'
-    'in {"signals":{"energy":0.9,"toxin_taste":0.7,"wall_hazard":0.1,"visual_novelty":0.2}} '
+    'in {"signals":{"energy":0.9,"toxin_taste":0.7,"wall_hazard":0.1,"visual_novelty":0.2,"odor":0.1}} '
     'out {"risk":"toxin","forward_scale":0.3,"turn_delta":0.6,"confidence":0.7,'
     '"reason":"toxin patch nearby"}\n'
-    'in {"signals":{"energy":0.15,"toxin_taste":0.0,"wall_hazard":0.1,"visual_novelty":0.2}} '
+    'in {"signals":{"energy":0.9,"toxin_taste":0.0,"wall_hazard":0.2,"visual_novelty":0.1,"odor":3.7}} '
+    'out {"risk":"odor","forward_scale":0.5,"turn_delta":0.2,"confidence":0.8,'
+    '"reason":"strong novel odor plume"}\n'
+    'in {"signals":{"energy":0.15,"toxin_taste":0.0,"wall_hazard":0.1,"visual_novelty":0.2,"odor":0.0}} '
     'out {"risk":"energy","forward_scale":0.5,"turn_delta":0.0,"confidence":0.6,'
     '"reason":"low energy, conserve"}\n'
-    'in {"signals":{"energy":0.8,"toxin_taste":0.0,"wall_hazard":0.05,"visual_novelty":0.8}} '
+    'in {"signals":{"energy":0.8,"toxin_taste":0.0,"wall_hazard":0.05,"visual_novelty":0.8,"odor":0.0}} '
     'out {"risk":"none","forward_scale":1.0,"turn_delta":0.0,"confidence":0.3,'
     '"reason":"no hazard, proceed"}'
 )
@@ -272,7 +296,7 @@ PROPOSAL_SCHEMA: dict[str, Any] = {
             "properties": {
                 "risk": {
                     "type": "string",
-                    "enum": ["wall", "toxin", "fall", "energy", "none"],
+                    "enum": ["wall", "toxin", "odor", "fall", "energy", "none"],
                 },
                 "forward_scale": {"type": "number", "minimum": 0, "maximum": 1},
                 "turn_delta": {"type": "number", "minimum": -1, "maximum": 1},
@@ -300,23 +324,60 @@ def heuristic_proposal(
 
     wall = float(signals.get("wall_hazard", 0.0) or 0.0)
     bitter = float(signals.get("bitter", 0.0) or 0.0)
+    left_odor = float(signals.get("odor_left", 0.0) or 0.0)
+    right_odor = float(signals.get("odor_right", 0.0) or 0.0)
+    odor = max(float(signals.get("odor", 0.0) or 0.0), left_odor, right_odor)
     survival = float(affect.get("survival_risk", 0.0) or 0.0)
-    lowered = draft.lower()
+    deep = bool(signals.get("deep_thought") or signals.get("stimulus_interrupt"))
+    cue = str(signals.get("interrupt_cue") or "").lower()
+    # Conditioning tip: prefer a conditioned active risk over raw wall spam.
+    cond_top = str(signals.get("conditioning_top_risk") or "").strip().lower()
+    cond_strength = float(signals.get("conditioning_top_strength", 0.0) or 0.0)
+    # Draft substrings are noisy (draft always prints "odor=", "bitter=",
+    # "L1=explore"), so trigger on numeric senses and the actual interrupt cue,
+    # not on free-text keyword matches.
     risk = "none"
     forward_scale = 1.0
     turn_delta = 0.0
     reason = "no major counter"
-    if wall > 0.55 or "wall" in lowered or "explore" in lowered:
+    # During a smell interrupt the cue itself is the subject, even if the plume
+    # reading dips between ticks.
+    if cond_top in ("odor", "toxin", "fall", "energy") and cond_strength >= 0.25:
+        risk = cond_top
+        if cond_top == "odor":
+            forward_scale = 0.5
+            turn_delta = 0.25 if right_odor >= left_odor else -0.25
+            reason = "conditioned odor plume, sample it"
+        elif cond_top == "toxin":
+            forward_scale = 0.55
+            turn_delta = 0.25
+            reason = "conditioned toxin risk"
+        elif cond_top == "fall":
+            forward_scale = 0.4
+            reason = "conditioned stability risk"
+        else:
+            forward_scale = 0.7
+            reason = "conditioned energy pressure"
+    elif odor > 0.25 or (deep and "smell" in cue):
+        risk = "odor"
+        forward_scale = 0.5
+        turn_delta = 0.25 if right_odor >= left_odor else -0.25
+        reason = "novel odor plume, sample it"
+    elif wall > 0.55 and not (cond_top == "odor" and cond_strength >= 0.25):
         risk = "wall"
         forward_scale = 0.45
         turn_delta = 0.35 if float(signals.get("novelty_bearing", 0.0) or 0.0) >= 0 else -0.35
         reason = "wall hazard ahead slow and turn"
-    elif bitter > 0.3 or "bitter" in lowered or "toxin" in lowered:
+    elif bitter > 0.3:
         risk = "toxin"
         forward_scale = 0.55
         turn_delta = 0.25
         reason = "toxin risk sample before commit"
-    elif survival > 0.6 or "fall" in lowered or "upright" in lowered:
+    elif deep and "visual" in cue:
+        risk = "none"
+        forward_scale = 0.6
+        reason = "inspect novel sight before moving"
+    elif survival > 0.6:
         risk = "fall"
         forward_scale = 0.4
         reason = "stability risk ease forward"
@@ -324,9 +385,13 @@ def heuristic_proposal(
         risk = "energy"
         forward_scale = 0.7
         reason = "energy pressure conserve motion"
+    # Frame the counter as interrupt deliberation so the dialog owns the freeze.
+    if deep:
+        tag = cue or "novelty"
+        reason = f"interrupt {tag}: {reason}"[:80]
     conf = 0.55
-    if risk != "none":
-        conf = 0.65 + 0.2 * max(wall, bitter, survival)
+    if risk != "none" or deep:
+        conf = 0.65 + 0.2 * min(1.0, max(wall, bitter, odor / 10.0 if odor > 1.0 else odor, survival))
     return DevilProposal(
         risk=risk,
         forward_scale=float(np.clip(forward_scale, 0.0, 1.0)),
@@ -381,7 +446,7 @@ def parse_proposal(text: str) -> DevilProposal:
     if data is None:
         return DevilProposal(ran=True, source="unparsable", reason=raw[:80], confidence=0.0)
     risk = str(data.get("risk", "none")).strip().lower()
-    if risk not in ("wall", "toxin", "fall", "energy", "none"):
+    if risk not in ("wall", "toxin", "odor", "fall", "energy", "none"):
         risk = "none"
     return DevilProposal(
         risk=risk,

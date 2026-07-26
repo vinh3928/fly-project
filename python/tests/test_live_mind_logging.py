@@ -35,6 +35,14 @@ def test_format_live_step_log_always_shows_mind_state() -> None:
             "affect": {"survival_risk": 0.1, "fear": 0.2},
             "vision_cues": {"wall_hazard": 0.3, "target_bearing": -0.1},
             "curiosity_gated": 0.05,
+            "antenna_debug": {
+                "left_sugar": 0.25,
+                "left_bitter": 0.01,
+                "left_odor": 0.25,
+                "right_sugar": 0.2,
+                "right_bitter": 0.02,
+                "right_odor": 0.2,
+            },
         },
     )
     assert "[live 0000 MIND*]" in mind_line
@@ -45,6 +53,26 @@ def test_format_live_step_log_always_shows_mind_state() -> None:
     assert "L1[explore=0.90, stop=0.80, forward=0.70]" in mind_line
     assert "wall=0.30" in mind_line
     assert "fear=0.20" in mind_line
+    assert " ant[" not in mind_line
+
+    debug_line = format_live_step_log(
+        0,
+        [0.5, -0.1, 0.5, 0.5, 0.0],
+        {
+            "mind_tick": True,
+            "antenna_debug": {
+                "left_sugar": 0.25,
+                "left_bitter": 0.01,
+                "left_odor": 0.25,
+                "right_sugar": 0.2,
+                "right_bitter": 0.02,
+                "right_odor": 0.2,
+            },
+        },
+        verbose=True,
+    )
+    assert "ant[L(s=0.2500,b=0.0100,o=0.2500)" in debug_line
+    assert "R(s=0.2000,b=0.0200,o=0.2000)]" in debug_line
 
     # Motor ticks still print the held mind snapshot.
     motor_line = format_live_step_log(
@@ -81,12 +109,19 @@ def test_format_live_mind_detail_includes_full_thought() -> None:
             },
             "vision_cues": {"wall_hazard": 0.81},
             "affect": {"survival_risk": 0.21, "fear": 0.44},
+            "antenna_debug": {
+                "left_sugar": 0.3,
+                "left_bitter": 0.0,
+                "left_odor": 0.3,
+            },
         },
     )
     assert "[live 0004 DETAIL]" in detail
     assert "Present: energy=1.00" in detail
     assert '"plan": "stop"' in detail
     assert "0.81" in detail
+    assert '"antenna_debug"' in detail
+    assert '"left_sugar": 0.3' in detail
 
 
 def test_log_live_step_appends_to_file(tmp_path: Path) -> None:

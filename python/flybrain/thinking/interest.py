@@ -14,7 +14,7 @@ import numpy as np
 
 
 InterestStatus = Literal["pending", "investigating", "done", "expired"]
-InterestKind = Literal["wall", "novelty", "toxin", "energy", "fall", "other"]
+InterestKind = Literal["wall", "novelty", "toxin", "odor", "energy", "fall", "other"]
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -243,6 +243,7 @@ class InterestPointStore:
         if nov < float(cfg.min_novelty_to_enqueue) and str(kind) not in (
             "wall",
             "toxin",
+            "odor",
             "fall",
             "energy",
         ):
@@ -440,6 +441,7 @@ def _slim_stimuli(raw: dict[str, Any] | None) -> dict[str, float]:
         "visual_novelty",
         "novelty_bearing",
         "bitter",
+        "odor",
         "energy",
         "survival_risk",
         "sugar",
@@ -481,7 +483,7 @@ def apply_investigation_goal(
 
 def _normalize_kind(kind: str) -> InterestKind:
     k = str(kind or "other").strip().lower()
-    if k in ("wall", "novelty", "toxin", "energy", "fall"):
+    if k in ("wall", "novelty", "toxin", "odor", "energy", "fall"):
         return k  # type: ignore[return-value]
     return "other"
 
@@ -490,6 +492,7 @@ def _kind_salience(kind: InterestKind) -> float:
     return {
         "toxin": 0.95,
         "fall": 0.85,
+        "odor": 0.75,
         "wall": 0.7,
         "novelty": 0.65,
         "energy": 0.5,

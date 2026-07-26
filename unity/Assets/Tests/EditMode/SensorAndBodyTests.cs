@@ -116,19 +116,93 @@ namespace FlySimulation.Tests.EditMode
             ChemicalChannels sample = field.Sample(Vector3.zero);
             Assert.AreEqual(1f, sample.Sugar, 1e-5f);
             Assert.AreEqual(1f, sample.Bitter, 1e-5f);
+            // Sugar + bitter both map into Odor, then Clamp01.
+            Assert.AreEqual(1f, sample.Odor, 1e-5f);
 
             field.Unregister(bitter);
             sample = field.Sample(Vector3.zero);
             Assert.AreEqual(1f, sample.Sugar, 1e-5f);
             Assert.AreEqual(0f, sample.Bitter, 1e-5f);
+            Assert.AreEqual(1f, sample.Odor, 1e-5f);
 
             field.Clear();
             sample = field.Sample(Vector3.zero);
             Assert.AreEqual(0f, sample.Sugar, 1e-5f);
+            Assert.AreEqual(0f, sample.Odor, 1e-5f);
 
             Object.DestroyImmediate(fieldGo);
             Object.DestroyImmediate(sugarGo);
             Object.DestroyImmediate(bitterGo);
+        }
+    }
+
+    public sealed class AntennaOdorSensorTests
+    {
+        [Test]
+        public void Antenna_DetectsStrongerOdorCloserToSugarSource()
+        {
+            var fieldGo = new GameObject("field");
+            var field = fieldGo.AddComponent<ChemicalFieldSystem>();
+
+            var sugarGo = new GameObject("sugar");
+            sugarGo.transform.position = Vector3.zero;
+            const float radius = 0.100f;
+            var sugar = sugarGo.AddComponent<ChemicalSource>();
+            sugar.Configure(ChemicalSource.SourceType.Sugar, 1f, radius);
+            field.Register(sugar);
+
+            var nearGo = new GameObject("antenna_near");
+            nearGo.transform.position = new Vector3(0.02f, 0f, 0f);
+            var near = nearGo.AddComponent<AntennaOdorSensor>();
+            near.BindField(field);
+
+            var midGo = new GameObject("antenna_mid");
+            midGo.transform.position = new Vector3(radius, 0f, 0f);
+            var mid = midGo.AddComponent<AntennaOdorSensor>();
+            mid.BindField(field);
+
+            var farGo = new GameObject("antenna_far");
+            farGo.transform.position = new Vector3(radius + 0.001f, 0f, 0f);
+            var far = farGo.AddComponent<AntennaOdorSensor>();
+            far.BindField(field);
+
+            ChemicalChannels nearSample = near.SampleNow();
+            ChemicalChannels midSample = mid.SampleNow();
+            ChemicalChannels farSample = far.SampleNow();
+
+            float expectedNear = Mathf.Exp(-0.02f / radius);
+            float expectedMid = Mathf.Exp(-1f);
+            const float expectedFar = 0f;
+
+            Assert.AreEqual(expectedNear, nearSample.Odor, 1e-4f);
+            Assert.AreEqual(expectedMid, midSample.Odor, 1e-4f);
+            Assert.AreEqual(expectedFar, farSample.Odor, 1e-4f);
+            // Sugar plume also fills Sugar; Odor is the mapped antenna cue.
+            Assert.AreEqual(expectedNear, nearSample.Sugar, 1e-4f);
+            Assert.Greater(nearSample.Odor, midSample.Odor);
+            Assert.Greater(midSample.Odor, farSample.Odor);
+
+            var buf = new float[8];
+            near.CopyObservation(buf, 0);
+            Assert.AreEqual(expectedNear, buf[0], 1e-4f); // Sugar
+            Assert.AreEqual(expectedNear, buf[7], 1e-4f); // Odor
+
+            Object.DestroyImmediate(fieldGo);
+            Object.DestroyImmediate(sugarGo);
+            Object.DestroyImmediate(nearGo);
+            Object.DestroyImmediate(midGo);
+            Object.DestroyImmediate(farGo);
+        }
+
+        [Test]
+        public void Antenna_WithoutField_ReadsZero()
+        {
+            var go = new GameObject("antenna");
+            var antenna = go.AddComponent<AntennaOdorSensor>();
+            ChemicalChannels sample = antenna.SampleNow();
+            Assert.AreEqual(0f, sample.Odor, 1e-5f);
+            Assert.AreEqual(0f, sample.Sugar, 1e-5f);
+            Object.DestroyImmediate(go);
         }
     }
 

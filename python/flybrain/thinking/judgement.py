@@ -21,6 +21,7 @@ Decision = Literal["accept", "reject", "ignore", "reconsider", "acknowledge"]
 _RISK_SEVERITY = {
     "none": 0.0,
     "energy": 0.35,
+    "odor": 0.55,
     "wall": 0.7,
     "toxin": 0.85,
     "fall": 0.8,
@@ -166,7 +167,7 @@ class JudgementModule:
         if bool(signals.get("new_stimulus")):
             novelty = max(novelty, 0.55)
         # Salient devil risks count as something worth remembering even if viz habituated.
-        if proposal.risk in ("wall", "toxin", "fall"):
+        if proposal.risk in ("wall", "toxin", "odor", "fall"):
             novelty = max(
                 novelty, 0.35 * float(_RISK_SEVERITY.get(str(proposal.risk), 0.4)) + 0.2
             )
@@ -211,6 +212,7 @@ class JudgementModule:
         if novelty >= float(cfg.acknowledge_novelty_min) or proposal.risk in (
             "wall",
             "toxin",
+            "odor",
             "fall",
         ):
             if load >= float(cfg.acknowledge_load_min) and (

@@ -10,6 +10,41 @@ database:
   # Tests should pass backend=in_memory explicitly; live runs use pgvector.
   backend: pgvector  # in_memory | pgvector
 
+# Spatial mental map. Place nodes and their four Wall nodes live in Neo4j;
+# pgvector remains the short-term-memory backend.
+place_graph:
+  enabled: true
+  backend: neo4j  # in_memory | neo4j
+  uri: "bolt://127.0.0.1:7687"
+  user: neo4j
+  password: flymindgraph  # override with NEO4J_PASSWORD
+  database: neo4j
+  view_dim: 90
+  match_min: 0.97
+  update_every: 1  # upsert place from stereo patch_vec every N steps
+  familiarity_bump: 0.12  # per revisit bump on each Wall / item
+  # Path/reference disambiguation: same view from different previous places
+  # creates distinct Place nodes linked by ADJACENT edges.
+  context_enabled: true
+  context_top_k: 8
+  # Sensor feedback (MappedSensorFeedback): once a wall/odor/taste item is
+  # mapped on the current Place in Neo4j, the *reported* sensor channel is
+  # scaled by max(floor, 1 - strength * item_familiarity). Raw transducers
+  # stay available as wall_hazard_raw / odor_raw / …
+  hazard_decay_strength: 0.85
+  hazard_decay_floor: 0.15
+  # Two-layer Neo4j cache: L1 (10s) stop-on-hit — no Bolt round-trip;
+  # L2 (24h) after L1 miss — save L1 + L2 + Neo4j.
+  # Place identity is mean-centered + L2-normalized patch_vec (raw cosine on
+  # nonneg patches collapses the chamber into one node).
+  cache:
+    enabled: true
+    dir: "logs/place_cache"
+    l1_ttl_seconds: 10
+    l2_ttl_seconds: 86400
+    match_min: 0.97
+    l1_persist_every: 1.0
+
 embedding:
   latent_dim: 256
   affect_dim: 16
@@ -232,18 +267,41 @@ judgement:
   acknowledge_load_min: 0.45
   acknowledge_eye_match_max: 0.4
 
-# Interrupt Architecture-B motor ticks when eyes/sensors look novel vs STM.
-# Hard-stops locomotion until a forced mind+judgement tick installs an L1 goal.
+# Interrupt Architecture-B: novel cue → hard motor freeze + deep-thought stub.
+# Freeze lasts deep_thought_steps; mind ticks every deep_thought_mind_interval
+# (default 4) run devil LLM on heightened (×deep_thought_gain) senses with no
+# motor output. STM save on clear.
 stimulus_interrupt:
   enabled: true
-  # 3×3 novelty cue → check STM patch_vec; on confirm, save patch_vec to STM.
-  # Next matching 3×3 cue ⇒ history_hit (not-novel); nothing written to a local cache.
-  history_backend: patch_grid
-  patch_match_min: 0.92
+  # STM smell-novelty / visual / taste cue → L1 joint retrieval + cue-column gate.
+  # Retrieve top-k by joint_vec; compare only the column that opened the cue
+  # (patches | smell | sensors). L2 whole-joint familiarity deferred.
+  # On clear (end of freeze), save patch_vec, smell_vec, sensors_vec, and joint_vec.
+  history_backend: joint
+  joint_neighbors: 8
+  joint_match_min: 0.92  # reserved for future L2
+  patch_match_min: 0.92  # L1 when cue is visual_novelty / new_stimulus
+  sensors_match_min: 0.92
+  smell_enabled: true
+  smell_match_min: 0.92  # smell cue probe + L1 when cue is smell_novelty
+  smell_neighbors: 8
   patch_grid_rows: 3
   patch_grid_cols: 3
   min_visual_novelty: 0.18
   cooldown_steps: 20
+  deep_thought_steps: 80
+  deep_thought_gain: 10.0
+  deep_thought_mind_interval: 4  # mind+devil every 4 steps while frozen (vs mind_interval 40)
+  # Hazard conditioning during deep thought: hits to mark a risk conditioned;
+  # consecutive agreeing accept/acknowledge judgements early-unlock the freeze.
+  conditioning_hit_threshold: 3
+  judgement_confirmations: 2
+  # Passive smell: cheap in-memory antenna watcher (no STM touch) that gates the
+  # STM smell probe. Without it that probe ran every step and dominated latency.
+  passive_smell_enabled: true
+  passive_smell_interval: 4       # sample antenna every N steps
+  passive_smell_change_min: 0.05  # per-channel delta that counts as a change
+  passive_smell_refresh_ms: 500.0 # forced probe cadence when nothing changes
   # Legacy STM-CNN backend knobs (only when history_backend: stm):
   history_relative: true
   history_baseline_window: 40

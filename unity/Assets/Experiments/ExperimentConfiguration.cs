@@ -31,11 +31,16 @@ namespace FlySimulation.Experiments
         public float WindStrength = 0f;
 
         [Header("Chemistry")]
+        public const float SourcePuddleDiameter = 0.012f;
+        // Hard plume radius (meters). Zero smell beyond this distance from puddle center.
+        public const float DefaultChemicalSpread = 0.100f;
+
         public Vector3 SugarSourcePosition = new Vector3(0.15f, 0.01f, 0.15f);
         public Vector3 BitterSourcePosition = new Vector3(-0.15f, 0.01f, -0.15f);
         public float SugarStrength = 1f;
         public float BitterStrength = 1f;
-        public float ChemicalSpread = 0.125f;
+        public float ChemicalSpread = DefaultChemicalSpread;
+        public float ResolvedChemicalSpread => Mathf.Max(DefaultChemicalSpread, ChemicalSpread);
 
         [Header("Obstacles")]
         public Vector3[] ObstaclePositions = Array.Empty<Vector3>();

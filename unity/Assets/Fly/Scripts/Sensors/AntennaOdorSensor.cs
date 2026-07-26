@@ -19,15 +19,25 @@ namespace FlySimulation.Fly.Sensors
             chemicalField = field;
         }
 
-        private void FixedUpdate()
+        /// <summary>
+        /// Sample the bound field at the antenna pose (also called from FixedUpdate).
+        /// Exposed so EditMode tests can measure odor without waiting on physics ticks.
+        /// </summary>
+        public ChemicalChannels SampleNow()
         {
             if (chemicalField == null)
             {
                 Odor = ChemicalChannels.Zero;
-                return;
+                return Odor;
             }
 
             Odor = chemicalField.Sample(transform.position);
+            return Odor;
+        }
+
+        private void FixedUpdate()
+        {
+            SampleNow();
         }
 
         public void CopyObservation(float[] buffer, int offset)

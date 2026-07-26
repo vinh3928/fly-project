@@ -81,20 +81,32 @@ namespace FlySimulation.EditorTools
             sugar.name = "SugarSource";
             TrySetTag(sugar, "ChemicalSource");
             sugar.transform.SetParent(chamberRoot.transform, false);
-            sugar.transform.localScale = new Vector3(0.012f, 0.002f, 0.012f);
+            sugar.transform.localScale = new Vector3(
+                ExperimentConfiguration.SourcePuddleDiameter,
+                0.002f,
+                ExperimentConfiguration.SourcePuddleDiameter);
             ApplyMaterial(sugar, sugarMat);
             var sugarSource = sugar.AddComponent<ChemicalSource>();
-            sugarSource.Configure(ChemicalSource.SourceType.Sugar, 1f, 0.25f);
+            sugarSource.Configure(
+                ChemicalSource.SourceType.Sugar,
+                1f,
+                ExperimentConfiguration.DefaultChemicalSpread);
             EnsureSurface(sugar, new ChemicalChannels { Sugar = 1f });
 
             var bitter = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             bitter.name = "BitterSource";
             TrySetTag(bitter, "ChemicalSource");
             bitter.transform.SetParent(chamberRoot.transform, false);
-            bitter.transform.localScale = new Vector3(0.012f, 0.002f, 0.012f);
+            bitter.transform.localScale = new Vector3(
+                ExperimentConfiguration.SourcePuddleDiameter,
+                0.002f,
+                ExperimentConfiguration.SourcePuddleDiameter);
             ApplyMaterial(bitter, bitterMat);
             var bitterSource = bitter.AddComponent<ChemicalSource>();
-            bitterSource.Configure(ChemicalSource.SourceType.Bitter, 1f, 0.25f);
+            bitterSource.Configure(
+                ChemicalSource.SourceType.Bitter,
+                1f,
+                ExperimentConfiguration.DefaultChemicalSpread);
             EnsureSurface(bitter, new ChemicalChannels { Bitter = 1f });
 
             // Phase 5: high-contrast floor patches for visual landmarking (walls stay mesh-hidden).

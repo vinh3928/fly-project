@@ -37,6 +37,7 @@ _CANDIDATES: list[tuple[str, np.ndarray]] = [
 DEFAULT_STIMULUS_THRESHOLDS: dict[str, float] = {
     "bitter": 0.2,
     "sugar": 0.15,
+    "odor": 0.25,
     "wall": 0.25,
     "survival": 0.35,
     "low_energy": 0.55,  # energy below this ⇒ low_energy peak
@@ -83,6 +84,14 @@ def _stimulus_peaks(
         peaks.append("bitter")
     if float(signals.get("sugar", 0.0)) > thr["sugar"]:
         peaks.append("sugar")
+    odor = max(
+        float(signals.get("odor", 0.0) or 0.0),
+        float(signals.get("odor_left", 0.0) or 0.0),
+        float(signals.get("odor_right", 0.0) or 0.0),
+    )
+    # Heightened deep-thought odor may exceed 1; treat >thr or >1 as peak.
+    if odor > thr["odor"]:
+        peaks.append("odor")
     if float(signals.get("wall_hazard", 0.0)) > thr["wall"]:
         peaks.append("wall")
     if float(affect.get("survival_risk", 0.0)) > thr["survival"]:
@@ -92,6 +101,51 @@ def _stimulus_peaks(
     if float(affect.get("novelty", affect.get("exploration", 0.0))) > thr["novelty"]:
         peaks.append("novelty")
     return peaks
+
+
+def format_present_line(
+    signals: dict[str, Any],
+    affect: dict[str, Any],
+    *,
+    maturity: float = 0.0,
+    judgement: dict[str, Any] | None = None,
+    conditioning_summary: str = "",
+    stimulus_thresholds: dict[str, float] | None = None,
+) -> str:
+    """Human-readable Present summary (chemistry + peaks + optional judgement)."""
+    peaks = _stimulus_peaks(signals, affect, stimulus_thresholds)
+    odor = max(
+        float(signals.get("odor", 0.0) or 0.0),
+        float(signals.get("odor_left", 0.0) or 0.0),
+        float(signals.get("odor_right", 0.0) or 0.0),
+    )
+    present = (
+        f"Present: energy={float(signals.get('energy', 0.0)):.2f}, "
+        f"sugar={float(signals.get('sugar', 0.0)):.2f}, "
+        f"bitter={float(signals.get('bitter', 0.0)):.2f}, "
+        f"odor={odor:.2f}, "
+        f"survival_risk={float(affect.get('survival_risk', 0.0)):.2f}, "
+        f"stimuli={peaks or ['calm']}, "
+        f"maturity={float(maturity):.2f}."
+    )
+    if judgement and judgement.get("decision"):
+        risk = ""
+        prop = judgement.get("proposal") if isinstance(judgement.get("proposal"), dict) else {}
+        if prop:
+            risk = str(prop.get("risk") or "")
+        judged = f" Judged: {judgement.get('decision')}"
+        if risk and risk != "none":
+            judged += f" {risk}"
+        reason = str(judgement.get("reason") or "")
+        if reason:
+            judged += f" ({reason})"
+        present += judged + "."
+    if conditioning_summary:
+        block = conditioning_summary
+        if not block.startswith("CONDITIONING"):
+            block = f"CONDITIONING: {block}"
+        present += f" {block}."
+    return present
 
 
 def _heuristic_next_state(
@@ -478,14 +532,11 @@ def predict_present_future(
         signals=signals,
         affect=affect,
     )
-    peaks = _stimulus_peaks(signals, affect)
-    present = (
-        f"Present: energy={float(signals.get('energy', 0.0)):.2f}, "
-        f"sugar={float(signals.get('sugar', 0.0)):.2f}, "
-        f"bitter={float(signals.get('bitter', 0.0)):.2f}, "
-        f"survival_risk={float(affect.get('survival_risk', 0.0)):.2f}, "
-        f"stimuli={peaks or ['calm']}, "
-        f"maturity={experience.maturity():.2f}."
+    present = format_present_line(
+        signals,
+        affect,
+        maturity=experience.maturity(),
+        stimulus_thresholds=stimulus_thresholds,
     )
     hypo = (
         f"Future hypothesis (L1+L2): act={chosen.name} "

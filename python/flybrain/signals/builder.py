@@ -7,17 +7,39 @@ from typing import Any
 
 import numpy as np
 
-from flybrain.phase4 import DEFAULT_OBS_DIM
+from flybrain.phase4 import DEFAULT_OBS_DIM, SMELL_VEC_DIM
 
 # Matches Unity SensorManager layout (ExpectedVectorSize = 197).
 JOINT_DIM = 18 * 4  # 72
 CONTACT_DIM = 6 * 5  # 30
 FOOT_TASTE_DIM = 6 * 8  # 48
 ANTENNA_DIM = 8 * 2  # 16
+# Unity ChemicalChannels: Sugar,Bitter,Salt,Acid,Water,Protein,Toxin,Odor
+ODOR_CHANNEL = 7
 PROBOSCIS_DIM = 2 + 8  # 10
 INTERNAL_DIM = 8
 BODY_STATE_DIM = 13
 INTERNAL_OFFSET = JOINT_DIM + CONTACT_DIM + FOOT_TASTE_DIM + ANTENNA_DIM + PROBOSCIS_DIM  # 176
+
+
+def antenna_smell_vec(observation: np.ndarray) -> np.ndarray:
+    """Extract left+right antenna chemistry (16-d) from a flat Unity obs vector."""
+    obs = np.asarray(observation, dtype=np.float32).reshape(-1)
+    start = JOINT_DIM + CONTACT_DIM + FOOT_TASTE_DIM
+    out = np.zeros(SMELL_VEC_DIM, dtype=np.float32)
+    if obs.shape[0] <= start:
+        return out
+    n = min(SMELL_VEC_DIM, ANTENNA_DIM, obs.shape[0] - start)
+    out[:n] = obs[start : start + n]
+    return out
+
+
+def _odor_from_antennae(antennae: np.ndarray) -> tuple[float, float, float]:
+    """Return (odor_left, odor_right, odor=max) from the Odor channel."""
+    a = np.asarray(antennae, dtype=np.float32).reshape(-1)
+    left = float(a[ODOR_CHANNEL]) if a.size > ODOR_CHANNEL else 0.0
+    right = float(a[8 + ODOR_CHANNEL]) if a.size > 8 + ODOR_CHANNEL else 0.0
+    return left, right, max(left, right)
 
 
 @dataclass
@@ -31,6 +53,9 @@ class SensorySignals:
     left_eye: np.ndarray  # (1, H, W) or (H, W)
     right_eye: np.ndarray
     raw: np.ndarray
+    smell_vec: np.ndarray = field(
+        default_factory=lambda: np.zeros(SMELL_VEC_DIM, dtype=np.float32)
+    )
     summary: dict[str, float] = field(default_factory=dict)
 
     def to_jsonable(self) -> dict[str, Any]:
@@ -42,6 +67,9 @@ class SensorySignals:
             "mean_contact": float(self.summary.get("mean_contact", 0.0)),
             "sugar": float(self.summary.get("sugar", 0.0)),
             "bitter": float(self.summary.get("bitter", 0.0)),
+            "odor": float(self.summary.get("odor", 0.0)),
+            "odor_left": float(self.summary.get("odor_left", 0.0)),
+            "odor_right": float(self.summary.get("odor_right", 0.0)),
             "energy": float(self.summary.get("energy", 0.0)),
             "instability": float(self.summary.get("instability", 0.0)),
         }
@@ -84,6 +112,12 @@ class SignalBuilder:
         offset += FOOT_TASTE_DIM
         antennae = obs[offset : offset + ANTENNA_DIM]
         offset += ANTENNA_DIM
+        smell = np.asarray(antennae, dtype=np.float32).reshape(-1).copy()
+        if smell.shape[0] != SMELL_VEC_DIM:
+            padded_smell = np.zeros(SMELL_VEC_DIM, dtype=np.float32)
+            n_sm = min(SMELL_VEC_DIM, smell.shape[0])
+            padded_smell[:n_sm] = smell[:n_sm]
+            smell = padded_smell
         proboscis = obs[offset : offset + PROBOSCIS_DIM]
         offset += PROBOSCIS_DIM
         internal = obs[offset : offset + INTERNAL_DIM]
@@ -105,6 +139,7 @@ class SignalBuilder:
         bitter = float(np.mean(foot_taste[1::8])) if foot_taste.size else 0.0
         sugar += float(proboscis[2]) if proboscis.size > 2 else 0.0
         bitter += float(proboscis[3]) if proboscis.size > 3 else 0.0
+        odor_left, odor_right, odor = _odor_from_antennae(antennae)
         mean_contact = float(np.mean(contacts[0::5])) if contacts.size else 0.0
         energy = float(internal[0]) if internal.size else 0.0
         hunger = float(internal[6]) if internal.size > 6 else 0.0
@@ -121,6 +156,9 @@ class SignalBuilder:
         summary = {
             "sugar": max(0.0, sugar),
             "bitter": max(0.0, bitter),
+            "odor": max(0.0, odor),
+            "odor_left": max(0.0, odor_left),
+            "odor_right": max(0.0, odor_right),
             "mean_contact": max(0.0, min(1.0, mean_contact)),
             "energy": max(0.0, min(1.0, energy)),
             "hunger": max(0.0, min(1.0, hunger)),
@@ -138,6 +176,7 @@ class SignalBuilder:
             left_eye=left,
             right_eye=right,
             raw=obs,
+            smell_vec=smell,
             summary=summary,
         )
 

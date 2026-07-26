@@ -15,6 +15,10 @@ AFFECT_VEC_DIM = AFFECT_DIM  # 16
 PATCH_CELL_FEAT_DIM = 5
 PATCH_GRID_CELLS = 9  # 3×3
 PATCH_VEC_DIM = PATCH_GRID_CELLS * PATCH_CELL_FEAT_DIM * 2  # 90
+# Antenna L+R chemical channels (8 each) for interrupt smell history.
+SMELL_VEC_DIM = 16
+# Interrupt joint history: L2-normalized concat(patch, smell, sensors).
+INTERRUPT_JOINT_VEC_DIM = PATCH_VEC_DIM + SMELL_VEC_DIM + SENSORS_VEC_DIM  # 298
 
 HIGH_LEVEL_ACTION_DIM = 5
 DEFAULT_OBS_DIM = 197
@@ -51,4 +55,6 @@ STM_MODALITIES = (
     "status",
     "affect",
     "patches",
+    "smell",
+    "joint",
 )

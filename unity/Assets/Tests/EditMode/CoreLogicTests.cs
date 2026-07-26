@@ -10,15 +10,82 @@ namespace FlySimulation.Tests.EditMode
     public sealed class ChemistryTests
     {
         [Test]
-        public void Concentration_UsesExponentialFalloff()
+        public void Concentration_UsesHardCutoffWithInnerFalloff()
         {
-            float atZero = ChemicalSource.ComputeConcentration(1f, 0f, 0.25f);
-            float atSpread = ChemicalSource.ComputeConcentration(1f, 0.25f, 0.25f);
-            float far = ChemicalSource.ComputeConcentration(1f, 2f, 0.25f);
+            const float radius = 0.100f;
+            float atZero = ChemicalSource.ComputeConcentration(1f, 0f, radius);
+            float atEdge = ChemicalSource.ComputeConcentration(1f, radius, radius);
+            float justOutside = ChemicalSource.ComputeConcentration(1f, radius + 1e-4f, radius);
+            float far = ChemicalSource.ComputeConcentration(1f, 2f, radius);
 
             Assert.AreEqual(1f, atZero, 1e-5f);
-            Assert.AreEqual(Mathf.Exp(-1f), atSpread, 1e-5f);
-            Assert.Less(far, atSpread);
+            Assert.AreEqual(Mathf.Exp(-1f), atEdge, 1e-5f);
+            Assert.AreEqual(0f, justOutside, 1e-5f);
+            Assert.AreEqual(0f, far, 1e-5f);
+        }
+
+        [Test]
+        public void DefaultChemicalSpread_IsHardCutoffAtOneTenthMeter()
+        {
+            var config = ExperimentConfiguration.Default();
+            float radius = config.ResolvedChemicalSpread;
+
+            Assert.AreEqual(
+                ExperimentConfiguration.DefaultChemicalSpread,
+                radius,
+                1e-5f);
+            Assert.AreEqual(0.100f, radius, 1e-5f);
+            Assert.AreEqual(
+                Mathf.Exp(-1f),
+                ChemicalSource.ComputeConcentration(1f, radius, radius),
+                1e-5f);
+            Assert.AreEqual(
+                0f,
+                ChemicalSource.ComputeConcentration(1f, radius + 1e-4f, radius),
+                1e-5f);
+
+            config.ChemicalSpread = 0.001f;
+            Assert.AreEqual(
+                ExperimentConfiguration.DefaultChemicalSpread,
+                config.ResolvedChemicalSpread,
+                1e-5f);
+        }
+
+        [Test]
+        public void SugarAndBitter_AlsoWriteOdorChannel()
+        {
+            const float radius = 0.100f;
+            var sugarGo = new GameObject("sugar");
+            sugarGo.transform.position = Vector3.zero;
+            var sugar = sugarGo.AddComponent<ChemicalSource>();
+            sugar.Configure(ChemicalSource.SourceType.Sugar, 1f, radius);
+
+            var bitterGo = new GameObject("bitter");
+            bitterGo.transform.position = new Vector3(radius, 0f, 0f);
+            var bitter = bitterGo.AddComponent<ChemicalSource>();
+            bitter.Configure(ChemicalSource.SourceType.Bitter, 1f, radius);
+
+            ChemicalChannels atSugar = sugar.SampleAt(Vector3.zero);
+            Assert.AreEqual(1f, atSugar.Sugar, 1e-5f);
+            Assert.AreEqual(0f, atSugar.Bitter, 1e-5f);
+            Assert.AreEqual(1f, atSugar.Odor, 1e-5f);
+
+            float expected = Mathf.Exp(-1f);
+            ChemicalChannels atEdge = sugar.SampleAt(new Vector3(radius, 0f, 0f));
+            Assert.AreEqual(expected, atEdge.Sugar, 1e-5f);
+            Assert.AreEqual(expected, atEdge.Odor, 1e-5f);
+
+            ChemicalChannels outside = sugar.SampleAt(new Vector3(radius + 0.001f, 0f, 0f));
+            Assert.AreEqual(0f, outside.Sugar, 1e-5f);
+            Assert.AreEqual(0f, outside.Odor, 1e-5f);
+
+            ChemicalChannels atBitter = bitter.SampleAt(bitterGo.transform.position);
+            Assert.AreEqual(1f, atBitter.Bitter, 1e-5f);
+            Assert.AreEqual(0f, atBitter.Sugar, 1e-5f);
+            Assert.AreEqual(1f, atBitter.Odor, 1e-5f);
+
+            Object.DestroyImmediate(sugarGo);
+            Object.DestroyImmediate(bitterGo);
         }
 
         [Test]

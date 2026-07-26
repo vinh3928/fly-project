@@ -1,7 +1,8 @@
-"""Interrupt Architecture-B: 3×3 novelty cue → STM patch history → hard-stop."""
+"""Interrupt Architecture-B: cue → joint STM history → deep-thought freeze."""
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Sequence
@@ -12,15 +13,38 @@ from flybrain.memory.embedder import EmbeddingParts
 from flybrain.memory.pgvector import ShortTermMemory, _cosine_distance
 from flybrain.phase4 import (
     EYE_VEC_DIM,
+    INTERRUPT_JOINT_VEC_DIM,
     PATCH_CELL_FEAT_DIM,
     PATCH_VEC_DIM,
     SENSORS_VEC_DIM,
+    SMELL_VEC_DIM,
 )
+from flybrain.signals.builder import SensorySignals
 from flybrain.thinking.retrospective import RetrospectiveConfig, can_investigate_interest
 from flybrain.vision.novelty import stereo_patch_embedding
 
 # Hard-stop goal: zero locomotion; height/freq mid; no proboscis.
 STOP_GOAL = np.asarray([0.0, 0.0, 0.5, 0.5, 0.0], dtype=np.float32)
+
+# Summary keys treated as external senses (amplified during deep thought).
+_DEEP_THOUGHT_SENSE_KEYS = (
+    "sugar",
+    "bitter",
+    "odor",
+    "odor_left",
+    "odor_right",
+    "mean_contact",
+    "instability",
+    "proboscis_contact",
+    "visual_novelty",
+    "new_stimulus",
+    "wall_hazard",
+    "target_confidence",
+    "target_bearing",
+    "novelty_bearing",
+    "forward_bias",
+    "turn_bias",
+)
 
 DEFAULT_MODALITIES: tuple[str, ...] = ("left_eye", "right_eye", "sensors")
 
@@ -35,16 +59,26 @@ _MODALITY_PART_ATTR = {
 class StimulusInterruptConfig:
     enabled: bool = True
     # History backend after a candidate cue.
-    #   patch_grid — 3×3 stereo embedding checked/saved against STM ``patch_vec``
+    #   joint      — L1: retrieve by joint_vec, compare only the cue column
+    #   patch_grid — legacy per-square patch + same-row smell (experiments)
     #   stm        — legacy CNN eye/sensor cosine (experiments only)
-    history_backend: str = "patch_grid"
-    patch_match_min: float = 0.92  # worst-square cosine ≥ this ⇒ already seen (not novel)
+    history_backend: str = "joint"
+    # L1 neighbor pool size (joint retrieval). L2 joint-vs-joint design deferred.
+    joint_neighbors: int = 8
+    joint_match_min: float = 0.92  # reserved for future L2 whole-joint gate
+    # Smell STM-first cue + L1 smell-column threshold when cue=smell_novelty.
+    smell_enabled: bool = True
+    smell_match_min: float = 0.92
+    smell_neighbors: int = 8
+    # L1 patch-column threshold when cue is visual_novelty / new_stimulus.
+    patch_match_min: float = 0.92
     patch_grid_rows: int = 3
     patch_grid_cols: int = 3
-    # How many STM grids to pool per-square matches over (best square per position).
     patch_neighbors: int = 8
-    # Legacy / unused by patch_grid path (kept for stm backend + old yaml keys).
     patch_cache_size: int = 48
+    # L1 sensors-column threshold (future sensor cues).
+    sensors_match_min: float = 0.92
+    # Legacy / unused by joint path (kept for stm backend + old yaml keys).
     history_match_min: float = 0.55
     history_relative: bool = True
     history_baseline_window: int = 40
@@ -53,6 +87,22 @@ class StimulusInterruptConfig:
     history_bootstrap_baseline: float = 1.0
     min_visual_novelty: float = 0.18
     cooldown_steps: int = 20
+    # Hard motor freeze length after arm; mind deep-thought stub runs on interval.
+    deep_thought_steps: int = 80
+    # Order-of-magnitude boost for mind/devil senses during the freeze (STM unscaled).
+    deep_thought_gain: float = 10.0
+    # Mind ticks during freeze (normal mind_interval stays for non-freeze steps).
+    deep_thought_mind_interval: int = 4
+    # Hazard conditioning: repeated devil risks → memory block; N agreeing
+    # accept/acknowledge judgements can early-unlock the freeze.
+    conditioning_hit_threshold: int = 3
+    judgement_confirmations: int = 2
+    # Passive smell: cheap always-on antenna watcher that gates the expensive
+    # STM smell probe (which used to run every step and dominated step latency).
+    passive_smell_enabled: bool = True
+    passive_smell_interval: int = 4  # sample antenna every N steps
+    passive_smell_change_min: float = 0.05  # per-channel delta counting as change
+    passive_smell_refresh_ms: float = 500.0  # forced probe cadence
     modalities: tuple[str, ...] = DEFAULT_MODALITIES
 
     @classmethod
@@ -63,6 +113,114 @@ class StimulusInterruptConfig:
             data["modalities"] = tuple(str(m) for m in mods)
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in known})
+
+
+def heighten_sensory_for_deep_thought(
+    sensory: SensorySignals,
+    *,
+    gain: float = 10.0,
+) -> SensorySignals:
+    """Clone sensory with mind-facing senses ×gain; leave internals/raw unscaled.
+
+    Eyes are amplified then clipped to [0, 1]. Chemical / smell / contacts may
+    exceed 1 so the devil LLM sees intensity. STM / embedder must keep using the
+    original (unscaled) sensory.
+    """
+    g = float(gain)
+    summary = dict(sensory.summary)
+    for key in _DEEP_THOUGHT_SENSE_KEYS:
+        if key in summary:
+            summary[key] = float(summary[key]) * g
+    left = np.clip(np.asarray(sensory.left_eye, dtype=np.float32) * g, 0.0, 1.0)
+    right = np.clip(np.asarray(sensory.right_eye, dtype=np.float32) * g, 0.0, 1.0)
+    return SensorySignals(
+        body=np.asarray(sensory.body, dtype=np.float32) * g,
+        chemical=np.asarray(sensory.chemical, dtype=np.float32) * g,
+        internal=np.asarray(sensory.internal, dtype=np.float32).copy(),
+        contacts=np.asarray(sensory.contacts, dtype=np.float32) * g,
+        left_eye=left,
+        right_eye=right,
+        raw=np.asarray(sensory.raw, dtype=np.float32),
+        smell_vec=np.asarray(sensory.smell_vec, dtype=np.float32) * g,
+        summary=summary,
+    )
+
+
+@dataclass
+class PassiveSmellSample:
+    """One passive-smell observation (no STM access)."""
+
+    sampled: bool = False
+    changed: bool = False
+    active: bool = False
+    delta: float = 0.0
+    reason: str = ""
+
+
+@dataclass
+class PassiveSmellGate:
+    """Cheap always-on smell watcher that gates the STM smell probe.
+
+    Samples the antenna vector every ``interval`` steps and compares it to the
+    last stored reading in memory only — it never queries or writes STM. The
+    expensive smell-novelty probe opens when the reading changed, vision saw
+    novelty, or ``refresh_ms`` elapsed since the last probe.
+    """
+
+    interval: int = 4
+    change_min: float = 0.05
+    refresh_ms: float = 500.0
+    _last: np.ndarray | None = None
+    _last_active_ms: float | None = None
+
+    @classmethod
+    def from_config(cls, config: StimulusInterruptConfig) -> PassiveSmellGate:
+        return cls(
+            interval=max(1, int(config.passive_smell_interval)),
+            change_min=float(config.passive_smell_change_min),
+            refresh_ms=float(config.passive_smell_refresh_ms),
+        )
+
+    def reset(self) -> None:
+        self._last = None
+        self._last_active_ms = None
+
+    def observe(
+        self,
+        smell_vec: np.ndarray | None,
+        *,
+        step: int,
+        now_ms: float,
+        visual_novel: bool = False,
+    ) -> PassiveSmellSample:
+        out = PassiveSmellSample()
+        if int(step) % max(1, int(self.interval)) == 0:
+            out.sampled = True
+            cur = _pad_to(smell_vec, SMELL_VEC_DIM)
+            if self._last is None:
+                # First reading only counts as change when something is there.
+                out.changed = bool(float(np.max(np.abs(cur))) > 1e-6)
+                out.delta = float(np.max(np.abs(cur)))
+            else:
+                out.delta = float(np.max(np.abs(cur - self._last)))
+                out.changed = out.delta >= float(self.change_min)
+            # Store only on change so slow drift accumulates against the last
+            # meaningful reading instead of resetting every sample.
+            if out.changed or self._last is None:
+                self._last = cur.copy()
+        due = self._last_active_ms is None or (
+            float(now_ms) - float(self._last_active_ms)
+        ) >= float(self.refresh_ms)
+        out.active = bool(out.changed or visual_novel or due)
+        if out.changed:
+            out.reason = "smell_change"
+        elif visual_novel:
+            out.reason = "vision_novelty"
+        elif due:
+            out.reason = "timer"
+        if out.active:
+            self._last_active_ms = float(now_ms)
+        return out
 
 
 @dataclass
@@ -80,10 +238,18 @@ class StimulusInterruptDecision:
     history_baselines: dict[str, float] = field(default_factory=dict)
     novel_modalities: list[str] = field(default_factory=list)
     cue: str = ""
+    # Passive smell gate telemetry (why/whether the STM smell probe ran).
+    passive_smell_changed: bool = False
+    passive_smell_delta: float = 0.0
+    passive_smell_reason: str = ""
+    smell_probe_ran: bool = False
     # Index (0..17) of the 3×3 square that matched STM worst; -1 if N/A.
     patch_worst_cell: int = -1
     # Stashed when arming so the confirmed interrupt can persist to STM.
     patch_embedding: np.ndarray | None = None
+    smell_embedding: np.ndarray | None = None
+    sensors_embedding: np.ndarray | None = None
+    joint_embedding: np.ndarray | None = None
 
 
 @dataclass
@@ -163,6 +329,54 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(1.0 - _cosine_distance(a, b))
 
 
+def _l2_normalize(vec: np.ndarray) -> np.ndarray:
+    v = np.asarray(vec, dtype=np.float32).reshape(-1)
+    n = float(np.linalg.norm(v))
+    if n < 1e-12:
+        return np.zeros_like(v)
+    return (v / n).astype(np.float32)
+
+
+def build_interrupt_joint_vec(
+    patch: np.ndarray | None,
+    smell: np.ndarray | None,
+    sensors: np.ndarray | None,
+) -> np.ndarray:
+    """L2-normalize each modality block, concat, then L2-normalize the joint.
+
+    Equal block weight keeps 16-d smell from being buried by 90-d patch / 192-d sensors.
+    """
+    p = _l2_normalize(
+        np.asarray(patch if patch is not None else np.zeros(PATCH_VEC_DIM), dtype=np.float32)
+    )
+    if p.shape[0] != PATCH_VEC_DIM:
+        padded = np.zeros(PATCH_VEC_DIM, dtype=np.float32)
+        n = min(PATCH_VEC_DIM, p.shape[0])
+        padded[:n] = p[:n]
+        p = _l2_normalize(padded)
+    s = _l2_normalize(
+        np.asarray(smell if smell is not None else np.zeros(SMELL_VEC_DIM), dtype=np.float32)
+    )
+    if s.shape[0] != SMELL_VEC_DIM:
+        padded = np.zeros(SMELL_VEC_DIM, dtype=np.float32)
+        n = min(SMELL_VEC_DIM, s.shape[0])
+        padded[:n] = s[:n]
+        s = _l2_normalize(padded)
+    sens = _l2_normalize(
+        np.asarray(
+            sensors if sensors is not None else np.zeros(SENSORS_VEC_DIM), dtype=np.float32
+        )
+    )
+    if sens.shape[0] != SENSORS_VEC_DIM:
+        padded = np.zeros(SENSORS_VEC_DIM, dtype=np.float32)
+        n = min(SENSORS_VEC_DIM, sens.shape[0])
+        padded[:n] = sens[:n]
+        sens = _l2_normalize(padded)
+    joint = np.concatenate([p, s, sens]).astype(np.float32)
+    assert joint.shape[0] == INTERRUPT_JOINT_VEC_DIM
+    return _l2_normalize(joint)
+
+
 def has_candidate_cue(
     *,
     signals: dict[str, Any],
@@ -171,7 +385,7 @@ def has_candidate_cue(
     config: StimulusInterruptConfig,
     stimulus_thresholds: dict[str, float] | None = None,
 ) -> tuple[bool, str]:
-    """Cheap gate before history queries."""
+    """Cheap gate before history queries (taste / visual). Smell cue is STM-first."""
     thr = stimulus_thresholds or {}
     sugar_thr = float(thr.get("sugar", 0.15))
     bitter_thr = float(thr.get("bitter", 0.2))
@@ -186,6 +400,44 @@ def has_candidate_cue(
     if float(visual_novelty) >= float(config.min_visual_novelty):
         return True, "visual_novelty"
     return False, ""
+
+
+def smell_novelty_vs_stm(
+    memory: ShortTermMemory | None,
+    smell_emb: np.ndarray | None,
+    *,
+    fly_id: str,
+    match_min: float,
+    top_k: int = 8,
+) -> tuple[bool, float, bool]:
+    """Return (is_novel, best_sim, empty). Zero query smell is never a smell cue."""
+    if smell_emb is None or memory is None:
+        return False, 1.0, True
+    q = np.asarray(smell_emb, dtype=np.float32).reshape(-1)
+    if q.shape[0] != SMELL_VEC_DIM:
+        padded = np.zeros(SMELL_VEC_DIM, dtype=np.float32)
+        n = min(SMELL_VEC_DIM, q.shape[0])
+        padded[:n] = q[:n]
+        q = padded
+    if float(np.linalg.norm(q)) < 1e-6:
+        return False, 1.0, True
+    neighbors = memory.similar_by(
+        q,
+        modality="smell",  # type: ignore[arg-type]
+        fly_id=fly_id,
+        top_k=max(1, int(top_k)),
+    )
+    best = 0.0
+    any_valid = False
+    for n in neighbors:
+        sv = np.asarray(n.smell_vec, dtype=np.float32).reshape(-1)
+        if float(np.linalg.norm(sv)) < 1e-6:
+            continue
+        any_valid = True
+        best = max(best, cosine_similarity(q, sv))
+    if not any_valid:
+        return True, 0.0, True
+    return bool(best < float(match_min)), float(best), False
 
 
 def best_history_similarity(
@@ -228,14 +480,7 @@ def per_square_best_similarity(
     *,
     feat_dim: int = PATCH_CELL_FEAT_DIM,
 ) -> np.ndarray:
-    """Per-square (eye,row,col) best cosine of ``query`` vs stored 3×3 grids.
-
-    The flat 90-d patch vector is ordered left-9-squares then right-9-squares, each
-    ``feat_dim`` floats, so slice ``i`` is one fixed square/position. Matching each
-    square independently (and taking the closest stored square at that position)
-    stops a single novel square from being averaged away by ~17 familiar ones —
-    which is why the whole-vector cosine sat at ~0.99 and never armed.
-    """
+    """Per-square (eye,row,col) best cosine of ``query`` vs stored 3×3 grids."""
     q = np.asarray(query, dtype=np.float32).reshape(-1)
     step = max(1, int(feat_dim))
     n_cells = q.shape[0] // step
@@ -262,12 +507,7 @@ def best_patch_stm_similarity(
     top_k: int = 8,
     feat_dim: int = PATCH_CELL_FEAT_DIM,
 ) -> tuple[float, bool, int]:
-    """Return (worst_square_cosine, empty, worst_square_index).
-
-    The grid is treated as "already seen" only when *every* 3×3 square has a close
-    match at its own position across recent STM grids; the least-similar square
-    (the min over positions) is what the caller gates on.
-    """
+    """Return (worst_square_cosine, empty, worst_square_index). Legacy patch_grid helper."""
     neighbors = memory.similar_by(
         np.asarray(patch_emb, dtype=np.float32),
         modality="patches",  # type: ignore[arg-type]
@@ -288,6 +528,271 @@ def best_patch_stm_similarity(
     return float(per_cell[worst]), False, worst
 
 
+@dataclass
+class PatchSmellMatch:
+    """Legacy joint vision+smell history check (patch_grid backend)."""
+
+    empty: bool = True
+    vision_miss: bool = True
+    smell_miss: bool = False
+    patch_sim: float = 0.0
+    smell_sim: float = 1.0
+    worst_cell: int = -1
+    reason: str = "empty_patch_stm"
+
+
+def match_patch_smell_stm(
+    memory: ShortTermMemory,
+    patch_emb: np.ndarray,
+    smell_emb: np.ndarray | None,
+    *,
+    fly_id: str,
+    patch_match_min: float,
+    smell_match_min: float,
+    smell_enabled: bool = True,
+    top_k: int = 8,
+    feat_dim: int = PATCH_CELL_FEAT_DIM,
+) -> PatchSmellMatch:
+    """Legacy vision-primary neighbor lookup; smell on the same STM row."""
+    neighbors = memory.similar_by(
+        np.asarray(patch_emb, dtype=np.float32),
+        modality="patches",  # type: ignore[arg-type]
+        fly_id=fly_id,
+        top_k=max(1, int(top_k)),
+    )
+    valid = []
+    for n in neighbors:
+        pv = np.asarray(n.patch_vec, dtype=np.float32).reshape(-1)
+        if float(np.linalg.norm(pv)) >= 1e-6:
+            valid.append(n)
+    out = PatchSmellMatch()
+    if not valid:
+        return out
+
+    smell_q = (
+        np.asarray(smell_emb, dtype=np.float32).reshape(-1)
+        if smell_emb is not None
+        else np.zeros(SMELL_VEC_DIM, dtype=np.float32)
+    )
+    if smell_q.shape[0] != SMELL_VEC_DIM:
+        padded = np.zeros(SMELL_VEC_DIM, dtype=np.float32)
+        n = min(SMELL_VEC_DIM, smell_q.shape[0])
+        padded[:n] = smell_q[:n]
+        smell_q = padded
+
+    patch_thr = float(patch_match_min)
+    smell_thr = float(smell_match_min)
+    best_vision = -1.0
+    best_worst_cell = -1
+    vision_hits: list[tuple[float, float, int]] = []
+
+    for rec in valid:
+        per_cell = per_square_best_similarity(
+            patch_emb, [np.asarray(rec.patch_vec, dtype=np.float32)], feat_dim=feat_dim
+        )
+        if per_cell.size == 0:
+            continue
+        worst_i = int(np.argmin(per_cell))
+        patch_sim = float(per_cell[worst_i])
+        if patch_sim > best_vision:
+            best_vision = patch_sim
+            best_worst_cell = worst_i
+        if patch_sim < patch_thr:
+            continue
+
+        stored_smell = np.asarray(rec.smell_vec, dtype=np.float32).reshape(-1)
+        if (not smell_enabled) or float(np.linalg.norm(stored_smell)) < 1e-6:
+            smell_sim = 1.0
+            smell_ok = True
+        else:
+            smell_sim = cosine_similarity(smell_q, stored_smell)
+            smell_ok = smell_sim >= smell_thr
+        vision_hits.append((patch_sim, smell_sim, worst_i))
+        if smell_ok:
+            out.empty = False
+            out.vision_miss = False
+            out.smell_miss = False
+            out.patch_sim = patch_sim
+            out.smell_sim = float(smell_sim)
+            out.worst_cell = worst_i
+            out.reason = "history_hit"
+            return out
+
+    out.empty = False
+    out.patch_sim = float(best_vision) if best_vision >= 0.0 else 0.0
+    out.worst_cell = int(best_worst_cell)
+    if not vision_hits:
+        out.vision_miss = True
+        out.smell_miss = False
+        out.smell_sim = 1.0
+        out.reason = "novel_vs_patches"
+        return out
+
+    out.vision_miss = False
+    out.smell_miss = True
+    out.smell_sim = float(max(s for _, s, _ in vision_hits))
+    out.patch_sim = float(max(p for p, _, _ in vision_hits))
+    out.worst_cell = int(max(vision_hits, key=lambda t: t[0])[2])
+    out.reason = "novel_vs_smell"
+    return out
+
+
+@dataclass
+class JointMatch:
+    """L1 history check: joint neighbor pool, cue-column familiarity."""
+
+    empty: bool = True
+    miss: bool = True
+    best_sim: float = 0.0
+    column: str = "patches"
+    reason: str = "empty_joint_stm"
+
+
+def cue_l1_column(cue: str) -> str:
+    """Map interrupt cue → STM column compared at L1 (after joint retrieval)."""
+    if cue == "smell_novelty":
+        return "smell"
+    if cue in ("sugar", "bitter"):
+        # Taste still force-misses later; column unused for arming.
+        return "sensors"
+    # visual_novelty, new_stimulus, and unknown → patches
+    return "patches"
+
+
+def _pad_to(vec: np.ndarray | None, dim: int) -> np.ndarray:
+    if vec is None:
+        return np.zeros(dim, dtype=np.float32)
+    a = np.asarray(vec, dtype=np.float32).reshape(-1)
+    if a.shape[0] == dim:
+        return a
+    out = np.zeros(dim, dtype=np.float32)
+    n = min(dim, a.shape[0])
+    out[:n] = a[:n]
+    return out
+
+
+def match_joint_l1_stm(
+    memory: ShortTermMemory,
+    joint_emb: np.ndarray,
+    *,
+    cue: str,
+    patch_emb: np.ndarray | None,
+    smell_emb: np.ndarray | None,
+    sensors_emb: np.ndarray | None,
+    fly_id: str,
+    patch_match_min: float,
+    smell_match_min: float,
+    sensors_match_min: float,
+    top_k: int = 8,
+) -> JointMatch:
+    """L1: retrieve top-k by joint_vec, then compare only the cue-triggering column.
+
+    L2 whole-joint familiarity is deferred — retrieval stays joint, gate is column-local.
+    """
+    neighbors = memory.similar_by(
+        np.asarray(joint_emb, dtype=np.float32),
+        modality="joint",  # type: ignore[arg-type]
+        fly_id=fly_id,
+        top_k=max(1, int(top_k)),
+    )
+    out = JointMatch()
+    column = cue_l1_column(cue)
+    out.column = column
+
+    col_attr = {
+        "patches": "patch_vec",
+        "smell": "smell_vec",
+        "sensors": "sensors_vec",
+    }[column]
+    col_dim = {
+        "patches": PATCH_VEC_DIM,
+        "smell": SMELL_VEC_DIM,
+        "sensors": SENSORS_VEC_DIM,
+    }[column]
+    match_min = {
+        "patches": float(patch_match_min),
+        "smell": float(smell_match_min),
+        "sensors": float(sensors_match_min),
+    }[column]
+    query = {
+        "patches": _pad_to(patch_emb, PATCH_VEC_DIM),
+        "smell": _pad_to(smell_emb, SMELL_VEC_DIM),
+        "sensors": _pad_to(sensors_emb, SENSORS_VEC_DIM),
+    }[column]
+
+    best = 0.0
+    any_joint = False
+    any_col = False
+    for n in neighbors:
+        jv = np.asarray(n.joint_vec, dtype=np.float32).reshape(-1)
+        if float(np.linalg.norm(jv)) < 1e-6:
+            continue
+        any_joint = True
+        stored = _pad_to(getattr(n, col_attr), col_dim)
+        if float(np.linalg.norm(stored)) < 1e-6:
+            continue
+        if float(np.linalg.norm(query)) < 1e-6:
+            continue
+        any_col = True
+        best = max(best, cosine_similarity(query, stored))
+
+    if not any_joint:
+        return out
+
+    out.empty = False
+    out.best_sim = float(best)
+    novel_reason = {
+        "patches": "novel_vs_patches",
+        "smell": "novel_vs_smell",
+        "sensors": "novel_vs_sensors",
+    }[column]
+    if not any_col or best < match_min:
+        out.miss = True
+        out.reason = novel_reason
+    else:
+        out.miss = False
+        out.reason = "history_hit"
+    return out
+
+
+def match_joint_stm(
+    memory: ShortTermMemory,
+    joint_emb: np.ndarray,
+    *,
+    fly_id: str,
+    match_min: float,
+    top_k: int = 8,
+) -> JointMatch:
+    """Deprecated whole-joint compare; prefer ``match_joint_l1_stm``."""
+    neighbors = memory.similar_by(
+        np.asarray(joint_emb, dtype=np.float32),
+        modality="joint",  # type: ignore[arg-type]
+        fly_id=fly_id,
+        top_k=max(1, int(top_k)),
+    )
+    out = JointMatch()
+    out.column = "joint"
+    best = 0.0
+    any_valid = False
+    for n in neighbors:
+        jv = np.asarray(n.joint_vec, dtype=np.float32).reshape(-1)
+        if float(np.linalg.norm(jv)) < 1e-6:
+            continue
+        any_valid = True
+        best = max(best, cosine_similarity(joint_emb, jv))
+    if not any_valid:
+        return out
+    out.empty = False
+    out.best_sim = float(best)
+    if best >= float(match_min):
+        out.miss = False
+        out.reason = "history_hit"
+    else:
+        out.miss = True
+        out.reason = "novel_vs_joint"
+    return out
+
+
 def evaluate_stimulus_interrupt(
     *,
     memory: ShortTermMemory | None = None,
@@ -306,18 +811,23 @@ def evaluate_stimulus_interrupt(
     patch_cache: PatchGridHistoryCache | None = None,
     left_eye: np.ndarray | None = None,
     right_eye: np.ndarray | None = None,
+    smell_vec: np.ndarray | None = None,
+    sensors_vec: np.ndarray | None = None,
+    passive_smell: PassiveSmellGate | None = None,
+    now_ms: float | None = None,
 ) -> StimulusInterruptDecision:
     """Decide whether to arm a stimulus interrupt.
 
-    Default (``history_backend=patch_grid``):
-      1) 3×3 novelty / taste opens the candidate cue.
-      2) Each 3×3 square is matched to the closest stored square at the *same*
-         eye/row/col position across recent STM ``patch_vec`` grids.
-      3) Every square matching (worst square ≥ ``patch_match_min``) ⇒ not novel
-         (history_hit); a single unfamiliar square keeps the miss alive.
-      4) STM miss ⇒ may arm; on confirm the embedding is saved into STM.
+    Default (``history_backend=joint``):
+      0) Passive smell (cheap, in-memory) gates the STM smell probe, and a
+         no-cue step returns before any STM query.
+      1) Taste / visual / STM smell-novelty opens the candidate cue.
+      2) Build L2-block-normalized joint(patch, smell, sensors).
+      3) L1: retrieve top-k by joint_vec, then compare only the cue column.
+      4) STM miss ⇒ may arm; on confirm patch+smell+sensors+joint are saved.
+         (L2 whole-joint familiarity deferred.)
     """
-    del patch_cache  # local cache no longer gates; STM is the durable history
+    del patch_cache
     out = StimulusInterruptDecision()
     if not config.enabled:
         out.reason = "disabled"
@@ -326,6 +836,15 @@ def evaluate_stimulus_interrupt(
         out.reason = "cooldown"
         return out
 
+    smell_emb: np.ndarray | None = None
+    if smell_vec is not None:
+        smell_emb = np.asarray(smell_vec, dtype=np.float32).reshape(-1).copy()
+        if smell_emb.shape[0] != SMELL_VEC_DIM:
+            padded = np.zeros(SMELL_VEC_DIM, dtype=np.float32)
+            n = min(SMELL_VEC_DIM, smell_emb.shape[0])
+            padded[:n] = smell_emb[:n]
+            smell_emb = padded
+
     candidate, cue = has_candidate_cue(
         signals=signals,
         visual_novelty=visual_novelty,
@@ -333,15 +852,98 @@ def evaluate_stimulus_interrupt(
         config=config,
         stimulus_thresholds=stimulus_thresholds,
     )
+    smell_cue_sim = 1.0
+    if (not candidate) and bool(config.smell_enabled):
+        probe = True
+        if passive_smell is not None and bool(config.passive_smell_enabled):
+            sample = passive_smell.observe(
+                smell_emb,
+                step=int(step),
+                now_ms=float(now_ms) if now_ms is not None else time.monotonic() * 1000.0,
+                # Sub-cue visual motion still refreshes smell; the cue-level
+                # threshold would already have opened a candidate above.
+                visual_novel=bool(new_stimulus)
+                or float(visual_novelty) >= 0.5 * float(config.min_visual_novelty),
+            )
+            probe = bool(sample.active)
+            out.passive_smell_changed = bool(sample.changed)
+            out.passive_smell_delta = float(sample.delta)
+            out.passive_smell_reason = sample.reason
+        if probe:
+            out.smell_probe_ran = True
+            novel_smell, smell_cue_sim, _ = smell_novelty_vs_stm(
+                memory,
+                smell_emb,
+                fly_id=fly_id,
+                match_min=float(config.smell_match_min),
+                top_k=int(config.smell_neighbors),
+            )
+            if novel_smell:
+                candidate = True
+                cue = "smell_novelty"
     out.candidate = candidate
     out.cue = cue
 
-    backend = str(config.history_backend or "patch_grid").lower()
+    backend = str(config.history_backend or "joint").lower()
+    if not candidate and backend == "joint":
+        # No cue ⇒ nothing to compare against history; skip the joint STM query.
+        out.reason = "no_cue"
+        out.modality_scores = {"smell_cue": float(smell_cue_sim)}
+        return out
+
     miss = False
     empty = False
     patch_emb: np.ndarray | None = None
+    sensors_emb: np.ndarray | None = None
+    joint_emb: np.ndarray | None = None
+    match_reason = ""
 
-    if backend == "patch_grid":
+    if sensors_vec is not None:
+        sensors_emb = np.asarray(sensors_vec, dtype=np.float32).reshape(-1).copy()
+    elif parts is not None:
+        sensors_emb = np.asarray(parts.sensors_vec, dtype=np.float32).reshape(-1).copy()
+
+    if backend == "joint":
+        if left_eye is not None and right_eye is not None:
+            patch_emb = stereo_patch_embedding(
+                left_eye,
+                right_eye,
+                grid_rows=int(config.patch_grid_rows),
+                grid_cols=int(config.patch_grid_cols),
+            )
+            assert patch_emb.shape[0] == PATCH_VEC_DIM
+        if patch_emb is not None and memory is not None:
+            joint_emb = build_interrupt_joint_vec(patch_emb, smell_emb, sensors_emb)
+            matched = match_joint_l1_stm(
+                memory,
+                joint_emb,
+                cue=cue or "visual_novelty",
+                patch_emb=patch_emb,
+                smell_emb=smell_emb,
+                sensors_emb=sensors_emb,
+                fly_id=fly_id,
+                patch_match_min=float(config.patch_match_min),
+                smell_match_min=float(config.smell_match_min),
+                sensors_match_min=float(config.sensors_match_min),
+                top_k=int(config.joint_neighbors),
+            )
+            empty = bool(matched.empty)
+            miss = bool(matched.miss)
+            out.best_similarity = float(matched.best_sim)
+            out.modality_scores = {
+                matched.column: float(matched.best_sim),
+                "smell_cue": float(smell_cue_sim),
+            }
+            match_reason = matched.reason
+            out.novel_modalities = [matched.column] if miss else []
+        else:
+            empty = True
+            miss = True
+            out.best_similarity = 0.0
+            out.modality_scores = {}
+            out.novel_modalities = [cue_l1_column(cue or "visual_novelty")]
+            match_reason = "empty_joint_stm"
+    elif backend == "patch_grid":
         if left_eye is not None and right_eye is not None and memory is not None:
             patch_emb = stereo_patch_embedding(
                 left_eye,
@@ -350,25 +952,35 @@ def evaluate_stimulus_interrupt(
                 grid_cols=int(config.patch_grid_cols),
             )
             assert patch_emb.shape[0] == PATCH_VEC_DIM
-            sim, empty, worst_cell = best_patch_stm_similarity(
+            matched = match_patch_smell_stm(
                 memory,
                 patch_emb,
+                smell_emb,
                 fly_id=fly_id,
+                patch_match_min=float(config.patch_match_min),
+                smell_match_min=float(config.smell_match_min),
+                smell_enabled=bool(config.smell_enabled),
                 top_k=int(config.patch_neighbors),
                 feat_dim=PATCH_CELL_FEAT_DIM,
             )
-            out.best_similarity = float(sim)
-            out.patch_worst_cell = int(worst_cell)
-            out.modality_scores = {"patches": float(sim)}
-            thr = float(config.patch_match_min)
-            if empty:
+            empty = bool(matched.empty)
+            out.best_similarity = float(matched.patch_sim)
+            out.patch_worst_cell = int(matched.worst_cell)
+            out.modality_scores = {
+                "patches": float(matched.patch_sim),
+                "smell": float(matched.smell_sim),
+            }
+            match_reason = matched.reason
+            if matched.empty:
                 miss = True
                 out.novel_modalities = ["patches"]
-            elif sim < thr:
+            elif matched.vision_miss:
                 miss = True
                 out.novel_modalities = ["patches"]
+            elif matched.smell_miss:
+                miss = True
+                out.novel_modalities = ["smell"]
             else:
-                # STM already has this 3×3 grid — not novelty; do not cache/save.
                 miss = False
                 out.novel_modalities = []
         else:
@@ -377,6 +989,7 @@ def evaluate_stimulus_interrupt(
             out.best_similarity = 0.0
             out.modality_scores = {}
             out.novel_modalities = ["patches"]
+            match_reason = "empty_patch_stm"
     else:
         if memory is None or parts is None:
             empty = True
@@ -418,7 +1031,7 @@ def evaluate_stimulus_interrupt(
         out.reason = "crisis_skip"
         return out
 
-    # Taste always counts as novel history (vision STM patches are vision-only).
+    # Taste always counts as novel history.
     if cue in ("sugar", "bitter"):
         miss = True
         out.novel_modalities = list(dict.fromkeys([*out.novel_modalities, cue]))
@@ -430,10 +1043,23 @@ def evaluate_stimulus_interrupt(
 
     out.should_arm = True
     out.patch_embedding = patch_emb
-    if empty:
-        out.reason = "empty_patch_stm" if backend == "patch_grid" else "empty_stm"
+    out.smell_embedding = smell_emb
+    out.sensors_embedding = sensors_emb
+    out.joint_embedding = joint_emb
+    if backend == "joint":
+        if empty:
+            out.reason = "empty_joint_stm"
+        else:
+            out.reason = match_reason or "novel_vs_joint"
+    elif backend == "patch_grid":
+        if empty:
+            out.reason = "empty_patch_stm"
+        elif match_reason == "novel_vs_smell":
+            out.reason = "novel_vs_smell"
+        else:
+            out.reason = "novel_vs_patches"
     else:
-        out.reason = "novel_vs_patches" if backend == "patch_grid" else "novel_vs_stm"
+        out.reason = "empty_stm" if empty else "novel_vs_stm"
     return out
 
 
