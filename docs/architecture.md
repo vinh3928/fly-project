@@ -95,15 +95,15 @@ novelty**: a non-zero antenna `smell_vec` that is unfamiliar versus recent STM
 smell neighbors opens `smell_novelty` on its own.
 
 **Passive smell (cheap gate).** The STM smell probe is a pgvector query, so
-running it every step dominated step latency. `PassiveSmellGate` now sits in
-front of it: it samples the antenna vector every `passive_smell_interval` steps
-(default 4), compares it in memory against the last stored reading, and never
-touches STM. The expensive probe only runs when the passive reading changed by
-`passive_smell_change_min`, vision saw novelty, or `passive_smell_refresh_ms`
-(default 500 ms) elapsed since the last probe. The passive baseline is stored
-only on a detected change, so slow drift still accumulates into a trip. A step
-with no candidate cue now returns before any joint STM query, so ordinary
-locomotion steps are DB-free.
+running it every step dominated step latency. `PassiveSmellGate` (a thin
+wrapper over the generic `ModalChangeGate`) samples the antenna vector every
+`passive_smell_interval` steps, compares it in memory against the last stored
+reading, and never touches STM. Unchanged samples are **L1 hits** — the
+expensive path stays closed. The expensive probe only runs when the passive
+reading changed by `passive_smell_change_min`, vision saw novelty, or
+`passive_smell_refresh_ms` (default 500 ms) elapsed since the last probe.
+`ModalChangeGate` is modality-agnostic (default `ttl_seconds=10`): the same
+sample→diff→stay-L1 pattern can gate vision patches, sensors, or smell.
 
 History is one joint embedding per interrupt row (saved when the freeze clears):
 
@@ -149,12 +149,18 @@ previous place; otherwise **create** a new Place even if a visual twin exists
 `flybrain.memory.place_graph`.
 
 Live mind upserts the current stereo `patch_vec` into the place graph each step.
-The first sighting creates a Place with four Wall details (and optional chemical
-`items` on place props). **Sensor feedback** (`MappedSensorFeedback`) is where
-decay lives: raw eye/antenna/taste transducers stay honest (`*_raw`), but once
-an item is mapped on the matched Place, the *reported* channel
-(`wall_hazard`, `odor`, `bitter`, …) is scaled by
-`max(floor, 1 - strength * familiarity)` before affect and thinking run.
+The first sighting creates a Place with four Wall details. **Sensor + smell
+readings are correlated onto that vision Place** (not separate place keys):
+`props.label` (e.g. `puddle`), `props.senses.bitter.value = 0.49`, and optional
+`props.smell_vec`. Neo4j also links `(:Place)-[:HAS_SENSE]->(:Sense)`.
+`ModalChangeGate` (10s / per-step sample-diff) keeps unchanged smell/sensor
+snapshots on L1 so Neo4j is not rewritten every tick.
+
+**Sensor feedback** (`MappedSensorFeedback`) is where decay lives: raw
+eye/antenna/taste transducers stay honest (`*_raw`), but once an item is mapped
+on the matched Place, the *reported* channel (`wall_hazard`, `odor`, `bitter`, …)
+is scaled by `max(floor, 1 - strength * familiarity)` before affect and thinking
+run.
 
 Neo4j traffic is buffered by a **two-layer place cache** (`CachedPlaceGraph`):
 

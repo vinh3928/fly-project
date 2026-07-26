@@ -99,10 +99,12 @@ class StimulusInterruptConfig:
     judgement_confirmations: int = 2
     # Passive smell: cheap always-on antenna watcher that gates the expensive
     # STM smell probe (which used to run every step and dominated step latency).
+    # Backed by the generic ModalChangeGate (reusable for vision / sensors).
     passive_smell_enabled: bool = True
     passive_smell_interval: int = 4  # sample antenna every N steps
     passive_smell_change_min: float = 0.05  # per-channel delta counting as change
     passive_smell_refresh_ms: float = 500.0  # forced probe cadence
+    passive_smell_ttl_seconds: float = 0.0  # optional wall-clock sample cadence
     modalities: tuple[str, ...] = DEFAULT_MODALITIES
 
     @classmethod
@@ -155,23 +157,39 @@ class PassiveSmellSample:
     active: bool = False
     delta: float = 0.0
     reason: str = ""
+    l1_hit: bool = False
 
 
 @dataclass
 class PassiveSmellGate:
-    """Cheap always-on smell watcher that gates the STM smell probe.
+    """Smell-specialized wrapper around :class:`ModalChangeGate`.
 
-    Samples the antenna vector every ``interval`` steps and compares it to the
+    Samples the antenna vector on a step/time cadence and compares it to the
     last stored reading in memory only — it never queries or writes STM. The
     expensive smell-novelty probe opens when the reading changed, vision saw
-    novelty, or ``refresh_ms`` elapsed since the last probe.
+    novelty, or ``refresh_ms`` elapsed since the last probe. Unchanged samples
+    are L1 hits (``l1_hit=True``).
     """
 
     interval: int = 4
     change_min: float = 0.05
     refresh_ms: float = 500.0
-    _last: np.ndarray | None = None
-    _last_active_ms: float | None = None
+    ttl_seconds: float = 0.0  # 0 → step-interval only (live default via config)
+    _gate: Any = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from flybrain.sensors.modal_gate import ModalChangeGate
+
+        self._gate = ModalChangeGate(
+            modality="smell",
+            ttl_seconds=float(self.ttl_seconds),
+            step_interval=max(1, int(self.interval)),
+            change_min=float(self.change_min),
+            refresh_seconds=float(self.refresh_ms) / 1000.0,
+            compare="max_abs",
+            dim=int(SMELL_VEC_DIM),
+            first_nonzero_is_change=True,
+        )
 
     @classmethod
     def from_config(cls, config: StimulusInterruptConfig) -> PassiveSmellGate:
@@ -179,11 +197,17 @@ class PassiveSmellGate:
             interval=max(1, int(config.passive_smell_interval)),
             change_min=float(config.passive_smell_change_min),
             refresh_ms=float(config.passive_smell_refresh_ms),
+            ttl_seconds=float(getattr(config, "passive_smell_ttl_seconds", 0.0) or 0.0),
         )
 
     def reset(self) -> None:
-        self._last = None
-        self._last_active_ms = None
+        if self._gate is not None:
+            self._gate.reset()
+
+    @property
+    def _last(self) -> np.ndarray | None:
+        """Back-compat for tests that inspect the L1 baseline."""
+        return None if self._gate is None else self._gate._last
 
     def observe(
         self,
@@ -193,34 +217,21 @@ class PassiveSmellGate:
         now_ms: float,
         visual_novel: bool = False,
     ) -> PassiveSmellSample:
-        out = PassiveSmellSample()
-        if int(step) % max(1, int(self.interval)) == 0:
-            out.sampled = True
-            cur = _pad_to(smell_vec, SMELL_VEC_DIM)
-            if self._last is None:
-                # First reading only counts as change when something is there.
-                out.changed = bool(float(np.max(np.abs(cur))) > 1e-6)
-                out.delta = float(np.max(np.abs(cur)))
-            else:
-                out.delta = float(np.max(np.abs(cur - self._last)))
-                out.changed = out.delta >= float(self.change_min)
-            # Store only on change so slow drift accumulates against the last
-            # meaningful reading instead of resetting every sample.
-            if out.changed or self._last is None:
-                self._last = cur.copy()
-        due = self._last_active_ms is None or (
-            float(now_ms) - float(self._last_active_ms)
-        ) >= float(self.refresh_ms)
-        out.active = bool(out.changed or visual_novel or due)
-        if out.changed:
-            out.reason = "smell_change"
-        elif visual_novel:
-            out.reason = "vision_novelty"
-        elif due:
-            out.reason = "timer"
-        if out.active:
-            self._last_active_ms = float(now_ms)
-        return out
+        sample = self._gate.observe(
+            smell_vec,
+            now_ms=float(now_ms),
+            step=int(step),
+            force_open=bool(visual_novel),
+            force_reason="vision_novelty",
+        )
+        return PassiveSmellSample(
+            sampled=bool(sample.sampled),
+            changed=bool(sample.changed),
+            active=bool(sample.active),
+            delta=float(sample.delta),
+            reason=str(sample.reason),
+            l1_hit=bool(sample.l1_hit),
+        )
 
 
 @dataclass

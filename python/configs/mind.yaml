@@ -297,11 +297,13 @@ stimulus_interrupt:
   conditioning_hit_threshold: 3
   judgement_confirmations: 2
   # Passive smell: cheap in-memory antenna watcher (no STM touch) that gates the
-  # STM smell probe. Without it that probe ran every step and dominated latency.
+  # STM smell probe. Backed by generic ModalChangeGate (reusable for vision /
+  # sensors with ttl_seconds=10 L1 sample-and-diff).
   passive_smell_enabled: true
   passive_smell_interval: 4       # sample antenna every N steps
   passive_smell_change_min: 0.05  # per-channel delta that counts as a change
   passive_smell_refresh_ms: 500.0 # forced probe cadence when nothing changes
+  passive_smell_ttl_seconds: 0.0  # optional wall-clock cadence (0 = step-only)
   # Legacy STM-CNN backend knobs (only when history_backend: stm):
   history_relative: true
   history_baseline_window: 40

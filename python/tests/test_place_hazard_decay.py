@@ -24,15 +24,18 @@ def test_format_live_step_log_includes_place() -> None:
             "vision_cues": {"wall_hazard": 0.4},
             "place": {
                 "place_id": 2,
+                "label": "puddle",
                 "is_new": False,
                 "similarity": 0.97,
                 "mean_familiarity": 0.36,
                 "wall_hazard_raw": 0.8,
+                "senses": {"bitter": {"value": 0.49}},
             },
         },
     )
     assert "wall=0.40" in line
-    assert "place=2(sim=0.97,fam=0.36,raw=0.80)" in line
+    assert "place=puddle:2(sim=0.97,fam=0.36,raw=0.80)" in line
+    assert "smells(bitter=0.49)" in line
 
 
 def test_attenuate_mapped_reading_math() -> None:

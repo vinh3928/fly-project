@@ -916,7 +916,8 @@ class Neo4jPlaceGraph:
 
     Data model:
 
-    ``(:Place)-[:HAS_WALL]->(:Wall)`` for node details.
+    ``(:Place)-[:HAS_WALL]->(:Wall)`` for chamber walls.
+    ``(:Place)-[:HAS_SENSE]->(:Sense)`` for vision-correlated smell/taste details.
     ``(:Place)-[:ADJACENT]->(:Place)`` for path/reference transitions.
     """
 
@@ -1182,6 +1183,7 @@ class Neo4jPlaceGraph:
             ON CREATE SET p.created_at = $created_at
             SET p.fly_id = $fly_id,
                 p.view_vec = $view_vec,
+                p.label = $label,
                 p.props_json = $props_json,
                 p.updated_at = $updated_at
             WITH p
@@ -1200,12 +1202,32 @@ class Neo4jPlaceGraph:
                 "place_id": place_id,
                 "fly_id": fly_id,
                 "view_vec": np.asarray(view_vec, dtype=np.float32).tolist(),
+                "label": str((props or {}).get("label") or "place"),
                 "props_json": json.dumps(props),
                 "created_at": created_at or now,
                 "updated_at": now,
                 "walls": wall_rows,
             },
         )
+        # Vision-correlated sensor details as Sense nodes.
+        from flybrain.sensors.place_senses import sense_rows_for_neo4j
+
+        sense_rows = sense_rows_for_neo4j(place_id, (props or {}).get("senses"))
+        if sense_rows:
+            self._query(
+                """
+                MATCH (p:Place {place_id: $place_id})
+                UNWIND $senses AS sense
+                MERGE (s:Sense {sense_id: sense.sense_id})
+                SET s.kind = sense.kind,
+                    s.value = sense.value,
+                    s.last_seen_step = sense.last_seen_step
+                MERGE (p)-[r:HAS_SENSE]->(s)
+                SET r.value = sense.value,
+                    r.last_seen_step = sense.last_seen_step
+                """,
+                {"place_id": place_id, "senses": sense_rows},
+            )
         saved = self.get(place_id)
         if saved is None:  # pragma: no cover - indicates DB write/read inconsistency
             raise RuntimeError(f"Neo4j failed to return saved place {place_id}")

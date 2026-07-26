@@ -133,13 +133,22 @@ def format_live_step_log(
     place = info.get("place") if isinstance(info.get("place"), dict) else None
     place_s = ""
     if place and place.get("place_id") is not None:
+        label = place.get("label") or "place"
         place_s = (
-            f" place={place.get('place_id')}"
+            f" place={label}:{place.get('place_id')}"
             f"{'*' if place.get('is_new') else ''}"
             f"(sim={float(place.get('similarity', 0.0)):.2f}"
             f",fam={float(place.get('mean_familiarity', 0.0)):.2f}"
             f",raw={float(place.get('wall_hazard_raw', wall or 0.0)):.2f})"
         )
+        senses = place.get("senses") if isinstance(place.get("senses"), dict) else {}
+        bitter = senses.get("bitter") if isinstance(senses, dict) else None
+        if isinstance(bitter, dict) and bitter.get("value") is not None:
+            place_s += f" smells(bitter={float(bitter['value']):.2f})"
+        elif isinstance(senses, dict):
+            odor = senses.get("odor") if isinstance(senses.get("odor"), dict) else None
+            if odor and odor.get("value") is not None:
+                place_s += f" smells(odor={float(odor['value']):.2f})"
     bearing = cues.get("target_bearing") if cues else None
     bearing_s = f" bear={float(bearing):+.2f}" if bearing is not None else ""
     cur = info.get("curiosity_gated")
@@ -874,6 +883,7 @@ class LiveMindPipeline:
             signal_payload=pre_signal,
             info=place_info,
             cues=cues,
+            smell_vec=np.asarray(getattr(sensory, "smell_vec", []), dtype=np.float32),
         )
 
         # Embeddings / STM stay on mapped-reported senses; devil sees heightened copy.
@@ -1172,6 +1182,7 @@ class LiveMindPipeline:
         signal_payload: dict[str, Any],
         info: dict[str, Any],
         cues: VisionNavCues | None = None,
+        smell_vec: np.ndarray | None = None,
     ) -> MappedSensorReport | None:
         """Sensor feedback: map place in Neo4j, report known items at decayed rates."""
         cfg = self.place_graph_config
@@ -1193,10 +1204,16 @@ class LiveMindPipeline:
         if left_eye is not None and right_eye is not None:
             view = stereo_patch_embedding(left_eye, right_eye)
 
+        smell = smell_vec
+        if smell is None and "smell_vec" in signal_payload:
+            smell = np.asarray(signal_payload.get("smell_vec"), dtype=np.float32)
+
         report = self.mapped_sensors.sense(
             raw=raw,
             view_vec=view,
+            smell_vec=smell,
             step=int(self._step),
+            now_ms=float(info.get("now_ms") or self._step),
         )
         for channel, reading in report.readings.items():
             signal_payload[channel] = float(reading.reported)
@@ -1205,6 +1222,9 @@ class LiveMindPipeline:
             signal_payload["place_id"] = report.place.id
             signal_payload["place_mapped"] = not report.is_new
             signal_payload["place_familiarity"] = float(report.mean_familiarity)
+            signal_payload["place_label"] = str(
+                (report.place.props or {}).get("label") or report.label
+            )
 
         place_info = report.to_place_info()
         info["place"] = place_info
@@ -1518,6 +1538,7 @@ class LiveMindPipeline:
             signal_payload=signal_payload,
             info=place_info,
             cues=cues,
+            smell_vec=np.asarray(getattr(sensory, "smell_vec", []), dtype=np.float32),
         )
         signal_payload = self._signals_after_mapped_feedback(
             sensory, visual_nov=visual_nov, place_info=place_info
@@ -1752,6 +1773,7 @@ class LiveMindPipeline:
                     signal_payload=signal_payload,
                     info=info,
                     cues=cues,
+                    smell_vec=np.asarray(getattr(sensory, "smell_vec", []), dtype=np.float32),
                 )
                 if info.get("place"):
                     self._last_mind_info["place"] = info["place"]
