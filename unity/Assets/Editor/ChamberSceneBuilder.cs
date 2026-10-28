@@ -86,11 +86,13 @@ namespace FlySimulation.EditorTools
                 0.002f,
                 ExperimentConfiguration.SourcePuddleDiameter);
             ApplyMaterial(sugar, sugarMat);
+            FitPuddleCollider(sugar);
             var sugarSource = sugar.AddComponent<ChemicalSource>();
             sugarSource.Configure(
                 ChemicalSource.SourceType.Sugar,
                 1f,
-                ExperimentConfiguration.DefaultChemicalSpread);
+                ExperimentConfiguration.SugarPlumeRadius,
+                ExperimentConfiguration.SugarPlumeEdgeFraction);
             EnsureSurface(sugar, new ChemicalChannels { Sugar = 1f });
 
             var bitter = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
@@ -102,6 +104,7 @@ namespace FlySimulation.EditorTools
                 0.002f,
                 ExperimentConfiguration.SourcePuddleDiameter);
             ApplyMaterial(bitter, bitterMat);
+            FitPuddleCollider(bitter);
             var bitterSource = bitter.AddComponent<ChemicalSource>();
             bitterSource.Configure(
                 ChemicalSource.SourceType.Bitter,
@@ -454,28 +457,17 @@ namespace FlySimulation.EditorTools
             SetPrivate(rightEye, "isLeftEye", false);
             SetPrivate(rightEye, "grayscale", false);
 
-            var leftAntennaGo = new GameObject("LeftAntenna");
-            leftAntennaGo.transform.SetParent(head.transform, false);
-            leftAntennaGo.transform.localPosition = new Vector3(-0.0015f, 0.003f, 0.005f);
-            var leftAntenna = leftAntennaGo.AddComponent<AntennaOdorSensor>();
-            leftAntenna.BindField(field);
+            // Antennae on an unscaled mount at the head: under Head (scaled 0.009) their
+            // spacing shrank ~100× and left/right smell could not give a bearing.
+            var antennaMount = new GameObject("AntennaMount");
+            antennaMount.transform.SetParent(fly.transform, false);
+            antennaMount.transform.localPosition = head.transform.localPosition;
 
-            var rightAntennaGo = new GameObject("RightAntenna");
-            rightAntennaGo.transform.SetParent(head.transform, false);
-            rightAntennaGo.transform.localPosition = new Vector3(0.0015f, 0.003f, 0.005f);
-            var rightAntenna = rightAntennaGo.AddComponent<AntennaOdorSensor>();
-            rightAntenna.BindField(field);
+            var leftAntenna = BuildAntenna(antennaMount.transform, isLeft: true, field, flyMat);
+            var rightAntenna = BuildAntenna(antennaMount.transform, isLeft: false, field, flyMat);
 
-            var proboscisGo = new GameObject("Proboscis");
-            proboscisGo.transform.SetParent(head.transform, false);
-            var tip = new GameObject("Tip");
-            tip.transform.SetParent(proboscisGo.transform, false);
-            var tipCollider = tip.AddComponent<SphereCollider>();
-            tipCollider.isTrigger = true;
-            tipCollider.radius = 0.002f;
-            tip.AddComponent<Rigidbody>().isKinematic = true;
-            var proboscis = proboscisGo.AddComponent<ProboscisSensor>();
-            SetPrivate(proboscis, "tip", tip.transform);
+            var proboscis = BuildProboscis(antennaMount.transform, floorTop, accentMat);
+            fly.AddComponent<FlyHeadPose>().Bind(antennaMount.transform, head.transform, proboscis);
 
             var body = fly.AddComponent<FlyBodyController>();
             SetPrivate(body, "rootBody", bodyRb);
@@ -657,6 +649,74 @@ namespace FlySimulation.EditorTools
             SetPrivate(controller, "foot", foot.transform);
             controller.ApplyStandingPose();
             return controller;
+        }
+
+        /// <summary>Visible stalk from head to tip, club at the tip; the sensor samples at the tip.</summary>
+        private static AntennaOdorSensor BuildAntenna(
+            Transform mount,
+            bool isLeft,
+            ChemicalFieldSystem field,
+            Material material)
+        {
+            string side = isLeft ? "Left" : "Right";
+            Vector3 basePos = AntennaOdorSensor.BaseOffset(isLeft);
+            Vector3 tipPos = AntennaOdorSensor.MountOffset(isLeft);
+
+            var stalk = new GameObject(side + "AntennaStalk");
+            stalk.transform.SetParent(mount, false);
+            stalk.transform.localPosition = basePos;
+            // AddLimbMesh grows along local -Y.
+            stalk.transform.localRotation = Quaternion.FromToRotation(Vector3.down, tipPos - basePos);
+            AddLimbMesh(stalk.transform, AntennaOdorSensor.StalkLength, AntennaOdorSensor.StalkRadius, material);
+            SetLayerRecursive(stalk, FlyEyeCamera.SelfLayer);
+
+            var tip = new GameObject(side + "Antenna");
+            tip.transform.SetParent(mount, false);
+            tip.transform.localPosition = tipPos;
+            var club = CreateSegment(tip.transform, "Club", Vector3.zero, AntennaOdorSensor.ClubRadius * 2f, material);
+            SetLayerRecursive(club, FlyEyeCamera.SelfLayer);
+            var sensor = tip.AddComponent<AntennaOdorSensor>();
+            sensor.BindField(field);
+            return sensor;
+        }
+
+        /// <summary>
+        /// Proboscis on the unscaled head mount, extending straight down. The fly stands
+        /// on long legs (~3 cm), so reach is sized from the fully lowered head to the floor.
+        /// </summary>
+        private static ProboscisSensor BuildProboscis(Transform mount, float floorTop, Material material)
+        {
+            var proboscisGo = new GameObject("Proboscis");
+            proboscisGo.transform.SetParent(mount, false);
+            var baseOnMount = new Vector3(0f, -0.003f, 0.004f);
+            proboscisGo.transform.localPosition = baseOnMount;
+            // Local +Z (extension axis) → world down; FlyHeadPose keeps it vertical when the head pitches.
+            proboscisGo.transform.localRotation = Quaternion.Euler(ProboscisSensor.BodyPitchDegrees, 0f, 0f);
+
+            var tip = new GameObject("Tip");
+            tip.transform.SetParent(proboscisGo.transform, false);
+            var tipCollider = tip.AddComponent<SphereCollider>();
+            tipCollider.isTrigger = true;
+            tipCollider.radius = ProboscisSensor.TipRadius;
+            tip.AddComponent<Rigidbody>().isKinematic = true;
+            var tipMesh = CreateSegment(tip.transform, "TipMesh", Vector3.zero, ProboscisSensor.TipRadius, material);
+            SetLayerRecursive(tipMesh, FlyEyeCamera.SelfLayer);
+
+            var proboscis = proboscisGo.AddComponent<ProboscisSensor>();
+            float drop = proboscisGo.transform.position.y - floorTop
+                         - FlyHeadPose.FullLowerExtraDrop(baseOnMount);
+            proboscis.Configure(tip.transform, ProboscisSensor.MaxExtensionForDrop(drop));
+            tip.AddComponent<ProboscisTipContact>().Bind(proboscis);
+            return proboscis;
+        }
+
+        private static void SetLayerRecursive(GameObject go, int layer)
+        {
+            go.layer = layer;
+            foreach (Transform child in go.transform)
+            {
+                SetLayerRecursive(child.gameObject, layer);
+            }
         }
 
         private static GameObject CreateJoint(
@@ -916,6 +976,22 @@ namespace FlySimulation.EditorTools
             {
                 Debug.LogWarning($"Could not set tag '{tag}' on {go.name}: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Cylinder primitives get a CapsuleCollider, which a flat puddle scale turns into a
+        /// sphere; a box matching the disk bounds lets the proboscis touch the actual surface.
+        /// </summary>
+        private static void FitPuddleCollider(GameObject puddle)
+        {
+            var existing = puddle.GetComponent<Collider>();
+            if (existing != null)
+            {
+                UnityEngine.Object.DestroyImmediate(existing);
+            }
+
+            // Unity cylinder mesh: diameter 1, height 2 (local units).
+            puddle.AddComponent<BoxCollider>().size = new Vector3(1f, 2f, 1f);
         }
 
         private static void EnsureSurface(GameObject go, ChemicalChannels channels)

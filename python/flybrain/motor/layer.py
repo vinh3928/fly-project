@@ -46,6 +46,18 @@ def ensure_locomotion_floor(
     return g
 
 
+def orient_goal(
+    base: np.ndarray, forward: float, turn: float, proboscis: float | None = None
+) -> np.ndarray:
+    """Replace forward/turn (and optionally proboscis) of ``base``; height/frequency kept."""
+    g = clip_goal(base)
+    g[0] = float(np.clip(forward, -1.0, 1.0))
+    g[1] = float(np.clip(turn, -1.0, 1.0))
+    if proboscis is not None:
+        g[4] = float(np.clip(proboscis, 0.0, 1.0))
+    return g
+
+
 def goal_from_intent(intent: dict[str, Any] | None, action: np.ndarray | None = None) -> np.ndarray:
     """Build a motor goal from thinking intent / high-level action.
 
@@ -233,8 +245,12 @@ class MotorLayer:
             self.goal = ensure_locomotion_floor(goal, min_forward=self.config.min_forward)
         self._tracker.reset(self.goal)
 
-    def set_goal(self, goal: np.ndarray) -> None:
-        self.goal = ensure_locomotion_floor(goal, min_forward=self.config.min_forward)
+    def set_goal(self, goal: np.ndarray, *, allow_pivot: bool = False) -> None:
+        """Hold ``goal``; ``allow_pivot`` skips the forward floor so the body can turn in place."""
+        if allow_pivot:
+            self.goal = clip_goal(goal)
+        else:
+            self.goal = ensure_locomotion_floor(goal, min_forward=self.config.min_forward)
 
     def set_goal_from_intent(
         self, intent: dict[str, Any] | None, action: np.ndarray | None = None

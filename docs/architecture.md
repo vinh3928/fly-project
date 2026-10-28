@@ -44,12 +44,15 @@ It is **not** purely unsupervised learning.
 
 ## Vision representation follow-up
 
-The current 3×3 eye-patch representation is intentionally minimal. Each square
-stores only five features: mean R/G/B, luminance standard deviation, and one
-vertical-edge statistic. Across both eyes this produces the 90-dimensional STM
-`patch_vec` (`2 eyes × 9 squares × 5 features`).
+Each eye uses a **pointy-top hexagonal aperture** inscribed in the 64×64 RGB
+frame. Pixels outside the hex are masked to zero. The hex is subdivided into
+**6 triangles** by diagonals through the center (center → each vertex). Each
+triangle stores five features: mean R/G/B, luminance standard deviation, and one
+vertical-edge statistic. Across both eyes this produces the 60-dimensional STM
+`patch_vec` (`2 eyes × 6 facets × 5 features`). Older 90-d (3×3 square) STM /
+place rows should be treated as cold-start after upgrade (pad/truncate).
 
-When revisiting the eye/vision architecture, increase the per-square feature
+When revisiting the eye/vision architecture, increase the per-facet feature
 extraction before treating this representation as biologically or perceptually
 rich. Candidate additions include:
 
@@ -58,9 +61,9 @@ rich. Candidate additions include:
 - hue, saturation, opponent-color, and chromatic-gradient features
 - motion/optic-flow direction and magnitude
 - texture statistics, temporal change, and flicker
-- learned per-patch features trained with contrastive or predictive objectives
+- learned per-facet features trained with contrastive or predictive objectives
 
-Preserve independent left/right and per-square identity when expanding the
+Preserve independent left/right and per-facet identity when expanding the
 vector, and migrate the pgvector `patch_vec` dimension and existing STM rows
 together.
 
@@ -124,10 +127,10 @@ sample→diff→stay-L1 pattern can gate vision patches, sensors, or smell.
 
 History is one joint embedding per interrupt row (saved when the freeze clears):
 
-- `patch_vec` (90-d): stereo 3×3 continuous patch features
+- `patch_vec` (60-d): stereo hexagonal-eye triangular facet features
 - `smell_vec` (16-d): left+right antenna chemistry (`2 × 8` channels)
 - `sensors_vec` (192-d): body + chemical encoder features
-- `joint_vec` (298-d): `L2(concat(L2(patch), L2(smell), L2(sensors)))`
+- `joint_vec` (268-d): `L2(concat(L2(patch), L2(smell), L2(sensors)))`
 
 **L1 familiarity (current):** neighbor retrieval uses whole-vector cosine on
 `joint_vec` (top-k). Then only the column that triggered the cue is compared
@@ -140,7 +143,7 @@ Old rows without `joint_vec` are skipped (migration-safe). After clear, a
 ## Spatial place graph (mental map)
 
 Location memory is a **graph**, not conditioning string keys. A **place node** is
-the fly's picture of being in the chamber: a 90-d `view_vec` derived from stereo
+the fly's picture of being in the chamber: a 60-d `view_vec` derived from stereo
 `patch_vec`. Because patch features are non-negative, identity uses
 **mean-centered + L2-normalized** vectors (centered cosine / Pearson); raw
 cosine collapses unrelated views near 0.99. Default `match_min` is `0.97`.

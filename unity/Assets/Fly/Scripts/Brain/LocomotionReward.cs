@@ -10,9 +10,10 @@ namespace FlySimulation.Fly.Brain
         public const int GoalDim = 5;
 
         /// <summary>
-        /// Mind/Python turn: + = right. <see cref="Motors.FlyMotorController"/> turnBias: + = +Y yaw = left.
+        /// Mind/Python turn: + = right. <see cref="Motors.FlyMotorController"/> turnBias: + = +Y yaw,
+        /// which in Unity's left-handed, Y-up frame swings +Z (forward) toward +X (the fly's right).
         /// </summary>
-        public static float MindTurnToMotorBias(float mindTurn) => -mindTurn;
+        public static float MindTurnToMotorBias(float mindTurn) => mindTurn;
 
         public static float Compute(
             float[] goal,

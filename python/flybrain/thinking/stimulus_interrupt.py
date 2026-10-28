@@ -72,8 +72,8 @@ class StimulusInterruptConfig:
     smell_neighbors: int = 8
     # L1 patch-column threshold when cue is visual_novelty / new_stimulus.
     patch_match_min: float = 0.92
-    patch_grid_rows: int = 3
-    patch_grid_cols: int = 3
+    patch_grid_rows: int = 1  # legacy; hex facets use facet_count=6
+    patch_grid_cols: int = 6
     patch_neighbors: int = 8
     patch_cache_size: int = 48
     # L1 sensors-column threshold (future sensor cues).
@@ -254,7 +254,7 @@ class StimulusInterruptDecision:
     passive_smell_delta: float = 0.0
     passive_smell_reason: str = ""
     smell_probe_ran: bool = False
-    # Index (0..17) of the 3×3 square that matched STM worst; -1 if N/A.
+    # Index (0..11) of the hexagonal facet that matched STM worst; -1 if N/A.
     patch_worst_cell: int = -1
     # Stashed when arming so the confirmed interrupt can persist to STM.
     patch_embedding: np.ndarray | None = None
@@ -320,8 +320,8 @@ class PatchGridHistoryCache:
 
     cache_size: int = 48
     match_min: float = 0.92
-    grid_rows: int = 3
-    grid_cols: int = 3
+    grid_rows: int = 1
+    grid_cols: int = 6
 
     @classmethod
     def from_config(cls, config: StimulusInterruptConfig) -> PatchGridHistoryCache:
@@ -355,7 +355,7 @@ def build_interrupt_joint_vec(
 ) -> np.ndarray:
     """L2-normalize each modality block, concat, then L2-normalize the joint.
 
-    Equal block weight keeps 16-d smell from being buried by 90-d patch / 192-d sensors.
+    Equal block weight keeps 16-d smell from being buried by 60-d patch / 192-d sensors.
     """
     p = _l2_normalize(
         np.asarray(patch if patch is not None else np.zeros(PATCH_VEC_DIM), dtype=np.float32)
@@ -491,7 +491,7 @@ def per_square_best_similarity(
     *,
     feat_dim: int = PATCH_CELL_FEAT_DIM,
 ) -> np.ndarray:
-    """Per-square (eye,row,col) best cosine of ``query`` vs stored 3×3 grids."""
+    """Per-facet (eye,facet) best cosine of ``query`` vs stored hex facet grids."""
     q = np.asarray(query, dtype=np.float32).reshape(-1)
     step = max(1, int(feat_dim))
     n_cells = q.shape[0] // step

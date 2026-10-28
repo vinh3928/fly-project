@@ -14,6 +14,7 @@ from flybrain.phase6 import (
     PATCH_RADIUS,
     SUGAR_CONSUME_RATE,
 )
+from flybrain.signals.builder import PROBOSCIS_CONTACT_INDEX, PROBOSCIS_EXTENSION_INDEX
 from flybrain.unity_env import DEFAULT_ACTION_DIM, DEFAULT_OBS_DIM
 
 # Unity SensorManager layout offsets into the 197-vector.
@@ -241,9 +242,11 @@ class FakeFoodSearchEnv(FakeFlyEnv):
             obs[base] = sugar_strength * (0.4 if not sugar_near else 1.0)
             obs[base + 1] = bitter_strength * (0.4 if not bitter_near else 1.0)
 
-        # Proboscis: contact, extension, sugar, bitter...
-        obs[_OFF_PROBOSCIS] = 1.0 if (sugar_near or bitter_near) and proboscis_ext > 0.5 else 0.0
-        obs[_OFF_PROBOSCIS + 1] = proboscis_ext
+        # Proboscis: extension, contact, sugar, bitter... (Unity layout)
+        obs[_OFF_PROBOSCIS + PROBOSCIS_CONTACT_INDEX] = (
+            1.0 if (sugar_near or bitter_near) and proboscis_ext > 0.5 else 0.0
+        )
+        obs[_OFF_PROBOSCIS + PROBOSCIS_EXTENSION_INDEX] = proboscis_ext
         obs[_OFF_PROBOSCIS + 2] = sugar_strength if sugar_near else sugar_strength * 0.2
         obs[_OFF_PROBOSCIS + 3] = bitter_strength if bitter_near else bitter_strength * 0.2
 

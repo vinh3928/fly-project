@@ -34,6 +34,9 @@ namespace FlySimulation.Experiments
         public const float SourcePuddleDiameter = 0.012f;
         // Hard plume radius (meters). Zero smell beyond this distance from puddle center.
         public const float DefaultChemicalSpread = 0.100f;
+        // Sugar plume: 1.0 at the puddle center, falling to 0.01 at a 1 m rim.
+        public const float SugarPlumeRadius = 1.0f;
+        public const float SugarPlumeEdgeFraction = 0.01f;
 
         public Vector3 SugarSourcePosition = new Vector3(0.15f, 0.01f, 0.15f);
         public Vector3 BitterSourcePosition = new Vector3(-0.15f, 0.01f, -0.15f);

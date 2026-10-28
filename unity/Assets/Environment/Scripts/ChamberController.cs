@@ -114,7 +114,8 @@ namespace FlySimulation.Environment
                 sugarSource.Configure(
                     ChemicalSource.SourceType.Sugar,
                     config.SugarStrength,
-                    config.ResolvedChemicalSpread);
+                    ExperimentConfiguration.SugarPlumeRadius,
+                    ExperimentConfiguration.SugarPlumeEdgeFraction);
                 var surface = sugarSource.GetComponent<SurfaceChemistry>();
                 if (surface != null)
                 {

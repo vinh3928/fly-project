@@ -16,6 +16,7 @@ from .layer import (
     clip_goal,
     ensure_locomotion_floor,
     goal_from_intent,
+    orient_goal,
 )
 from .rewards import compute_locomotion_reward
 
@@ -34,4 +35,5 @@ __all__ = [
     "goal_from_intent",
     "make_directive",
     "mode_for_plan",
+    "orient_goal",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from flybrain.phase4 import PATCH_VEC_DIM, SMELL_VEC_DIM
 from flybrain.sensors.modal_gate import (
     ModalChangeGate,
     ModalGateConfig,
@@ -138,10 +139,10 @@ def test_from_config_dict_defaults_to_ten_seconds() -> None:
 
 def test_reusable_across_modalities() -> None:
     """Same gate class for vision patches and smell vectors."""
-    vision = ModalChangeGate(modality="vision", ttl_seconds=10.0, dim=90, change_min=0.1)
-    smell = ModalChangeGate(modality="smell", ttl_seconds=10.0, dim=16, change_min=0.05)
-    v = _vec(1, 90)
-    s = _vec(2, 16)
+    vision = ModalChangeGate(modality="vision", ttl_seconds=10.0, dim=PATCH_VEC_DIM, change_min=0.1)
+    smell = ModalChangeGate(modality="smell", ttl_seconds=10.0, dim=SMELL_VEC_DIM, change_min=0.05)
+    v = _vec(1, PATCH_VEC_DIM)
+    s = _vec(2, SMELL_VEC_DIM)
     assert vision.observe(v, now_s=0.0).modality == "vision"
     assert smell.observe(s, now_s=0.0).modality == "smell"
     assert vision.observe(v, now_s=10.0).l1_hit is True

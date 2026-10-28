@@ -6,6 +6,7 @@ import numpy as np
 
 from flybrain.env_visual_nav import FakeVisualNavConfig, FakeVisualNavEnv
 from flybrain.memory.place_graph import InMemoryPlaceGraph, PlaceGraphConfig
+from flybrain.phase4 import PATCH_VEC_DIM
 from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline, format_live_step_log
 from flybrain.sensors.mapped_feedback import (
     MappedSensorFeedback,
@@ -62,7 +63,7 @@ def test_mapped_sensor_feedback_decays_wall_and_odor() -> None:
         hazard_decay_floor=0.1,
     )
     fb = MappedSensorFeedback(store=g, config=cfg, fly_id="fly_a")
-    view = np.zeros(90, dtype=np.float32)
+    view = np.zeros(PATCH_VEC_DIM, dtype=np.float32)
     view[0] = 1.0
 
     first = fb.sense(

@@ -65,7 +65,10 @@ namespace FlySimulation.Fly.Motors
         public void SetProboscisExtension(float normalized)
         {
             _proboscisExtension = Mathf.Clamp01(normalized);
-            proboscis?.SetExtension(_proboscisExtension);
+            if (proboscis != null)
+            {
+                proboscis.SetExtension(_proboscisExtension);
+            }
         }
 
         private void FixedUpdate()
@@ -193,24 +196,6 @@ namespace FlySimulation.Fly.Motors
             {
                 legs[i]?.ApplyStandingPose();
             }
-        }
-    }
-
-    /// <summary>
-    /// Thin wrapper around proboscis extension for motor side.
-    /// </summary>
-    public sealed class ProboscisActuator : MonoBehaviour
-    {
-        [SerializeField] private Sensors.ProboscisSensor sensor;
-
-        public void Bind(Sensors.ProboscisSensor proboscisSensor)
-        {
-            sensor = proboscisSensor;
-        }
-
-        public void SetExtension(float normalized)
-        {
-            sensor?.SetExtension(normalized);
         }
     }
 }

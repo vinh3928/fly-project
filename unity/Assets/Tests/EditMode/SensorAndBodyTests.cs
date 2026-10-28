@@ -195,6 +195,91 @@ namespace FlySimulation.Tests.EditMode
         }
 
         [Test]
+        public void MountedAntennae_RightSmellsMoreSugarWhenSourceIsRight()
+        {
+            var fieldGo = new GameObject("field");
+            var field = fieldGo.AddComponent<ChemicalFieldSystem>();
+            var sugarGo = new GameObject("sugar");
+            sugarGo.transform.position = new Vector3(0.2f, 0f, 0f);
+            var sugar = sugarGo.AddComponent<ChemicalSource>();
+            sugar.Configure(
+                ChemicalSource.SourceType.Sugar,
+                1f,
+                ExperimentConfiguration.SugarPlumeRadius,
+                ExperimentConfiguration.SugarPlumeEdgeFraction);
+            field.Register(sugar);
+
+            var mount = new GameObject("AntennaMount");
+            var leftGo = new GameObject("LeftAntenna");
+            leftGo.transform.SetParent(mount.transform, false);
+            leftGo.transform.localPosition = AntennaOdorSensor.MountOffset(isLeft: true);
+            var left = leftGo.AddComponent<AntennaOdorSensor>();
+            left.BindField(field);
+            var rightGo = new GameObject("RightAntenna");
+            rightGo.transform.SetParent(mount.transform, false);
+            rightGo.transform.localPosition = AntennaOdorSensor.MountOffset(isLeft: false);
+            var right = rightGo.AddComponent<AntennaOdorSensor>();
+            right.BindField(field);
+
+            Assert.AreEqual(
+                2f * AntennaOdorSensor.HalfSpacing,
+                Vector3.Distance(leftGo.transform.position, rightGo.transform.position),
+                1e-6f);
+            float l = left.SampleNow().Sugar;
+            float r = right.SampleNow().Sugar;
+            Assert.Greater(r, l);
+            // Python amplifies (r - l) / (r + l) by ANTENNA_BEARING_GAIN (20) into a bearing.
+            Assert.Greater(20f * (r - l) / (r + l), 0.3f);
+
+            Object.DestroyImmediate(fieldGo);
+            Object.DestroyImmediate(sugarGo);
+            Object.DestroyImmediate(mount);
+        }
+
+        [Test]
+        public void AntennaGeometry_TipsSpreadWiderThanBaseAndPointForwardUp()
+        {
+            foreach (bool isLeft in new[] { true, false })
+            {
+                Vector3 b = AntennaOdorSensor.BaseOffset(isLeft);
+                Vector3 t = AntennaOdorSensor.MountOffset(isLeft);
+                Assert.Greater(Mathf.Abs(t.x), Mathf.Abs(b.x));
+                Assert.Greater(t.y, b.y);
+                Assert.Greater(t.z, b.z);
+                Assert.AreEqual(Vector3.Distance(b, t), AntennaOdorSensor.StalkLength, 1e-6f);
+            }
+            Assert.AreEqual(0.038f, 2f * AntennaOdorSensor.HalfSpacing, 1e-6f);
+            Assert.AreEqual(
+                Mathf.Abs(AntennaOdorSensor.MountOffset(false).x),
+                AntennaOdorSensor.HalfSpacing,
+                1e-6f);
+        }
+
+        [Test]
+        public void AntennaGeometry_StalkIsSixTimesTheOriginalLength()
+        {
+            float unit = new Vector3(
+                AntennaOdorSensor.UnitStalkX,
+                AntennaOdorSensor.UnitStalkY,
+                AntennaOdorSensor.UnitStalkZ).magnitude;
+            Assert.AreEqual(6f, AntennaOdorSensor.StalkScale, 1e-6f);
+            Assert.AreEqual(6f * unit, AntennaOdorSensor.StalkLength, 1e-6f);
+        }
+
+        [Test]
+        public void EyeCamera_CullsFlySelfLayer()
+        {
+            var go = new GameObject("eye");
+            var cam = go.AddComponent<Camera>();
+            var eye = go.AddComponent<FlyEyeCamera>();
+            eye.Configure(64, 64, 140f, false);
+            Assert.AreEqual(0, cam.cullingMask & (1 << FlyEyeCamera.SelfLayer));
+            Assert.AreNotEqual(0, cam.cullingMask & 1); // Default layer still visible
+            cam.targetTexture = null;
+            Object.DestroyImmediate(go);
+        }
+
+        [Test]
         public void Antenna_WithoutField_ReadsZero()
         {
             var go = new GameObject("antenna");
@@ -377,6 +462,194 @@ namespace FlySimulation.Tests.EditMode
             }
 
             Object.DestroyImmediate(go);
+        }
+
+        private static Collider MakeSurface(string name, ChemicalChannels channels)
+        {
+            var go = new GameObject(name);
+            var col = go.AddComponent<BoxCollider>();
+            go.AddComponent<SurfaceChemistry>().SetChannels(channels);
+            return col;
+        }
+
+        [Test]
+        public void ReportContact_SugarSurface_GatesTasteIntoObservation()
+        {
+            var go = new GameObject("proboscis");
+            var sensor = go.AddComponent<ProboscisSensor>();
+            sensor.SetExtension(1f);
+            var sugar = MakeSurface("sugar", new ChemicalChannels { Sugar = 1f });
+
+            sensor.ReportContact(sugar);
+            var buffer = new float[10];
+            sensor.CopyObservation(buffer, 0);
+            Assert.AreEqual(1f, buffer[1], 1e-5f);
+            Assert.AreEqual(1f, buffer[2], 1e-5f); // sugar channel
+            Assert.AreEqual(1f, sensor.GatedTaste.Sugar, 1e-5f);
+
+            sensor.ReportExit();
+            Assert.IsFalse(sensor.IsContacting);
+            Assert.AreEqual(0f, sensor.GatedTaste.Sugar, 1e-5f);
+
+            Object.DestroyImmediate(go);
+            Object.DestroyImmediate(sugar.gameObject);
+        }
+
+        [Test]
+        public void ReportContact_FloorInSameStep_DoesNotMaskSugar()
+        {
+            var go = new GameObject("proboscis");
+            var sensor = go.AddComponent<ProboscisSensor>();
+            var sugar = MakeSurface("sugar", new ChemicalChannels { Sugar = 1f });
+            var floor = MakeSurface("floor", ChemicalChannels.Zero);
+
+            sensor.ReportContact(sugar);
+            sensor.ReportContact(floor);
+            Assert.AreEqual(1f, sensor.GatedTaste.Sugar, 1e-5f);
+
+            Object.DestroyImmediate(go);
+            Object.DestroyImmediate(sugar.gameObject);
+            Object.DestroyImmediate(floor.gameObject);
+        }
+
+        [Test]
+        public void TipContact_RelaysTriggerToSensor()
+        {
+            var go = new GameObject("proboscis");
+            var sensor = go.AddComponent<ProboscisSensor>();
+            var tip = new GameObject("tip");
+            tip.AddComponent<ProboscisTipContact>().Bind(sensor);
+            var sugar = MakeSurface("sugar", new ChemicalChannels { Sugar = 1f });
+
+            tip.SendMessage("OnTriggerStay", sugar);
+            Assert.IsTrue(sensor.IsContacting);
+            tip.SendMessage("OnTriggerExit", sugar);
+            Assert.IsFalse(sensor.IsContacting);
+
+            Object.DestroyImmediate(go);
+            Object.DestroyImmediate(tip);
+            Object.DestroyImmediate(sugar.gameObject);
+        }
+
+        [Test]
+        public void Configure_DownwardMount_TipReachesFloorAtContactExtension()
+        {
+            const float drop = 0.03f;
+            var mount = new GameObject("mount");
+            mount.transform.position = new Vector3(0f, 0.04f, 0f);
+            var probGo = new GameObject("proboscis");
+            probGo.transform.SetParent(mount.transform, false);
+            probGo.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            var tip = new GameObject("tip");
+            tip.transform.SetParent(probGo.transform, false);
+            var sensor = probGo.AddComponent<ProboscisSensor>();
+            sensor.Configure(tip.transform, ProboscisSensor.MaxExtensionForDrop(drop));
+
+            sensor.SetExtension(0f);
+            Assert.AreEqual(0.04f, tip.transform.position.y, 1e-5f);
+            sensor.SetExtension(ProboscisSensor.FloorContactExtension);
+            Assert.AreEqual(0.04f - drop, tip.transform.position.y, 1e-5f);
+
+            Object.DestroyImmediate(mount);
+        }
+    }
+
+    public sealed class FlyHeadPoseTests
+    {
+        private static (GameObject fly, Transform mount, Transform head, ProboscisSensor prob, FlyHeadPose pose) Build()
+        {
+            var fly = new GameObject("fly");
+            var head = new GameObject("head").transform;
+            head.SetParent(fly.transform, false);
+            head.localPosition = new Vector3(0f, 0f, 0.01f);
+            var mount = new GameObject("mount").transform;
+            mount.SetParent(fly.transform, false);
+            mount.localPosition = head.localPosition;
+            var probGo = new GameObject("proboscis");
+            probGo.transform.SetParent(mount, false);
+            var prob = probGo.AddComponent<ProboscisSensor>();
+            var pose = fly.AddComponent<FlyHeadPose>();
+            pose.Bind(mount, head, prob);
+            return (fly, mount, head, prob, pose);
+        }
+
+        [Test]
+        public void TargetLower_OnlyWhileProbing()
+        {
+            Assert.AreEqual(0f, FlyHeadPose.TargetLower(0f), 1e-6f);
+            Assert.AreEqual(0f, FlyHeadPose.TargetLower(0.35f), 1e-6f); // idle composer extension
+            Assert.AreEqual(0f, FlyHeadPose.TargetLower(FlyHeadPose.ProbeExtensionStart), 1e-6f);
+            Assert.AreEqual(1f, FlyHeadPose.TargetLower(1f), 1e-6f);
+        }
+
+        [Test]
+        public void Apply_FullLower_DropsAndPitchesHeadAndLowersAntennaTips()
+        {
+            var (fly, mount, head, prob, pose) = Build();
+            var tip = new GameObject("tip").transform;
+            tip.SetParent(mount, false);
+            tip.localPosition = AntennaOdorSensor.MountOffset(isLeft: false);
+            float restTipY = tip.position.y;
+            float restHeadY = head.position.y;
+
+            pose.Apply(1f);
+
+            Assert.AreEqual(restHeadY - FlyHeadPose.MaxDrop, head.position.y, 1e-6f);
+            Assert.AreEqual(FlyHeadPose.MaxPitchDegrees, mount.localEulerAngles.x, 1e-3f);
+            Assert.Less(tip.position.y, restTipY - FlyHeadPose.MaxDrop);
+            Assert.Greater(tip.position.z, AntennaOdorSensor.MountOffset(false).z + 0.01f);
+            Object.DestroyImmediate(fly);
+        }
+
+        [Test]
+        public void Apply_KeepsProboscisPointingStraightDown()
+        {
+            var (fly, _, _, prob, pose) = Build();
+            foreach (float lower in new[] { 0f, 0.5f, 1f })
+            {
+                pose.Apply(lower);
+                Vector3 axis = prob.transform.forward; // extension axis (local +Z)
+                Assert.AreEqual(-1f, axis.y, 1e-4f, $"lower={lower}");
+            }
+
+            Object.DestroyImmediate(fly);
+        }
+
+        [Test]
+        public void FullExtension_FullyLoweredHead_TipLandsOnFloorNotThroughIt()
+        {
+            var (fly, mount, _, prob, pose) = Build();
+            const float floorTop = 0.01f;
+            fly.transform.position = new Vector3(0f, 0.038f, 0f);
+            var baseOnMount = new Vector3(0f, -0.003f, 0.004f);
+            prob.transform.localPosition = baseOnMount;
+            var tip = new GameObject("tip").transform;
+            tip.SetParent(prob.transform, false);
+            pose.Apply(0f);
+            float drop = prob.transform.position.y - floorTop - FlyHeadPose.FullLowerExtraDrop(baseOnMount);
+            prob.Configure(tip, ProboscisSensor.MaxExtensionForDrop(drop));
+
+            pose.Apply(1f);
+            prob.SetExtension(1f);
+            Assert.AreEqual(floorTop, tip.position.y, 1e-5f);
+
+            pose.Apply(0f);
+            Assert.Greater(tip.position.y, floorTop + 0.005f, "raised head keeps the extended tip off the floor");
+            Object.DestroyImmediate(fly);
+        }
+
+        [Test]
+        public void Apply_ZeroRestoresRestPose()
+        {
+            var (fly, mount, head, _, pose) = Build();
+            Vector3 mountRest = mount.localPosition;
+            Vector3 headRest = head.localPosition;
+            pose.Apply(1f);
+            pose.Apply(0f);
+            Assert.AreEqual(mountRest, mount.localPosition);
+            Assert.AreEqual(headRest, head.localPosition);
+            Assert.AreEqual(Quaternion.identity, mount.localRotation);
+            Object.DestroyImmediate(fly);
         }
     }
 

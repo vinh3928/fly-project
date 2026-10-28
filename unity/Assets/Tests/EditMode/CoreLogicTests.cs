@@ -52,6 +52,39 @@ namespace FlySimulation.Tests.EditMode
         }
 
         [Test]
+        public void SugarPlume_IsOneAtCenterAndHundredthAtOneMeterRim()
+        {
+            float radius = ExperimentConfiguration.SugarPlumeRadius;
+            float edge = ExperimentConfiguration.SugarPlumeEdgeFraction;
+            Assert.AreEqual(1f, radius, 1e-6f);
+            Assert.AreEqual(0.01f, edge, 1e-6f);
+
+            Assert.AreEqual(1f, ChemicalSource.ComputeConcentration(1f, 0f, radius, edge), 1e-5f);
+            Assert.AreEqual(0.1f, ChemicalSource.ComputeConcentration(1f, 0.5f, radius, edge), 1e-5f);
+            Assert.AreEqual(0.01f, ChemicalSource.ComputeConcentration(1f, 1f, radius, edge), 1e-5f);
+            Assert.AreEqual(0f, ChemicalSource.ComputeConcentration(1f, 1.001f, radius, edge), 1e-5f);
+
+            var go = new GameObject("sugar");
+            var sugar = go.AddComponent<ChemicalSource>();
+            sugar.Configure(ChemicalSource.SourceType.Sugar, 1f, radius, edge);
+            ChemicalChannels farCorner = sugar.SampleAt(new Vector3(0.3f, 0f, 0.3f));
+            Assert.Greater(farCorner.Sugar, 0f);
+            Assert.AreEqual(farCorner.Sugar, farCorner.Odor, 1e-6f);
+            Object.DestroyImmediate(go);
+        }
+
+        [Test]
+        public void ThreeArgConfigure_KeepsExpMinusOneRim()
+        {
+            var go = new GameObject("bitter");
+            var bitter = go.AddComponent<ChemicalSource>();
+            bitter.Configure(ChemicalSource.SourceType.Bitter, 1f, 0.1f);
+            Assert.AreEqual(ChemicalSource.DefaultEdgeFraction, bitter.EdgeFraction, 1e-6f);
+            Assert.AreEqual(Mathf.Exp(-1f), bitter.ConcentrationAt(new Vector3(0.1f, 0f, 0f)), 1e-5f);
+            Object.DestroyImmediate(go);
+        }
+
+        [Test]
         public void SugarAndBitter_AlsoWriteOdorChannel()
         {
             const float radius = 0.100f;
@@ -126,6 +159,37 @@ namespace FlySimulation.Tests.EditMode
             homeo.Configure(config);
             homeo.ConsumeSugar(0.3f);
             Assert.AreEqual(0.5f, homeo.Energy, 1e-5f);
+            Object.DestroyImmediate(go);
+        }
+
+        [Test]
+        public void Tick_NeverDropsEnergyBelowFloor()
+        {
+            var go = new GameObject("homeostasis");
+            var homeo = go.AddComponent<FlyHomeostasis>();
+            var config = ExperimentConfiguration.Default();
+            config.InitialEnergy = 0.05f;
+            config.MetabolismRate = 1f;
+            homeo.Configure(config);
+            for (int i = 0; i < 20; i++)
+            {
+                homeo.Tick(1f, motorEffort: 1f, usingWings: true);
+            }
+
+            Assert.AreEqual(FlyHomeostasis.MinEnergy, homeo.Energy, 1e-6f);
+            Assert.IsFalse(homeo.IsDepleted);
+            Object.DestroyImmediate(go);
+        }
+
+        [Test]
+        public void Configure_ClampsInitialEnergyToFloor()
+        {
+            var go = new GameObject("homeostasis");
+            var homeo = go.AddComponent<FlyHomeostasis>();
+            var config = ExperimentConfiguration.Default();
+            config.InitialEnergy = 0f;
+            homeo.Configure(config);
+            Assert.AreEqual(FlyHomeostasis.MinEnergy, homeo.Energy, 1e-6f);
             Object.DestroyImmediate(go);
         }
     }

@@ -11,14 +11,15 @@ CHEMICAL_VEC_DIM = 64
 SENSORS_VEC_DIM = BODY_VEC_DIM + CHEMICAL_VEC_DIM  # 192
 STATUS_VEC_DIM = 32
 AFFECT_VEC_DIM = AFFECT_DIM  # 16
-# Flattened stereo 3×3 patch features (9 cells × 5 feats × 2 eyes).
+# Flattened stereo hexagonal-eye triangular facets (6 tris × 5 feats × 2 eyes).
 PATCH_CELL_FEAT_DIM = 5
-PATCH_GRID_CELLS = 9  # 3×3
-PATCH_VEC_DIM = PATCH_GRID_CELLS * PATCH_CELL_FEAT_DIM * 2  # 90
+HEX_FACET_COUNT = 6  # pointy-top hex → center diagonals → 6 triangles
+PATCH_GRID_CELLS = HEX_FACET_COUNT  # alias: facets per eye (was 3×3=9)
+PATCH_VEC_DIM = PATCH_GRID_CELLS * PATCH_CELL_FEAT_DIM * 2  # 60
 # Antenna L+R chemical channels (8 each) for interrupt smell history.
 SMELL_VEC_DIM = 16
 # Interrupt joint history: L2-normalized concat(patch, smell, sensors).
-INTERRUPT_JOINT_VEC_DIM = PATCH_VEC_DIM + SMELL_VEC_DIM + SENSORS_VEC_DIM  # 298
+INTERRUPT_JOINT_VEC_DIM = PATCH_VEC_DIM + SMELL_VEC_DIM + SENSORS_VEC_DIM  # 268
 
 HIGH_LEVEL_ACTION_DIM = 5
 DEFAULT_OBS_DIM = 197

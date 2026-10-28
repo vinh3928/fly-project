@@ -210,6 +210,7 @@ namespace FlySimulation.Fly.Sensors
             }
 
             cam.Render();
+            eye.MaskRenderTextureInPlace();
         }
 
         private static void Bind(RawImage image, FlyEyeCamera eye)

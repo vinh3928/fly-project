@@ -10,6 +10,35 @@ import numpy as np
 from flybrain.phase4 import HIGH_LEVEL_ACTION_DIM
 
 
+HUNGER_SEEK_MIN = 0.7
+ENERGY_SEEK_MAX = 0.3
+# Once feeding has started, food seeking continues until energy reaches this.
+ENERGY_SATED = 0.9
+FEEDING_UNTIL_SATED_KEY = "feeding_until_sated"
+
+
+def _energy(signals: dict[str, Any], affect: dict[str, Any] | None = None) -> tuple[float, float]:
+    hunger = float(signals.get("hunger", (affect or {}).get("sad", 0.0)))
+    energy = float(signals.get("energy", 1.0 - hunger))
+    return hunger, energy
+
+
+def is_sated(signals: dict[str, Any], affect: dict[str, Any] | None = None) -> bool:
+    return _energy(signals, affect)[1] >= ENERGY_SATED
+
+
+def is_hungry(signals: dict[str, Any], affect: dict[str, Any] | None = None) -> bool:
+    """Shared food-seeking gate for the composer and the Layer-1 planner.
+
+    Hungry below ENERGY_SEEK_MAX (hunger ≥ HUNGER_SEEK_MIN); while a feeding session
+    is flagged in the signals, stays hungry until ENERGY_SATED.
+    """
+    hunger, energy = _energy(signals, affect)
+    if hunger >= HUNGER_SEEK_MIN or energy < ENERGY_SEEK_MAX:
+        return True
+    return bool(signals.get(FEEDING_UNTIL_SATED_KEY)) and energy < ENERGY_SATED
+
+
 @dataclass
 class ThoughtResult:
     draft: str
@@ -63,7 +92,7 @@ def compose_thought(
     novelty_bearing = float(signals.get("novelty_bearing", 0.0))
     novelty_confidence = float(signals.get("novelty_confidence", 0.0))
 
-    hungry = hunger >= 0.3 or energy < 0.7
+    hungry = is_hungry(signals, affect)
     draft = (
         f"Draft: joy={joy:.2f} anger={anger:.2f} survival={survival:.2f} "
         f"hunger={hunger:.2f} energy={energy:.2f}; sugar={sugar:.2f} bitter={bitter:.2f}. "

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from flybrain.memory.place_graph import InMemoryPlaceGraph, PlaceGraphConfig
-from flybrain.phase4 import SMELL_VEC_DIM
+from flybrain.phase4 import PATCH_VEC_DIM, SMELL_VEC_DIM
 from flybrain.sensors.mapped_feedback import MappedSensorFeedback
 from flybrain.sensors.place_senses import (
     infer_place_label,
@@ -58,7 +58,7 @@ def test_vision_place_gets_puddle_label_and_bitter_sense() -> None:
         sense_gate_ttl_seconds=0.0,
         smell_gate_ttl_seconds=0.0,
     )
-    view = np.zeros(90, dtype=np.float32)
+    view = np.zeros(PATCH_VEC_DIM, dtype=np.float32)
     view[0] = 1.0
     smell = np.zeros(SMELL_VEC_DIM, dtype=np.float32)
     smell[0] = 0.4

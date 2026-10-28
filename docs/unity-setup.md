@@ -38,9 +38,11 @@ After it runs, open `Assets/Scenes/Chamber.unity` if it is not already open. Sel
 Press **Play** and watch the **Game** tab (not only Scene view). You should see the grey floor, yellow/purple pads, and dark fly through the cutaway.
 
 **Fly eye view (Game tab):** On Play, bottom-corner PIP panels show Left/Right eye
-RenderTextures in the **Game** view (Canvas overlay). Press **V** to toggle.
-Do not expect selecting `LeftEye` in the Hierarchy to change the Game camera — those
-cameras stay disabled on purpose. Scene/Simulator camera previews are separate from Game view.
+RenderTextures in the **Game** view (Canvas overlay). Each eye is a **pointy-top
+hexagon** (outside pixels masked black) with optional green facet spokes.
+Press **V** to toggle. Do not expect selecting `LeftEye` in the Hierarchy to
+change the Game camera — those cameras stay disabled on purpose. Scene/Simulator
+camera previews are separate from Game view.
 
 If Play mode looks like a solid blue box with a grey square:
 

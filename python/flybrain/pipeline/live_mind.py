@@ -13,6 +13,11 @@ import yaml
 
 from flybrain.affect.estimator import AffectEstimator
 from flybrain.curiosity import CuriosityConfig, CuriosityDrive
+from flybrain.thinking.composer import FEEDING_UNTIL_SATED_KEY
+from flybrain.thinking.sugar_search import (
+    SugarSearchConfig,
+    SugarSearchTracker,
+)
 from flybrain.curiosity.boredom import (
     BoredomConfig,
     BoredomTracker,
@@ -30,6 +35,7 @@ from flybrain.motor import (
     goal_from_intent,
     make_directive,
     mode_for_plan,
+    orient_goal,
 )
 from flybrain.phase9 import DEFAULT_MIND_INTERVAL
 from flybrain.signals.builder import SignalBuilder
@@ -110,6 +116,30 @@ def format_live_step_log(
     energy_s = f" E={float(energy):.2f}" if energy is not None else ""
     hunger = info.get("hunger")
     hunger_s = f" H={float(hunger):.2f}" if hunger is not None else ""
+    sugar_smell = info.get("sugar_smell")
+    sniff_s = ""
+    if sugar_smell is not None:
+        search = info.get("sugar_search") or {}
+        search_s = ""
+        if search.get("turn") is not None:
+            search_s = f",{search.get('mode')}={float(search['turn']):+.2f}"
+        orient = info.get("sugar_orient")
+        if orient is not None:
+            mode = info.get("sugar_orient_mode") or "orient"
+            search_s += f",{mode}=[{float(orient[0]):+.2f},{float(orient[1]):+.2f}"
+            if len(orient) > 2:
+                search_s += f",p{float(orient[2]):.1f}"
+            search_s += "]"
+        sniff_s = (
+            f" sniff(sugar={float(sugar_smell):.3f}"
+            f",bear={float(info.get('sugar_bearing') or 0.0):+.2f}{search_s})"
+        )
+    if info.get("proboscis_extension") is not None:
+        sniff_s += (
+            f" prob(ext={float(info['proboscis_extension']):.2f}"
+            f",touch={float(info.get('proboscis_contact') or 0.0):.0f}"
+            f",taste={float(info.get('taste_sugar') or 0.0):.2f})"
+        )
     cov = info.get("coverage")
     cov_s = f" cov={float(cov):.3f}" if cov is not None else ""
 
@@ -246,7 +276,7 @@ def format_live_step_log(
 
     return (
         f"[live {step:04d} {tag}] {goal_s} act=[{fwd:+.2f},{turn:+.2f}]"
-        f"{track_s}{energy_s}{hunger_s}{surv_s}{fear_s}{wall_s}{place_s}{bearing_s}{cur_s}{bore_s}{tend_s}{viz_s}{antenna_s}{vthink_s}{judge_s}"
+        f"{track_s}{energy_s}{hunger_s}{sniff_s}{surv_s}{fear_s}{wall_s}{place_s}{bearing_s}{cur_s}{bore_s}{tend_s}{viz_s}{antenna_s}{vthink_s}{judge_s}"
         f"{si_s}{cov_s}{chosen}{l1_s}{thought_s}{critique_s}"
     )
 
@@ -289,6 +319,15 @@ def format_live_mind_detail(step: int, info: dict[str, Any]) -> str:
         "antenna_debug": info.get("antenna_debug"),
     }
     return f"[live {step:04d} DETAIL] " + json.dumps(payload, default=str)
+
+
+def _proboscis_feedback(summary: dict[str, Any]) -> dict[str, float | None]:
+    """Unity-reported proboscis state (extension actually applied, contact, taste)."""
+    return {
+        "proboscis_extension": summary.get("proboscis_extension"),
+        "proboscis_contact": summary.get("proboscis_contact"),
+        "taste_sugar": summary.get("sugar"),
+    }
 
 
 def antenna_debug_payload(sensory: Any) -> dict[str, float]:
@@ -384,6 +423,7 @@ class LiveMindConfig:
     interest: InterestConfig | None = None
     stimulus_interrupt: StimulusInterruptConfig | None = None
     place_graph: PlaceGraphConfig | None = None
+    sugar_search: SugarSearchConfig | None = None
 
     @classmethod
     def from_yaml(
@@ -467,6 +507,7 @@ class LiveMindConfig:
             interest=InterestConfig.from_dict(interest_raw),
             stimulus_interrupt=StimulusInterruptConfig.from_dict(interrupt_raw),
             place_graph=PlaceGraphConfig.from_dict(place_raw),
+            sugar_search=SugarSearchConfig.from_dict(data.get("sugar_search") or {}),
         )
 
 
@@ -535,6 +576,9 @@ class LiveMindPipeline:
             self.vision_head.reset_state(1)
         self.curiosity = CuriosityDrive(self.config.curiosity or CuriosityConfig())
         self.boredom = BoredomTracker(self.config.boredom or BoredomConfig())
+        self.sugar_search = SugarSearchTracker(self.config.sugar_search or SugarSearchConfig())
+        self._last_sugar_search: dict[str, Any] | None = None
+        self._orient_base: np.ndarray | None = None
         self.visual_novelty = VisualNoveltyTracker(
             self.config.visual_novelty or VisualNoveltyConfig()
         )
@@ -689,6 +733,9 @@ class LiveMindPipeline:
         """Evaluate cue vs STM joint history; arm when novel under soft load."""
         del observation  # reserved for future observation-driven cues
         if self._interrupt_pending:
+            return
+        # Feeding tastes sugar every step; a deep-thought freeze would retract the proboscis.
+        if self.sugar_search.feeding_now(dict(sensory.summary)):
             return
         cfg = self.stimulus_interrupt
         if not cfg.enabled:
@@ -1242,6 +1289,34 @@ class LiveMindPipeline:
         if callable(close):
             close()
 
+    def _apply_sugar_orient(self, sensory: Any, info: dict[str, Any]) -> None:
+        """Per-step sugar orient reflex: steer the held goal by the live antenna bearing.
+
+        Pivot is allowed (no forward floor) so the body can turn any angle toward
+        sugar. The mind-pushed goal is restored once the search switches off.
+        """
+        info.pop("sugar_orient", None)
+        info.pop("sugar_orient_mode", None)
+        if self.motor is None:
+            return
+        held = self.act_controller is not None and self.act_controller.mode != "act_anything"
+        steer = None if held else self.sugar_search.steer(dict(sensory.summary))
+        if steer is None:
+            if self._orient_base is not None:
+                self.motor.set_goal(self._orient_base)
+                self._orient_base = None
+            return
+        if self._orient_base is None:
+            self._orient_base = self.motor.goal.copy()
+        self.motor.set_goal(
+            orient_goal(self._orient_base, steer.forward, steer.turn, steer.proboscis),
+            allow_pivot=True,
+        )
+        info["sugar_orient"] = steer.to_list()
+        info["sugar_orient_mode"] = (
+            f"feed({steer.ticks_left})" if steer.mode == "feed" else steer.mode
+        )
+
     def _signals_after_mapped_feedback(
         self,
         sensory: Any,
@@ -1644,6 +1719,13 @@ class LiveMindPipeline:
         signal_payload = self._signals_after_mapped_feedback(
             sensory, visual_nov=visual_nov, place_info=place_info
         )
+        search = self.sugar_search.observe(signal_payload)
+        self._last_sugar_search = search.to_dict()
+        if self.sugar_search.feeding_until_sated:
+            signal_payload[FEEDING_UNTIL_SATED_KEY] = True
+        if search.turn is not None:
+            signal_payload["sugar_search_turn"] = search.turn
+            signal_payload["sugar_search_mode"] = search.mode
 
         affect = self.affect.estimate(sensory)
         parts = self.embedder.embed_parts(sensory, affect)
@@ -1763,6 +1845,10 @@ class LiveMindPipeline:
             "mind_tick": True,
             "energy": signal_payload.get("energy", sensory.summary.get("energy")),
             "hunger": signal_payload.get("hunger", sensory.summary.get("hunger")),
+            "sugar_smell": sensory.summary.get("sugar_smell"),
+            "sugar_bearing": sensory.summary.get("sugar_bearing"),
+            "sugar_search": self._last_sugar_search,
+            **_proboscis_feedback(sensory.summary),
             "antenna_debug": antenna_debug_payload(sensory),
         }
         self._last_mind_info = dict(info)
@@ -1818,12 +1904,16 @@ class LiveMindPipeline:
                     goal=goal,
                     reason="mind_think",
                 )
+                self._orient_base = None
+                self._apply_sugar_orient(sensory, info)
                 action = self.act_controller.apply_tick(observation)
             else:
                 self.motor.set_goal(goal)
                 set_goal = getattr(self.env, "set_goal", None)
                 if callable(set_goal):
                     set_goal(goal)
+                self._orient_base = None
+                self._apply_sugar_orient(sensory, info)
                 action = self.motor.act(observation)
             self._motor_ticks += 1
             info["motor_goal"] = self.motor.goal.tolist()
@@ -1871,6 +1961,10 @@ class LiveMindPipeline:
         summary = sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else sensory.summary
         info["energy"] = summary.get("energy", sensory.summary.get("energy"))
         info["hunger"] = summary.get("hunger", sensory.summary.get("hunger"))
+        info["sugar_smell"] = sensory.summary.get("sugar_smell")
+        info["sugar_bearing"] = sensory.summary.get("sugar_bearing")
+        info["sugar_search"] = self._last_sugar_search
+        info.update(_proboscis_feedback(sensory.summary))
 
         # Candidate novel-vs-STM → mind pushes idle (deep-thought freeze).
         self._arm_stimulus_interrupt(
@@ -1908,6 +2002,7 @@ class LiveMindPipeline:
             self._pending_action = action.copy()
             return action, info
 
+        self._apply_sugar_orient(sensory, info)
         if self.act_controller is not None:
             action = self.act_controller.apply_tick(observation)
         else:

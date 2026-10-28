@@ -1,4 +1,4 @@
-"""Eye-driven visual novelty: independent 3×3 patches per eye (no stereo merge)."""
+"""Eye-driven visual novelty: hexagonal aperture, 6 triangular facets per eye."""
 
 from __future__ import annotations
 
@@ -7,7 +7,13 @@ from typing import Any
 
 import numpy as np
 
-from flybrain.phase4 import PATCH_CELL_FEAT_DIM
+from flybrain.phase4 import HEX_FACET_COUNT, PATCH_CELL_FEAT_DIM, PATCH_VEC_DIM
+from flybrain.vision.hex_eye import (
+    apply_hex_aperture,
+    facet_centroid_bearing,
+    hex_aperture_mask,
+    hex_triangle_masks,
+)
 
 
 def _clamp01(x: float) -> float:
@@ -32,7 +38,7 @@ PATCH_FEAT_DIM = PATCH_CELL_FEAT_DIM  # R/G/B (or gray×3), luma std, vertical e
 
 
 def patch_feature_vector(patch: np.ndarray) -> np.ndarray:
-    """Continuous embedding for one square (C,H,W) — used by interrupt history cache."""
+    """Continuous embedding for one facet sample (C,H,W) or masked channels."""
     p = np.asarray(patch, dtype=np.float32)
     if p.ndim == 2:
         p = p[None, ...]
@@ -53,28 +59,41 @@ def patch_feature_vector(patch: np.ndarray) -> np.ndarray:
     return np.asarray([r_m, g_m, b_m, std, edge], dtype=np.float32)
 
 
+def _facet_feature_from_masked(frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Feature vector from pixels under a triangular mask (zeros ignored via crop)."""
+    if not np.any(mask):
+        return np.zeros(PATCH_FEAT_DIM, dtype=np.float32)
+    # Compact bounding box of active pixels so std/edge stay meaningful.
+    ys, xs = np.where(mask)
+    y0, y1 = int(ys.min()), int(ys.max()) + 1
+    x0, x1 = int(xs.min()), int(xs.max()) + 1
+    sub = frame[:, y0:y1, x0:x1].copy()
+    sub_mask = mask[y0:y1, x0:x1]
+    for c in range(sub.shape[0]):
+        ch = sub[c]
+        ch[~sub_mask] = float(ch[sub_mask].mean()) if np.any(sub_mask) else 0.0
+        sub[c] = ch
+    return patch_feature_vector(sub)
+
+
+def eye_triangle_feature_grid(eye: np.ndarray) -> np.ndarray:
+    """Return (HEX_FACET_COUNT, PATCH_FEAT_DIM) features for one hexagonal eye."""
+    frame = apply_hex_aperture(_as_chw(eye))
+    _c, h, w = frame.shape
+    masks = hex_triangle_masks(h, w)
+    feats = [_facet_feature_from_masked(frame, m) for m in masks]
+    return np.stack(feats, axis=0)
+
+
 def eye_patch_feature_grid(
     eye: np.ndarray,
     *,
     grid_rows: int = 3,
     grid_cols: int = 3,
 ) -> np.ndarray:
-    """Return (grid_rows * grid_cols, PATCH_FEAT_DIM) features for one eye."""
-    frame = _as_chw(eye)
-    _c, h, w = frame.shape
-    n_rows = max(1, int(grid_rows))
-    n_cols = max(1, int(grid_cols))
-    row_h = max(1, h // n_rows)
-    col_w = max(1, w // n_cols)
-    feats: list[np.ndarray] = []
-    for r in range(n_rows):
-        y0 = r * row_h
-        y1 = h if r == n_rows - 1 else min(h, (r + 1) * row_h)
-        for col in range(n_cols):
-            x0 = col * col_w
-            x1 = w if col == n_cols - 1 else min(w, (col + 1) * col_w)
-            feats.append(patch_feature_vector(frame[:, y0:y1, x0:x1]))
-    return np.stack(feats, axis=0)
+    """Compat wrapper: hexagonal triangular facets (ignores square grid args)."""
+    del grid_rows, grid_cols
+    return eye_triangle_feature_grid(eye)
 
 
 def stereo_patch_embedding(
@@ -84,10 +103,13 @@ def stereo_patch_embedding(
     grid_rows: int = 3,
     grid_cols: int = 3,
 ) -> np.ndarray:
-    """Flatten left+right 3×3 patch features into one STM vector (90-d for 3×3)."""
-    left_g = eye_patch_feature_grid(left, grid_rows=grid_rows, grid_cols=grid_cols)
-    right_g = eye_patch_feature_grid(right, grid_rows=grid_rows, grid_cols=grid_cols)
-    return np.concatenate([left_g.reshape(-1), right_g.reshape(-1)]).astype(np.float32)
+    """Flatten left+right hexagonal facet features (60-d)."""
+    del grid_rows, grid_cols
+    left_g = eye_triangle_feature_grid(left)
+    right_g = eye_triangle_feature_grid(right)
+    out = np.concatenate([left_g.reshape(-1), right_g.reshape(-1)]).astype(np.float32)
+    assert out.shape[0] == PATCH_VEC_DIM
+    return out
 
 
 def stereo_patch_cells(
@@ -97,79 +119,78 @@ def stereo_patch_cells(
     grid_rows: int = 3,
     grid_cols: int = 3,
 ) -> dict[tuple[str, int, int], np.ndarray]:
-    """Map (eye, row, col) → continuous patch feature vector."""
+    """Map (eye, row=0, facet) → continuous facet feature vector."""
+    del grid_rows, grid_cols
     out: dict[tuple[str, int, int], np.ndarray] = {}
     for eye_name, frame in (("left", left), ("right", right)):
-        grid = eye_patch_feature_grid(frame, grid_rows=grid_rows, grid_cols=grid_cols)
-        n_rows = max(1, int(grid_rows))
-        n_cols = max(1, int(grid_cols))
-        i = 0
-        for r in range(n_rows):
-            for c in range(n_cols):
-                out[(eye_name, r, c)] = grid[i]
-                i += 1
+        grid = eye_triangle_feature_grid(frame)
+        for facet in range(HEX_FACET_COUNT):
+            out[(eye_name, 0, facet)] = grid[facet]
     return out
 
 
 @dataclass
 class VisualNoveltyConfig:
     enabled: bool = True
-    # Independent square grid per eye (not stereo-averaged columns).
-    grid_rows: int = 3
-    grid_cols: int = 3
+    # Legacy aliases kept for YAML; hexagonal eyes always use HEX_FACET_COUNT.
+    grid_rows: int = 1
+    grid_cols: int = HEX_FACET_COUNT
+    facet_count: int = HEX_FACET_COUNT
     signature_bins: int = 6
     first_visit_bonus: float = 1.0
     repeat_decay: float = 0.7
     change_weight: float = 0.45
     novelty_weight: float = 0.55
-    # Motor pull when peak-patch visual novelty is high.
+    # Motor pull when peak-facet visual novelty is high.
     turn_gain: float = 0.85
     forward_gain: float = 0.55
     min_novelty_for_pull: float = 0.18
     # Soft L1 explore boost.
     explore_candidate_bonus: float = 0.28
-    # Per-patch habituation: a static square loses novelty; change recovers it.
+    # Per-facet habituation: a static triangle loses novelty; change recovers it.
     habituation_enabled: bool = True
-    static_change_threshold: float = 0.08  # patch change below this ⇒ "same view"
-    habituation_rate: float = 0.02  # slow rise toward full habituation when static
-    dishabituation_rate: float = 0.5  # fast recovery when the patch changes
-    habituation_strength: float = 0.9  # max fraction of novelty suppressed
+    static_change_threshold: float = 0.08
+    habituation_rate: float = 0.02
+    dishabituation_rate: float = 0.5
+    habituation_strength: float = 0.9
     # Slight left/right FOV offset so each eye's azimuth stays distinct.
     eye_bearing_offset: float = 0.2
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> VisualNoveltyConfig:
         data = dict(raw or {})
-        # Legacy n_columns → square grid (ignore non-square intents).
-        if "grid_rows" not in data and "grid_cols" not in data and "n_columns" in data:
-            n = int(data.pop("n_columns") or 3)
-            side = 3 if n >= 3 else max(1, n)
-            data["grid_rows"] = side
-            data["grid_cols"] = side
-        else:
-            data.pop("n_columns", None)
+        data.pop("n_columns", None)
+        if "facet_count" not in data:
+            data["facet_count"] = HEX_FACET_COUNT
+        data["grid_rows"] = 1
+        data["grid_cols"] = int(data.get("facet_count") or HEX_FACET_COUNT)
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in known})
 
 
 @dataclass
 class PatchNovelty:
-    """Novelty for one independent square on one eye."""
+    """Novelty for one triangular facet on one eye."""
 
     eye: str  # "left" | "right"
-    row: int
-    col: int
+    row: int  # always 0 for hex facets (compat)
+    col: int  # facet index 0..5
     visual_novelty: float
     novelty_bearing: float
     novelty_confidence: float
     new_stimulus: bool
     change: float = 0.0
 
+    @property
+    def facet(self) -> int:
+        return int(self.col)
+
     def to_dict(self) -> dict[str, float | bool | int | str]:
         return {
             "eye": self.eye,
             "row": int(self.row),
             "col": int(self.col),
+            "facet": int(self.col),
             "visual_novelty": float(self.visual_novelty),
             "novelty_bearing": float(self.novelty_bearing),
             "novelty_confidence": float(self.novelty_confidence),
@@ -180,11 +201,10 @@ class PatchNovelty:
 
 @dataclass
 class VisualNoveltyCues:
-    """Per-patch novelty for left/right 3×3 grids (patches are not fused).
+    """Per-facet novelty for left/right hexagonal eyes (facets are not fused).
 
-    Scalar ``visual_novelty`` / ``novelty_bearing`` are conveniences for gates and
-    motor: they select the **peak** patch (argmax), never a weighted blend of eyes
-    or squares.
+    Scalar ``visual_novelty`` / ``novelty_bearing`` select the **peak** facet
+    (argmax), never a weighted blend of eyes or triangles.
     """
 
     patches: list[PatchNovelty] = field(default_factory=list)
@@ -229,13 +249,14 @@ class VisualNoveltyCues:
             "peak_eye": None if peak is None else peak.eye,
             "peak_row": None if peak is None else int(peak.row),
             "peak_col": None if peak is None else int(peak.col),
+            "peak_facet": None if peak is None else int(peak.col),
             "patch_novelties": [p.to_dict() for p in self.patches],
         }
 
 
 @dataclass
 class VisualNoveltyTracker:
-    """Tracks independent 3×3 eye-patch signatures (left and right never merged)."""
+    """Tracks independent hexagonal-eye facet signatures (left/right never merged)."""
 
     config: VisualNoveltyConfig = field(default_factory=VisualNoveltyConfig)
     _visits: dict[tuple[str, int, int, int], int] = field(default_factory=dict)
@@ -248,10 +269,10 @@ class VisualNoveltyTracker:
         self._habituation.clear()
 
     def _as_chw(self, eye: np.ndarray) -> np.ndarray:
-        return _as_chw(eye)
+        return apply_hex_aperture(_as_chw(eye))
 
     def _patch_signature(self, patch: np.ndarray) -> int:
-        """Quantize a square. ``patch`` is (C, H, W) color or gray."""
+        """Quantize a facet sample. ``patch`` is (C, H, W) color or gray."""
         bins = max(2, int(self.config.signature_bins))
         if patch.ndim == 3 and patch.shape[0] >= 3:
             r_m = float(patch[0].mean())
@@ -282,93 +303,89 @@ class VisualNoveltyTracker:
         e_i = int(np.clip(edge * bins * 3.0, 0, bins - 1))
         return m_i * bins * bins + s_i * bins + e_i
 
-    def _bearing_for(self, eye: str, row: int, col: int, n_rows: int, n_cols: int) -> float:
-        """Azimuth in [-1, 1] from patch column (+ optional eye offset). Row unused for yaw."""
-        del row, n_rows  # elevation not wired to motor yet
-        if n_cols <= 1:
-            x = 0.0
-        else:
-            x = (float(col) / float(n_cols - 1)) * 2.0 - 1.0
-        offset = float(self.config.eye_bearing_offset)
-        if eye == "left":
-            x = x - offset
-        elif eye == "right":
-            x = x + offset
-        return float(np.clip(x, -1.0, 1.0))
+    def _facet_crop(self, frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if not np.any(mask):
+            return np.zeros((frame.shape[0], 1, 1), dtype=np.float32)
+        ys, xs = np.where(mask)
+        y0, y1 = int(ys.min()), int(ys.max()) + 1
+        x0, x1 = int(xs.min()), int(xs.max()) + 1
+        sub = frame[:, y0:y1, x0:x1].copy()
+        sub_mask = mask[y0:y1, x0:x1]
+        for c in range(sub.shape[0]):
+            ch = sub[c]
+            fill = float(ch[sub_mask].mean()) if np.any(sub_mask) else 0.0
+            ch[~sub_mask] = fill
+            sub[c] = ch
+        return sub
 
     def _observe_eye(self, eye: str, frame: np.ndarray) -> list[PatchNovelty]:
         cfg = self.config
-        c, h, w = frame.shape
-        n_rows = max(1, int(cfg.grid_rows))
-        n_cols = max(1, int(cfg.grid_cols))
-        row_h = max(1, h // n_rows)
-        col_w = max(1, w // n_cols)
+        _c, h, w = frame.shape
+        masks = hex_triangle_masks(h, w)
         prev = self._prev.get(eye)
         had_prev = prev is not None and prev.shape == frame.shape
         out: list[PatchNovelty] = []
+        n_facets = int(cfg.facet_count) if cfg.facet_count else HEX_FACET_COUNT
+        n_facets = min(HEX_FACET_COUNT, max(1, n_facets))
 
-        for r in range(n_rows):
-            y0 = r * row_h
-            y1 = h if r == n_rows - 1 else min(h, (r + 1) * row_h)
-            for col in range(n_cols):
-                x0 = col * col_w
-                x1 = w if col == n_cols - 1 else min(w, (col + 1) * col_w)
-                patch = frame[:, y0:y1, x0:x1]
-                sig = self._patch_signature(patch)
-                key = (eye, r, col, sig)
-                before = self._visits.get(key, 0)
-                bonus = float(cfg.first_visit_bonus) * (float(cfg.repeat_decay) ** float(before))
-                self._visits[key] = before + 1
-                new_here = before == 0
+        for facet in range(n_facets):
+            mask = masks[facet]
+            patch = self._facet_crop(frame, mask)
+            sig = self._patch_signature(patch)
+            key = (eye, 0, facet, sig)
+            before = self._visits.get(key, 0)
+            bonus = float(cfg.first_visit_bonus) * (float(cfg.repeat_decay) ** float(before))
+            self._visits[key] = before + 1
+            new_here = before == 0
 
-                change = 0.0
-                if had_prev and prev is not None:
-                    prev_patch = prev[:, y0:y1, x0:x1]
+            change = 0.0
+            if had_prev and prev is not None:
+                prev_patch = self._facet_crop(prev, mask)
+                # Align shapes if bbox drifts slightly.
+                if prev_patch.shape == patch.shape:
                     delta = float(
                         np.mean(np.abs(patch.astype(np.float32) - prev_patch.astype(np.float32)))
                     )
                     change = float(np.clip(delta / 0.15, 0.0, 1.0))
 
-                interest = (
-                    float(cfg.novelty_weight) * bonus
-                    + float(cfg.change_weight) * change * float(cfg.first_visit_bonus)
-                )
-                novelty = _clamp01(
-                    0.55 * interest
-                    + 0.35 * bonus
-                    + (0.25 if new_here else 0.0)
-                )
-                confidence = _clamp01(interest)
+            interest = (
+                float(cfg.novelty_weight) * bonus
+                + float(cfg.change_weight) * change * float(cfg.first_visit_bonus)
+            )
+            novelty = _clamp01(
+                0.55 * interest + 0.35 * bonus + (0.25 if new_here else 0.0)
+            )
+            confidence = _clamp01(interest)
 
-                hab_key = (eye, r, col)
-                if cfg.habituation_enabled:
-                    hab = float(self._habituation.get(hab_key, 0.0))
-                    scene_change = change if had_prev else 1.0
-                    if scene_change <= float(cfg.static_change_threshold):
-                        hab += float(cfg.habituation_rate) * (1.0 - hab)
-                    else:
-                        hab -= float(cfg.dishabituation_rate) * scene_change
-                    hab = _clamp01(hab)
-                    self._habituation[hab_key] = hab
-                    suppress = 1.0 - float(cfg.habituation_strength) * hab
-                    novelty *= suppress
-                    confidence *= suppress
+            hab_key = (eye, 0, facet)
+            if cfg.habituation_enabled:
+                hab = float(self._habituation.get(hab_key, 0.0))
+                scene_change = change if had_prev else 1.0
+                if scene_change <= float(cfg.static_change_threshold):
+                    hab += float(cfg.habituation_rate) * (1.0 - hab)
+                else:
+                    hab -= float(cfg.dishabituation_rate) * scene_change
+                hab = _clamp01(hab)
+                self._habituation[hab_key] = hab
+                suppress = 1.0 - float(cfg.habituation_strength) * hab
+                novelty *= suppress
+                confidence *= suppress
 
-                bearing = self._bearing_for(eye, r, col, n_rows, n_cols)
-                out.append(
-                    PatchNovelty(
-                        eye=eye,
-                        row=r,
-                        col=col,
-                        visual_novelty=float(novelty),
-                        novelty_bearing=bearing,
-                        novelty_confidence=float(confidence),
-                        new_stimulus=bool(
-                            new_here and novelty >= float(cfg.min_novelty_for_pull)
-                        ),
-                        change=float(change),
-                    )
+            bearing = facet_centroid_bearing(
+                facet, eye=eye, eye_bearing_offset=float(cfg.eye_bearing_offset)
+            )
+            out.append(
+                PatchNovelty(
+                    eye=eye,
+                    row=0,
+                    col=facet,
+                    visual_novelty=float(novelty),
+                    novelty_bearing=bearing,
+                    novelty_confidence=float(confidence),
+                    new_stimulus=bool(new_here and novelty >= float(cfg.min_novelty_for_pull)),
+                    change=float(change),
                 )
+            )
 
         self._prev[eye] = frame.copy()
         return out
@@ -390,7 +407,7 @@ def apply_visual_explore_goal(
     config: VisualNoveltyConfig | None = None,
     wall_hazard: float = 0.0,
 ) -> np.ndarray:
-    """Pull motor goal toward the peak novel patch bearing (no blend across patches)."""
+    """Pull motor goal toward the peak novel facet bearing (no blend across facets)."""
     cfg = config or VisualNoveltyConfig()
     g = np.asarray(goal, dtype=np.float32).reshape(-1).copy()
     if g.size < 5:
@@ -410,7 +427,6 @@ def apply_visual_explore_goal(
     if nov < float(cfg.min_novelty_for_pull):
         return g
     strength = _clamp01(nov * (0.5 + 0.5 * conf))
-    # Turn toward the novel patch.
     g[1] = float(
         np.clip(
             (1.0 - 0.65 * strength) * float(g[1]) + 0.65 * strength * bearing * float(cfg.turn_gain),
@@ -418,7 +434,6 @@ def apply_visual_explore_goal(
             1.0,
         )
     )
-    # Walk toward it unless wall is extreme.
     forward_pull = float(cfg.forward_gain) * strength
     if wall_hazard > 0.7:
         forward_pull *= 0.35
@@ -427,3 +442,21 @@ def apply_visual_explore_goal(
     g[0] = float(np.clip(max(float(g[0]), forward_pull), -1.0, 1.0))
     g[3] = float(np.clip(max(float(g[3]), 0.45 + 0.35 * strength), 0.0, 1.0))
     return g
+
+
+# Re-export for callers that need aperture helpers.
+__all__ = [
+    "PATCH_FEAT_DIM",
+    "PatchNovelty",
+    "VisualNoveltyConfig",
+    "VisualNoveltyCues",
+    "VisualNoveltyTracker",
+    "apply_hex_aperture",
+    "apply_visual_explore_goal",
+    "eye_patch_feature_grid",
+    "eye_triangle_feature_grid",
+    "hex_aperture_mask",
+    "patch_feature_vector",
+    "stereo_patch_cells",
+    "stereo_patch_embedding",
+]

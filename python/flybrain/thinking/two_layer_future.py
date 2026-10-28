@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from flybrain.phase4 import HIGH_LEVEL_ACTION_DIM
+from flybrain.thinking.composer import is_hungry
 from flybrain.world_model.outcomes import (
     LifeExperience,
     OutcomeLabel,
@@ -32,6 +33,54 @@ _CANDIDATES: list[tuple[str, np.ndarray]] = [
     # Mate-seeking roam (sex tendency); locomotor, not object-tied.
     ("court", np.asarray([0.55, 0.45, 0.5, 0.75, 0.0], dtype=np.float32)),
 ]
+
+# Roaming candidates take their turn from a sensed cue instead of a fixed offset,
+# so the fly can steer either way. Feed only steers toward sugar.
+ROAM_CANDIDATES = ("explore", "court")
+CUE_TURN_MAX = 0.75
+SUGAR_SMELL_MIN = 0.005
+SUGAR_TURN_GAIN = 0.9
+NOVELTY_STEER_MIN = 0.15
+NOVELTY_TURN_GAIN = 0.75
+WALL_TURN_MIN = 0.05
+
+
+def sugar_approach_turn(bearing: float) -> float:
+    """Left/right antenna steering toward sugar (+ = right)."""
+    return float(np.clip(SUGAR_TURN_GAIN * float(bearing), -CUE_TURN_MAX, CUE_TURN_MAX))
+
+
+def cue_turn(signals: dict[str, Any]) -> tuple[float | None, str]:
+    """Signed turn (+ = right) toward the strongest sensed cue, or (None, "") if none.
+
+    Priority: sugar smell when hungry → peak visual novelty → wall-avoidance bias.
+    When the live pipeline supplies ``sugar_search_turn`` (smell trend over time),
+    it replaces plain left/right steering so a non-improving search turns harder.
+    """
+    if is_hungry(signals) and float(signals.get("sugar_smell", 0.0) or 0.0) >= SUGAR_SMELL_MIN:
+        search = signals.get("sugar_search_turn")
+        if search is not None:
+            return float(np.clip(float(search), -1.0, 1.0)), "sugar"
+        return sugar_approach_turn(float(signals.get("sugar_bearing", 0.0) or 0.0)), "sugar"
+    if float(signals.get("visual_novelty", 0.0) or 0.0) >= NOVELTY_STEER_MIN:
+        bearing = float(signals.get("novelty_bearing", 0.0) or 0.0)
+        return float(np.clip(NOVELTY_TURN_GAIN * bearing, -CUE_TURN_MAX, CUE_TURN_MAX)), "novelty"
+    wall_turn = float(signals.get("turn_bias", 0.0) or 0.0)
+    if abs(wall_turn) >= WALL_TURN_MIN:
+        return float(np.clip(wall_turn, -CUE_TURN_MAX, CUE_TURN_MAX)), "wall"
+    return None, ""
+
+
+def steer_candidate(name: str, action: np.ndarray, signals: dict[str, Any]) -> np.ndarray:
+    """Return a copy of ``action`` with its turn aimed at the current cue."""
+    out = np.asarray(action, dtype=np.float32).copy()
+    turn, source = cue_turn(signals)
+    if turn is None:
+        return out
+    if name in ROAM_CANDIDATES or (name == "feed" and source == "sugar"):
+        out[1] = turn
+    return out
+
 
 # Lower than historical defaults so sugar / novelty / hunger fire earlier → walk sooner.
 DEFAULT_STIMULUS_THRESHOLDS: dict[str, float] = {
@@ -360,7 +409,7 @@ def layer1_quick_scan(
     survival_risk = float(affect.get("survival_risk", 0.0))
     weights = experience.priority_weights(survival_risk=survival_risk)
     peaks = _stimulus_peaks(signals, affect, stimulus_thresholds)
-    pool = list(candidates or _CANDIDATES)
+    pool = [(name, steer_candidate(name, action, signals)) for name, action in (candidates or _CANDIDATES)]
     maturity = float(experience.maturity())
     safe_mode = TendencyDrive.is_safe_mode(signals, peaks)
     # Inject into signals for score_candidate (avoid threading many kwargs).

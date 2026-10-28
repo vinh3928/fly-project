@@ -340,7 +340,7 @@ def test_neo4j_creates_constraints_and_vector_index(monkeypatch) -> None:
     assert "CREATE CONSTRAINT place_id_unique" in cypher
     assert "CREATE CONSTRAINT wall_id_unique" in cypher
     assert "CREATE VECTOR INDEX place_view_vec" in cypher
-    assert "`vector.dimensions`: 90" in cypher
+    assert f"`vector.dimensions`: {PATCH_VEC_DIM}" in cypher
     assert "db.awaitIndex" in cypher
     graph.close()
     assert driver.closed is True

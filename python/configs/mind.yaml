@@ -8,21 +8,21 @@ database:
   schema: fly_mind
   # Multi-vector STM in fly_mind.short_term_memory (pgvector).
   # Tests should pass backend=in_memory explicitly; live runs use pgvector.
-  backend: pgvector  # in_memory | pgvector
+  backend: pgvector # in_memory | pgvector
 
 # Spatial mental map. Place nodes and their four Wall nodes live in Neo4j;
 # pgvector remains the short-term-memory backend.
 place_graph:
   enabled: true
-  backend: neo4j  # in_memory | neo4j
+  backend: neo4j # in_memory | neo4j
   uri: "bolt://127.0.0.1:7687"
   user: neo4j
-  password: flymindgraph  # override with NEO4J_PASSWORD
+  password: flymindgraph # override with NEO4J_PASSWORD
   database: neo4j
-  view_dim: 90
+  view_dim: 60 # PATCH_VEC_DIM: 6 hexagonal facets × 5 features × 2 eyes
   match_min: 0.97
-  update_every: 1  # upsert place from stereo patch_vec every N steps
-  familiarity_bump: 0.12  # per revisit bump on each Wall / item
+  update_every: 1 # upsert place from stereo patch_vec every N steps
+  familiarity_bump: 0.12 # per revisit bump on each Wall / item
   # Path/reference disambiguation: same view from different previous places
   # creates distinct Place nodes linked by ADJACENT edges.
   context_enabled: true
@@ -54,7 +54,7 @@ embedding:
   chemical_dim: 64
   internal_dim: 8
   vision_size: 64
-  vision_channels: 3  # RGB eyes (Unity CameraSensor Grayscale=false)
+  vision_channels: 3 # RGB eyes (Unity CameraSensor Grayscale=false)
 
 stm:
   top_k_similar: 5
@@ -78,11 +78,11 @@ llm:
   # Env overrides still work: OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL.
   base_url: "http://127.0.0.1:11434/v1"
   model: "llama3.2:3b"
-  api_key: "ollama"       # Ollama ignores it; the OpenAI-style client sends one
+  api_key: "ollama" # Ollama ignores it; the OpenAI-style client sends one
   timeout_seconds: 20
-  max_tokens: 120         # enough for the full JSON proposal without truncation
+  max_tokens: 120 # enough for the full JSON proposal without truncation
   temperature: 0.3
-  keep_alive: "10m"       # keep model warm between mind ticks
+  keep_alive: "10m" # keep model warm between mind ticks
   # When true, use the heuristic devil's advocate without HTTP (tests / offline).
   mock: false
   # Critique is requested every mind tick, so refresh off-thread and reuse the
@@ -133,15 +133,15 @@ live:
   max_steps: 200
   use_fake_env: false
   console_log: true
-  console_log_every: 1  # every decision step; mind text is included on motor ticks too
-  console_log_verbose: false  # set true or pass -v for full MIND* DETAIL JSON lines
+  console_log_every: 1 # every decision step; mind text is included on motor ticks too
+  console_log_verbose: false # set true or pass -v for full MIND* DETAIL JSON lines
 
 # Phase 9 architecture B: mind pushes act directives; motor tracks until next push.
 motor:
   enabled: true
-  mind_interval: 40  # ~10× less often than 4; motor still tracks every step
-  act_state_enabled: true  # act_anything / still / idle via mind push (no motor poll)
-  mode: heuristic  # heuristic | learned
+  mind_interval: 40 # ~10× less often than 4; motor still tracks every step
+  act_state_enabled: true # act_anything / still / idle via mind push (no motor poll)
+  mode: heuristic # heuristic | learned
   smoothing: 0.55
   max_delta: 0.75
   min_forward: 0.4
@@ -153,7 +153,7 @@ motor:
 # Phase 8: curiosity-driven exploration (novelty + prediction error, homeostatic gates)
 curiosity:
   enabled: true
-  curiosity_weight: 0.35
+  curiosity_weight: 0.8
   novelty_weight: 0.55
   prediction_weight: 0.45
   reward_cap: 1.0
@@ -185,6 +185,38 @@ boredom:
   escape_forward: 0.45
   escape_turn: 0.55
 
+# Hungry sugar search: compare sugar smell across mind ticks.
+# Rising → gentle antenna steering; flat → turn harder each tick (base + step·n,
+# capped); sharp drop → near U-turn. Side comes from antenna bearing, else the
+# last side. Resets when not hungry or no sugar smell.
+sugar_search:
+  enabled: true
+  rise_eps: 0.002 # relative smell gain per mind tick that counts as closer
+  sharp_drop: 0.05 # relative loss per mind tick that triggers reverse
+  base_turn: 0.25
+  turn_step: 0.1
+  max_turn: 0.75
+  reverse_turn: 1.0
+  bearing_min: 0.05
+  # Per-motor-step orient reflex: turn = steer_gain·bearing every step (not just
+  # mind ticks); forward = cruise·(1 − |turn|/pivot_turn) ⇒ pivots in place for
+  # sharp angles instead of orbiting the food on the motor's forward floor.
+  # Antenna tips are 38 mm apart ⇒ bearing ≈ 1.75·sin(angle); pivot beyond ~27°.
+  orient_enabled: true
+  steer_gain: 1.0
+  cruise_forward: 0.6
+  pivot_turn: 0.8
+  # Arrive + feed: extend proboscis and slow once smell ≥ probe_smell; on sugar
+  # (feet or proboscis taste ≥ feed_taste_min) stop the motor for a feed bout of
+  # feed_ticks motor ticks (= mind_interval). Repeats while the proboscis tastes
+  # sugar and the fly is hungry. Hungry at energy < 0.3 (hunger ≥ 0.7); once a
+  # feed bout starts, feeding continues until energy ≥ 0.9 (composer.ENERGY_SATED).
+  probe_smell: 0.6
+  probe_extension: 1.0
+  arrive_slow: 0.6
+  feed_taste_min: 0.2
+  feed_ticks: 40
+
 # Safe-mode default drive: juvenile → curiosity/explore; adult → sex/court; shaped by outcomes.
 tendency:
   enabled: true
@@ -198,12 +230,14 @@ tendency:
   base_bonus: 0.06
   safe_mode_bonus: 0.30
 
-# Eye novelty: each eye is a 3×3 grid of independent squares (no stereo merge).
-# Scalar viz / bearing used by motor+interrupt = peak patch (argmax), not a blend.
+# Eye novelty: each eye is a pointy-top hexagon split into 6 triangles
+# (diagonals through the center). Pixels outside the hex are masked.
+# Scalar viz / bearing used by motor+interrupt = peak facet (argmax), not a blend.
 visual_novelty:
   enabled: true
-  grid_rows: 3
-  grid_cols: 3
+  facet_count: 6
+  grid_rows: 1 # legacy alias (hex facets use facet_count)
+  grid_cols: 6
   first_visit_bonus: 1.0
   repeat_decay: 0.7
   change_weight: 0.45
@@ -211,13 +245,13 @@ visual_novelty:
   turn_gain: 0.85
   forward_gain: 0.55
   min_novelty_for_pull: 0.18
-  eye_bearing_offset: 0.2         # left eye shifts bearing left; right shifts right
-  # Habituation is per-square: a static cell loses novelty; change recovers it.
+  eye_bearing_offset: 0.2 # left eye shifts bearing left; right shifts right
+  # Habituation is per-facet: a static triangle loses novelty; change recovers it.
   habituation_enabled: true
-  static_change_threshold: 0.08   # patch change below this ⇒ "same view"
-  habituation_rate: 0.02          # slow decay toward habituated when static (~50 ticks)
-  dishabituation_rate: 0.5        # fast recovery when the patch changes
-  habituation_strength: 0.9       # up to 90% of novelty suppressed when fully habituated
+  static_change_threshold: 0.08 # facet change below this ⇒ "same view"
+  habituation_rate: 0.02 # slow decay toward habituated when static (~50 ticks)
+  dishabituation_rate: 0.5 # fast recovery when the facet changes
+  habituation_strength: 0.9 # up to 90% of novelty suppressed when fully habituated
 
 # Novelty-triggered vision-LLM "thinking mode": when the eyes see something
 # novel during low cognitive load, stop to think against a LOCAL vision LLM
@@ -225,11 +259,11 @@ visual_novelty:
 #   Recommended models:  qwen2.5vl:7b (best), qwen2.5vl:3b / moondream (light).
 #   Enable Ollama:  set enabled: true, mock: false, and run `ollama pull qwen2.5vl:7b`.
 visual_thinking:
-  enabled: true             # novelty → low-load vision-LLM think via Ollama
-  mock: false               # false = call Ollama; true = offline heuristic
+  enabled: true # novelty → low-load vision-LLM think via Ollama
+  mock: false # false = call Ollama; true = offline heuristic
   base_url: "http://127.0.0.1:11434/v1"
   model: "qwen2.5vl:7b"
-  api_key: "ollama"         # Ollama ignores it; the OpenAI-style client sends one
+  api_key: "ollama" # Ollama ignores it; the OpenAI-style client sends one
   timeout_seconds: 30
   # Gating: only "stop to think" when safe and worthwhile.
   min_visual_novelty: 0.45
@@ -239,14 +273,14 @@ visual_thinking:
   cooldown_ticks: 40
   image_size: 128
   # Motor influence.
-  inspect_forward_scale: 0.2   # damp forward while thinking (stop & look)
-  inspect_turn_gain: 0.6       # orient toward the stimulus while thinking
-  insight_ttl_ticks: 40        # how long an "approach" insight pulls the goal
+  inspect_forward_scale: 0.2 # damp forward while thinking (stop & look)
+  inspect_turn_gain: 0.6 # orient toward the stimulus while thinking
+  insight_ttl_ticks: 40 # how long an "approach" insight pulls the goal
 
 # Seeded personality — judgement reads a live snapshot every mind tick.
 # Later systems rewrite these via pipeline.personality.adjust / set_traits.
 personality:
-  risk_appetite: 0.45          # 0 = averse .. 1 = seeking
+  risk_appetite: 0.45 # 0 = averse .. 1 = seeking
   playfulness: 0.55
   curiosity_to_test: 0.70
   intelligence: 0.50
@@ -260,7 +294,7 @@ judgement:
   reject_memory_ticks: 80
   base_blend_weight: 0.30
   max_blend_weight: 0.60
-  accept_threshold: 0.15
+  accept_threshold: 0.05
   reject_threshold: 0.20
   ignore_weak_confidence: 0.2
   acknowledge_threshold: 0.18
@@ -280,19 +314,19 @@ stimulus_interrupt:
   # On clear (end of freeze), save patch_vec, smell_vec, sensors_vec, and joint_vec.
   history_backend: joint
   joint_neighbors: 8
-  joint_match_min: 0.92  # reserved for future L2
-  patch_match_min: 0.92  # L1 when cue is visual_novelty / new_stimulus
+  joint_match_min: 0.92 # reserved for future L2
+  patch_match_min: 0.92 # L1 when cue is visual_novelty / new_stimulus
   sensors_match_min: 0.92
   smell_enabled: true
-  smell_match_min: 0.92  # smell cue probe + L1 when cue is smell_novelty
+  smell_match_min: 0.92 # smell cue probe + L1 when cue is smell_novelty
   smell_neighbors: 8
-  patch_grid_rows: 3
-  patch_grid_cols: 3
+  patch_grid_rows: 1 # legacy; hexagonal eyes use 6 facets (see visual_novelty.facet_count)
+  patch_grid_cols: 6
   min_visual_novelty: 0.18
   cooldown_steps: 20
   deep_thought_steps: 80
   deep_thought_gain: 10.0
-  deep_thought_mind_interval: 4  # mind+devil every 4 steps while frozen (vs mind_interval 40)
+  deep_thought_mind_interval: 4 # mind+devil every 4 steps while frozen (vs mind_interval 40)
   # Hazard conditioning during deep thought: hits to mark a risk conditioned;
   # consecutive agreeing accept/acknowledge judgements early-unlock the freeze.
   conditioning_hit_threshold: 3
@@ -301,10 +335,10 @@ stimulus_interrupt:
   # STM smell probe. Backed by generic ModalChangeGate (reusable for vision /
   # sensors with ttl_seconds=10 L1 sample-and-diff).
   passive_smell_enabled: true
-  passive_smell_interval: 4       # sample antenna every N steps
-  passive_smell_change_min: 0.05  # per-channel delta that counts as a change
+  passive_smell_interval: 4 # sample antenna every N steps
+  passive_smell_change_min: 0.05 # per-channel delta that counts as a change
   passive_smell_refresh_ms: 500.0 # forced probe cadence when nothing changes
-  passive_smell_ttl_seconds: 0.0  # optional wall-clock cadence (0 = step-only)
+  passive_smell_ttl_seconds: 0.0 # optional wall-clock cadence (0 = step-only)
   # Legacy STM-CNN backend knobs (only when history_backend: stm):
   history_relative: true
   history_baseline_window: 40
@@ -328,6 +362,6 @@ interest:
   investigate_turn_gain: 0.7
   investigate_ttl_ticks: 40
   merge_bearing_tol: 0.25
-  eye_store_size: 32            # downsample each eye snapshot to NxN
-  max_eye_archives: 64          # keep this many acknowledge eye pairs
+  eye_store_size: 32 # downsample each eye snapshot to NxN
+  max_eye_archives: 64 # keep this many acknowledge eye pairs
   acknowledge_eye_match_max: 0.4

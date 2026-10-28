@@ -8,6 +8,12 @@ namespace FlySimulation.Fly.Sensors
     [RequireComponent(typeof(Camera))]
     public sealed class FlyEyeCamera : MonoBehaviour
     {
+        /// <summary>Near clip in meters.</summary>
+        public const float NearClip = 0.01f;
+
+        /// <summary>TagManager "Fly" layer: the fly's own antennae / proboscis, culled from the eyes.</summary>
+        public const int SelfLayer = 8;
+
         [SerializeField] private int width = 64;
         [SerializeField] private int height = 64;
         [SerializeField] private float fieldOfView = 140f;
@@ -77,10 +83,37 @@ namespace FlySimulation.Fly.Sensors
 
             _camera.fieldOfView = fieldOfView;
             _camera.targetTexture = _renderTexture;
-            _camera.nearClipPlane = 0.01f;
+            _camera.nearClipPlane = NearClip;
+            _camera.cullingMask = ~(1 << SelfLayer);
             _camera.farClipPlane = 10f;
             _camera.allowHDR = false;
             _camera.allowMSAA = false;
+        }
+
+        /// <summary>
+        /// Zero pixels outside the hexagonal aperture on the live RenderTexture
+        /// (PIP / CameraSensor path that only calls Camera.Render).
+        /// </summary>
+        public void MaskRenderTextureInPlace()
+        {
+            EnsureRenderTarget();
+            if (_camera == null || _renderTexture == null || _readback == null)
+            {
+                return;
+            }
+
+            var previous = RenderTexture.active;
+            RenderTexture.active = _renderTexture;
+            _readback.ReadPixels(new Rect(0, 0, width, height), 0, 0, false);
+            _readback.Apply(false);
+            var pixels = _readback.GetPixels32();
+            FlyEyeHexGeometry.ApplyApertureMask(pixels, width, height);
+            // PIP-only guides so Game-view panels show facets; CaptureFrame stays clean.
+            FlyEyeHexGeometry.DrawFacetGuides(pixels, width, height, new Color32(40, 220, 120, 255));
+            _readback.SetPixels32(pixels);
+            _readback.Apply(false);
+            Graphics.Blit(_readback, _renderTexture);
+            RenderTexture.active = previous;
         }
 
         public float[] CaptureFrame()
@@ -98,6 +131,10 @@ namespace FlySimulation.Fly.Sensors
             RenderTexture.active = previous;
 
             var pixels = _readback.GetPixels32();
+            FlyEyeHexGeometry.ApplyApertureMask(pixels, width, height);
+            _readback.SetPixels32(pixels);
+            _readback.Apply(false);
+
             int index = 0;
             for (int i = 0; i < pixels.Length; i++)
             {

@@ -8,6 +8,9 @@ namespace FlySimulation.Fly.Body
     /// </summary>
     public sealed class FlyHomeostasis : MonoBehaviour
     {
+        /// <summary>Energy never drops below this, so the fly cannot starve to zero.</summary>
+        public const float MinEnergy = 0.01f;
+
         [SerializeField] private float energy = 1f;
         [SerializeField] private float hydration = 1f;
         [SerializeField] private float fatigue;
@@ -35,7 +38,7 @@ namespace FlySimulation.Fly.Body
 
         public void Configure(ExperimentConfiguration config)
         {
-            energy = config.InitialEnergy;
+            energy = ClampEnergy(config.InitialEnergy);
             hydration = config.InitialHydration;
             fatigue = 0f;
             damage = 0f;
@@ -61,7 +64,7 @@ namespace FlySimulation.Fly.Body
                 burn += wingEnergyCost;
             }
 
-            energy = Mathf.Clamp01(energy - burn * deltaTime);
+            energy = ClampEnergy(energy - burn * deltaTime);
             hydration = Mathf.Clamp01(hydration - metabolismRate * 0.5f * deltaTime);
             fatigue = Mathf.Clamp01(fatigue + motorEffort * deltaTime - restRecoveryRate * (1f - motorEffort) * deltaTime);
             hunger = Mathf.Clamp01(1f - energy);
@@ -71,8 +74,13 @@ namespace FlySimulation.Fly.Body
 
         public void ConsumeSugar(float amount)
         {
-            energy = Mathf.Clamp01(energy + amount);
+            energy = ClampEnergy(energy + amount);
             hunger = Mathf.Clamp01(1f - energy);
+        }
+
+        public static float ClampEnergy(float value)
+        {
+            return Mathf.Clamp(value, MinEnergy, 1f);
         }
 
         public void ConsumeWater(float amount)

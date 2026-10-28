@@ -15,8 +15,17 @@ CONTACT_DIM = 6 * 5  # 30
 FOOT_TASTE_DIM = 6 * 8  # 48
 ANTENNA_DIM = 8 * 2  # 16
 # Unity ChemicalChannels: Sugar,Bitter,Salt,Acid,Water,Protein,Toxin,Odor
+SUGAR_CHANNEL = 0
+BITTER_CHANNEL = 1
 ODOR_CHANNEL = 7
+# Antenna tips sit 38 mm apart (Unity AntennaOdorSensor.HalfSpacing), so left/right
+# plume differences are ~9% at most; amplify the normalized difference into a
+# [-1, 1] bearing ≈ 1.75·sin(angle to source) (+ = source to the right).
+ANTENNA_BEARING_GAIN = 20.0
 PROBOSCIS_DIM = 2 + 8  # 10
+# Unity ProboscisSensor.CopyObservation: [extension, contact, gated taste × 8].
+PROBOSCIS_EXTENSION_INDEX = 0
+PROBOSCIS_CONTACT_INDEX = 1
 INTERNAL_DIM = 8
 BODY_STATE_DIM = 13
 INTERNAL_OFFSET = JOINT_DIM + CONTACT_DIM + FOOT_TASTE_DIM + ANTENNA_DIM + PROBOSCIS_DIM  # 176
@@ -34,12 +43,25 @@ def antenna_smell_vec(observation: np.ndarray) -> np.ndarray:
     return out
 
 
+def _antenna_channel(antennae: np.ndarray, channel: int) -> tuple[float, float, float]:
+    """Return (left, right, max) for one chemical channel on the two antennae."""
+    a = np.asarray(antennae, dtype=np.float32).reshape(-1)
+    left = float(a[channel]) if a.size > channel else 0.0
+    right = float(a[8 + channel]) if a.size > 8 + channel else 0.0
+    return left, right, max(left, right)
+
+
 def _odor_from_antennae(antennae: np.ndarray) -> tuple[float, float, float]:
     """Return (odor_left, odor_right, odor=max) from the Odor channel."""
-    a = np.asarray(antennae, dtype=np.float32).reshape(-1)
-    left = float(a[ODOR_CHANNEL]) if a.size > ODOR_CHANNEL else 0.0
-    right = float(a[8 + ODOR_CHANNEL]) if a.size > 8 + ODOR_CHANNEL else 0.0
-    return left, right, max(left, right)
+    return _antenna_channel(antennae, ODOR_CHANNEL)
+
+
+def antenna_bearing(left: float, right: float, gain: float = ANTENNA_BEARING_GAIN) -> float:
+    """Signed bearing from left/right antenna intensity (+ = stronger on the right)."""
+    total = float(left) + float(right)
+    if total <= 1e-6:
+        return 0.0
+    return float(np.clip(gain * (float(right) - float(left)) / total, -1.0, 1.0))
 
 
 @dataclass
@@ -70,6 +92,10 @@ class SensorySignals:
             "odor": float(self.summary.get("odor", 0.0)),
             "odor_left": float(self.summary.get("odor_left", 0.0)),
             "odor_right": float(self.summary.get("odor_right", 0.0)),
+            "sugar_smell": float(self.summary.get("sugar_smell", 0.0)),
+            "sugar_bearing": float(self.summary.get("sugar_bearing", 0.0)),
+            "bitter_smell": float(self.summary.get("bitter_smell", 0.0)),
+            "bitter_bearing": float(self.summary.get("bitter_bearing", 0.0)),
             "energy": float(self.summary.get("energy", 0.0)),
             "instability": float(self.summary.get("instability", 0.0)),
         }
@@ -140,6 +166,10 @@ class SignalBuilder:
         sugar += float(proboscis[2]) if proboscis.size > 2 else 0.0
         bitter += float(proboscis[3]) if proboscis.size > 3 else 0.0
         odor_left, odor_right, odor = _odor_from_antennae(antennae)
+        sugar_smell_left, sugar_smell_right, sugar_smell = _antenna_channel(antennae, SUGAR_CHANNEL)
+        bitter_smell_left, bitter_smell_right, bitter_smell = _antenna_channel(
+            antennae, BITTER_CHANNEL
+        )
         mean_contact = float(np.mean(contacts[0::5])) if contacts.size else 0.0
         energy = float(internal[0]) if internal.size else 0.0
         hunger = float(internal[6]) if internal.size > 6 else 0.0
@@ -159,12 +189,24 @@ class SignalBuilder:
             "odor": max(0.0, odor),
             "odor_left": max(0.0, odor_left),
             "odor_right": max(0.0, odor_right),
+            # Antenna smell (at range); "sugar"/"bitter" above stay contact taste.
+            "sugar_smell": max(0.0, sugar_smell),
+            "sugar_smell_left": max(0.0, sugar_smell_left),
+            "sugar_smell_right": max(0.0, sugar_smell_right),
+            "bitter_smell": max(0.0, bitter_smell),
+            "sugar_bearing": antenna_bearing(sugar_smell_left, sugar_smell_right),
+            "bitter_bearing": antenna_bearing(bitter_smell_left, bitter_smell_right),
             "mean_contact": max(0.0, min(1.0, mean_contact)),
             "energy": max(0.0, min(1.0, energy)),
             "hunger": max(0.0, min(1.0, hunger)),
             "damage": max(0.0, min(1.0, damage)),
             "instability": max(0.0, instability),
-            "proboscis_contact": float(proboscis[0]) if proboscis.size else 0.0,
+            "proboscis_contact": float(proboscis[PROBOSCIS_CONTACT_INDEX])
+            if proboscis.size > PROBOSCIS_CONTACT_INDEX
+            else 0.0,
+            "proboscis_extension": float(proboscis[PROBOSCIS_EXTENSION_INDEX])
+            if proboscis.size > PROBOSCIS_EXTENSION_INDEX
+            else 0.0,
             **summary_note,
         }
 
