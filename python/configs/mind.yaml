@@ -139,7 +139,13 @@ live:
 # Phase 9 architecture B: mind pushes act directives; motor tracks until next push.
 motor:
   enabled: true
-  mind_interval: 40 # ~10× less often than 4; motor still tracks every step
+  mind_interval: 40 # sync mode only: think every N motor steps
+  # Async mind: thoughts run on a background worker; the motor acts every step and
+  # never waits. A new stimulus (stimulus interrupt) discards the in-flight thought,
+  # holds the fly still, and deep-thinks on the stimulus until a reframed thought lands.
+  async_mind: true
+  async_min_steps: 4 # minimum motor steps between submitted thoughts
+  async_reframe_max_steps: 400 # max extra freeze waiting for the reframed deep thought
   act_state_enabled: true # act_anything / still / idle via mind push (no motor poll)
   mode: heuristic # heuristic | learned
   smoothing: 0.55

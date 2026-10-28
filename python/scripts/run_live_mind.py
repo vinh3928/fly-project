@@ -123,9 +123,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--mind-interval",
         type=int,
         default=None,
-        help="Think every N motor steps (1 = mind updates every step)",
+        help="Think every N motor steps (1 = mind updates every step); implies --sync-mind",
+    )
+    parser.add_argument(
+        "--sync-mind",
+        action="store_true",
+        help="Think inline every --mind-interval steps instead of on the async worker",
     )
     return parser.parse_args(argv)
+
+
+def apply_mind_mode_args(cfg, args) -> None:
+    """--mind-interval / --sync-mind switch the live run to inline (sync) thinking."""
+    if args.mind_interval is not None:
+        cfg.mind_interval = max(1, int(args.mind_interval))
+    if args.sync_mind or args.mind_interval is not None:
+        cfg.async_mind = False
 
 
 def _open_editor_env_early(port: int):
@@ -235,8 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         log_file.write_text("", encoding="utf-8")
     if args.verbose or args.debug:
         cfg.console_log_verbose = True
-    if args.mind_interval is not None:
-        cfg.mind_interval = max(1, int(args.mind_interval))
+    apply_mind_mode_args(cfg, args)
 
     thinking = raw.get("thinking") or {}
     decision_hz = float(thinking.get("decision_hz", 20))

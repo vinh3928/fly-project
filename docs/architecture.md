@@ -31,6 +31,31 @@ Sense → Decide → Act → Change environment → Record → Learn
 | Vision capture | 30 Hz |
 | Sensor recording | 50 Hz |
 | Training updates | Asynchronous |
+| Live mind (Python) | Asynchronous (`motor.async_mind`) |
+
+### Asynchronous mind
+
+The motor acts on every Unity decision and never waits for the mind. Each
+thought runs on one background worker (`flybrain/pipeline/async_mind.py`) from
+a snapshot of the senses taken on the motor loop. When it finishes, its plan is
+committed to the motor on the next step. A new thought starts once the worker
+is idle and at least `async_min_steps` steps have passed.
+
+New stimuli are handled by deep thinking (pause and reframe):
+
+- the motor-side stimulus interrupt arms on a novel cue and holds the fly still
+  (`idle`)
+- the in-flight thought is invalidated; it stops at its next LLM boundary and
+  its plan, made before the stimulus, never reaches the motor
+- the worker then runs deep thoughts back to back on the heightened senses
+- the freeze clears after `deep_thought_steps` *and* at least one reframed deep
+  thought has committed (capped by `async_reframe_max_steps`), or earlier on a
+  confirmed judgement unlock
+
+The worker and motor loop share state under a FIFO lock that the worker drops
+around LLM calls; short-term memory is serialized separately. Tests, the
+benchmark and `--sync-mind` / `--mind-interval N` use the synchronous loop, which
+thinks inline every `mind_interval` steps.
 
 ## Learning description
 
