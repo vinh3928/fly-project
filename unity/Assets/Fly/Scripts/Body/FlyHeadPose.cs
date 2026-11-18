@@ -11,6 +11,8 @@ namespace FlySimulation.Fly.Body
     {
         public const float MaxPitchDegrees = 45f;
         public const float MaxDrop = 0.01f;
+        /// <summary>Max left/right look yaw while scanning for landmarks (degrees).</summary>
+        public const float MaxLookYawDegrees = 180f;
 
         /// <summary>Proboscis extension at which the head starts lowering (probe mode extends to 1).</summary>
         public const float ProbeExtensionStart = 0.5f;
@@ -24,6 +26,7 @@ namespace FlySimulation.Fly.Body
         [SerializeField] private float response = 4f;
 
         public float Lower { get; private set; }
+        public float LookYaw { get; private set; }
 
         public void Bind(Transform headMount, Transform headVisual, ProboscisSensor proboscisSensor)
         {
@@ -33,6 +36,13 @@ namespace FlySimulation.Fly.Body
             mountRest = mount != null ? mount.localPosition : Vector3.zero;
             headRest = head != null ? head.localPosition : Vector3.zero;
             Apply(0f);
+        }
+
+        /// <summary>Yaw the head/eyes left-right (landmark scan); clamped to ±MaxLookYawDegrees.</summary>
+        public void SetLookYaw(float degrees)
+        {
+            LookYaw = Mathf.Clamp(degrees, -MaxLookYawDegrees, MaxLookYawDegrees);
+            Apply(Lower);
         }
 
         public static float TargetLower(float proboscisExtension)
@@ -63,7 +73,7 @@ namespace FlySimulation.Fly.Body
             if (mount != null)
             {
                 mount.localPosition = mountRest + drop;
-                mount.localRotation = Quaternion.Euler(pitch, 0f, 0f);
+                mount.localRotation = Quaternion.Euler(pitch, LookYaw, 0f);
             }
 
             if (head != null)

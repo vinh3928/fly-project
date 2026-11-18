@@ -10,6 +10,15 @@ train:
   device: cpu
   checkpoint_path: ../data/checkpoints/vision_head.pt
 
+# Unity eye frames + ray labels from Tools → Fly → Record Vision Dataset.
+# python -m scripts.train_vision_head --unity  (writes train.checkpoint_path)
+unity_train:
+  dataset_dir: ../data/vision_unity
+  epochs: 15
+  batch_size: 64
+  learning_rate: 0.001
+  val_fraction: 0.1
+
 arena:
   half_extent: 0.45
   success_radius: 0.08

@@ -103,13 +103,34 @@ def _live(bearing: float, smell: float = 0.1, **extra) -> dict:
 
 
 def test_steer_pivots_in_place_for_sharp_bearing():
-    t = _tracker(steer_gain=1.5, pivot_turn=0.8, cruise_forward=0.6)
+    t = _tracker(steer_gain=1.5, pivot_turn=0.8, cruise_forward=0.6, pivot_max_ticks=12)
     t.observe(_sig(0.1, bearing=0.7))
     out = t.steer(_live(0.7))
     assert out.turn == pytest.approx(1.0)
     assert out.forward == pytest.approx(0.0)
     assert out.mode == "orient"
     assert out.proboscis == pytest.approx(0.0)
+
+
+def test_steer_align_then_go_after_pivot_budget():
+    """Saturated bearing: pivot briefly, then crawl while still turning."""
+    t = _tracker(
+        steer_gain=1.5,
+        pivot_turn=0.8,
+        cruise_forward=0.6,
+        pivot_max_ticks=3,
+        align_go_forward=0.35,
+    )
+    t.observe(_sig(0.1, bearing=0.7))
+    pivots = [t.steer(_live(0.7)) for _ in range(3)]
+    assert all(o.forward == pytest.approx(0.0) for o in pivots)
+    going = t.steer(_live(0.7))
+    assert going.turn == pytest.approx(1.0)
+    assert going.forward == pytest.approx(0.35)
+    # Aligning resets the pivot streak so a later sharp turn can pivot again.
+    aligned = t.steer(_live(0.0))
+    assert aligned.forward == pytest.approx(0.6)
+    assert t.steer(_live(0.7)).forward == pytest.approx(0.0)
 
 
 def test_steer_walks_straight_when_aligned():
@@ -209,11 +230,11 @@ def test_is_hungry_below_seek_threshold_and_holds_until_sated_while_feeding():
         is_sated,
     )
 
-    assert (HUNGER_SEEK_MIN, ENERGY_SEEK_MAX, ENERGY_SATED) == (0.7, 0.3, 0.9)
+    assert (HUNGER_SEEK_MIN, ENERGY_SEEK_MAX, ENERGY_SATED) == (0.45, 0.55, 0.9)
     assert is_hungry({"energy": 0.29, "hunger": 0.71})
-    assert is_hungry({"energy": 0.3, "hunger": 0.7})  # hunger 0.7 → seek
-    assert not is_hungry({"energy": 0.35, "hunger": 0.65})
+    assert is_hungry({"energy": 0.55, "hunger": 0.45})  # hunger 0.45 → seek
     assert not is_hungry({"energy": 0.6, "hunger": 0.4})
+    assert not is_hungry({"energy": 0.8, "hunger": 0.2})
     feeding = {"energy": 0.85, "hunger": 0.15, FEEDING_UNTIL_SATED_KEY: True}
     assert is_hungry(feeding) and not is_sated(feeding)
     sated = feeding | {"energy": 0.9, "hunger": 0.1}
@@ -234,11 +255,18 @@ def test_feeding_continues_past_seek_threshold_until_energy_09():
     assert t.steer(_live(0.0, smell=0.85, **ON_FOOD)) is None
 
 
-def test_no_search_between_03_and_09_without_feeding_first():
+def test_no_search_above_seek_threshold_without_feeding_first():
     t = _tracker()
-    for energy in (0.35, 0.8):
+    for energy in (0.6, 0.8):
         t.observe(_energy_sig(energy))
         assert not t.active and not t.feeding_until_sated
+
+
+def test_search_starts_when_energy_below_seek_max():
+    t = _tracker()
+    state = t.observe(_energy_sig(0.5))
+    assert state.turn is not None
+    assert t.active
 
 
 def test_pipeline_flags_feeding_session_in_signals_for_composer():
@@ -369,6 +397,31 @@ def test_pipeline_feeding_sets_proboscis_and_blocks_interrupt_arming(monkeypatch
         info=info,
     )
     assert not pipe._interrupt_pending
+    pipe.close()
+
+
+def test_pipeline_feed_beats_active_route_home():
+    """Route must not force p0.0 while standing on sugar (live_mind 12180)."""
+    from flybrain.thinking.route_home import RouteHomeState
+
+    pipe = _pipeline()
+    pipe.sugar_search.observe(_sig(0.85))
+    pipe.route_home._state = RouteHomeState(
+        mode="route",
+        turn=-0.05,
+        forward=0.65,
+        home_id="elsewhere",
+        hops_left=2,
+        reason="path",
+        food_kind="sugar_puddle",
+    )
+    sensory = _Sensory(0.0, sugar_smell=0.85, proboscis_contact=1.0, sugar=0.9)
+    info: dict = {}
+    pipe._apply_sugar_orient(sensory, info)
+    assert info["sugar_orient_mode"].startswith("feed(")
+    assert info["sugar_orient"][2] == pytest.approx(1.0)
+    assert "route_home_orient" not in info
+    assert float(pipe.motor.goal[4]) == pytest.approx(1.0)
     pipe.close()
 
 

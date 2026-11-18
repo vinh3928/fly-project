@@ -18,6 +18,7 @@ namespace FlySimulation.Fly.Motors
         [SerializeField] private FlyBodyController body;
         [SerializeField] private ControlMode mode = ControlMode.HighLevelGait;
         [SerializeField] private ProboscisActuator proboscis;
+        [SerializeField] private FlyHeadPose headPose;
         [SerializeField] private float stepFrequency = 2f;
         [SerializeField] private float stepAmplitude = 25f;
         [SerializeField] private float turnBias;
@@ -25,6 +26,10 @@ namespace FlySimulation.Fly.Motors
         [SerializeField] private float bodyHeightCommand = 0.5f;
         [SerializeField] private float walkSpeed = 0.18f;
         [SerializeField] private float turnSpeed = 4.0f;
+        [Tooltip("|forward| below this while turning yaws the head for landmark scan.")]
+        [SerializeField] private float headScanForwardMax = 0.12f;
+        [Tooltip("How far the head leads the body (degrees) during a pivot landmark scan.")]
+        [SerializeField] private float headScanLeadDegrees = 20f;
 
         private float _phase;
         private readonly float[] _jointTargets = new float[18];
@@ -41,6 +46,15 @@ namespace FlySimulation.Fly.Motors
         {
             body = bodyController;
             proboscis = proboscisActuator;
+            if (headPose == null && bodyController != null)
+            {
+                headPose = bodyController.GetComponent<FlyHeadPose>();
+            }
+        }
+
+        public void BindHead(FlyHeadPose pose)
+        {
+            headPose = pose;
         }
 
         public void SetHighLevelCommands(float forward, float turn, float height, float frequency)
@@ -88,6 +102,7 @@ namespace FlySimulation.Fly.Motors
             {
                 UpdateGait(dt);
                 ApplyLocomotion(dt);
+                UpdateHeadScan(dt);
             }
             else
             {
@@ -95,6 +110,36 @@ namespace FlySimulation.Fly.Motors
             }
 
             _lastEffort = Mathf.Clamp01(Mathf.Abs(walkForward) + Mathf.Abs(turnBias) + _proboscisExtension * 0.1f);
+        }
+
+        /// <summary>
+        /// While pivoting in place (landmark scan), keep the head leading the body by
+        /// about one scan step so the thorax carries the full 360° spin. Walking
+        /// returns the head to center.
+        /// </summary>
+        private void UpdateHeadScan(float dt)
+        {
+            if (headPose == null)
+            {
+                return;
+            }
+
+            if (Mathf.Abs(walkForward) < headScanForwardMax && Mathf.Abs(turnBias) > 1e-3f)
+            {
+                float lead = Mathf.Clamp(headScanLeadDegrees, 5f, FlyHeadPose.MaxLookYawDegrees);
+                float targetLead = Mathf.Sign(turnBias) * lead;
+                float rate = Mathf.Abs(turnBias) * turnSpeed * Mathf.Rad2Deg;
+                float next = Mathf.MoveTowards(headPose.LookYaw, targetLead, rate * dt);
+                headPose.SetLookYaw(next);
+            }
+            else if (Mathf.Abs(walkForward) >= headScanForwardMax)
+            {
+                float centered = Mathf.MoveTowards(headPose.LookYaw, 0f, 90f * dt);
+                if (!Mathf.Approximately(centered, headPose.LookYaw))
+                {
+                    headPose.SetLookYaw(centered);
+                }
+            }
         }
 
         private void UpdateGait(float dt)
@@ -151,15 +196,20 @@ namespace FlySimulation.Fly.Motors
             // Translate / yaw the root so directional motion matches the animated gait.
             Vector3 delta = forward * (walkForward * walkSpeed * dt);
             float standY = body.Balance != null ? body.Balance.TargetHeight : rb.position.y;
-            Vector3 next = rb.position + delta;
-            next.y = standY;
+            Vector3 start = rb.position;
+            start.y = standY;
+            Vector3 next = start + BodyClearance.ClampMove(body.transform, start, rb.rotation, delta);
             rb.MovePosition(next);
 
             if (Mathf.Abs(turnBias) > 1e-4f)
             {
                 // turnBias in [-1,1]; turnSpeed is rad/s at full command.
                 float yawDegrees = turnBias * turnSpeed * dt * Mathf.Rad2Deg;
-                rb.MoveRotation(rb.rotation * Quaternion.Euler(0f, yawDegrees, 0f));
+                Quaternion turned = rb.rotation * Quaternion.Euler(0f, yawDegrees, 0f);
+                if (BodyClearance.CanRotate(body.transform, next, rb.rotation, turned))
+                {
+                    rb.MoveRotation(turned);
+                }
             }
 
             rb.linearVelocity = Vector3.zero;

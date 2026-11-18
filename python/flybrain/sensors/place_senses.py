@@ -22,7 +22,13 @@ SENSE_CHANNELS: tuple[str, ...] = (
     "odor_right",
     "bitter",
     "sugar",
+    "sugar_smell",  # antenna plume peak for reverse-path / home bookmarks
+    "opening_strength",
 )
+
+# Trained vision head: fraction of the view with no wall within reach. Unity dataset:
+# ≥ 0.6 on ~80% of outside views, ≤ 2% of views from inside the box.
+OUTSIDE_OPENING_MIN = 0.6
 
 _CHEMICAL_CHANNELS: tuple[str, ...] = (
     "bitter",
@@ -50,11 +56,13 @@ def infer_place_label(
     *,
     present_min: float = 0.05,
     wall_min: float = 0.55,
+    outside_min: float = OUTSIDE_OPENING_MIN,
 ) -> str:
     """Label a vision Place from co-located sensor evidence.
 
     Vision keys the node; chemistry names it when a puddle/plume is present at
     that view. Example: bitter 0.49 at a chromatic patch → ``\"puddle\"``.
+    A mostly open view (``opening_strength``) means the fly is out of the box.
     """
     bitter = float(raw.get("bitter", 0.0) or 0.0)
     sugar = float(raw.get("sugar", 0.0) or 0.0)
@@ -64,9 +72,12 @@ def infer_place_label(
         float(raw.get("odor_right", 0.0) or 0.0),
     )
     wall = float(raw.get("wall_hazard", 0.0) or 0.0)
+    opening = float(raw.get("opening_strength", 0.0) or 0.0)
 
     if bitter >= float(present_min) or sugar >= float(present_min):
         return "puddle"
+    if opening >= float(outside_min):
+        return "outside"
     if odor >= float(present_min):
         return "odor_plume"
     if wall >= float(wall_min):
@@ -86,9 +97,12 @@ def merge_place_senses(
     """Merge current sensor/smell readings into place props (vision-correlated)."""
     out = dict(props or {})
     inferred = str(label or infer_place_label(raw, present_min=present_min))
-    # Keep a more specific prior label unless we now have chemical evidence.
+    # Keep a more specific prior label unless we now have chemical evidence;
+    # a drifting odor plume does not rename a place already known to be outside.
     prior = str(out.get("label") or "")
-    if inferred in ("puddle", "odor_plume") or not prior or prior == "place":
+    if inferred in ("puddle", "outside") or not prior or prior == "place":
+        out["label"] = inferred
+    elif inferred == "odor_plume" and prior != "outside":
         out["label"] = inferred
     elif inferred == "wall" and prior == "place":
         out["label"] = "wall"

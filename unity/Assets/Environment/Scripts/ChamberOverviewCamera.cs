@@ -100,6 +100,18 @@ namespace FlySimulation.Environment
                     continue;
                 }
 
+                // Display 2 chase + Display 3 mind-log must stay enabled.
+                if (FlyFollowCamera.IsFollowCamera(other) || MindLogDisplay.IsLogCamera(other))
+                {
+                    other.enabled = true;
+                    if (other.CompareTag("MainCamera"))
+                    {
+                        other.tag = "Untagged";
+                    }
+
+                    continue;
+                }
+
                 if (other.gameObject.name != "OverviewCamera")
                 {
                     other.enabled = false;
@@ -113,6 +125,7 @@ namespace FlySimulation.Environment
 
             gameObject.tag = "MainCamera";
             _camera.enabled = true;
+            _camera.targetDisplay = 0;
             _camera.depth = 100f;
         }
 
@@ -145,14 +158,15 @@ namespace FlySimulation.Environment
 
             cam.enabled = true;
             cam.tag = "MainCamera";
-            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.targetDisplay = 0;
+            cam.clearFlags = RenderSettings.skybox != null ? CameraClearFlags.Skybox : CameraClearFlags.SolidColor;
             cam.backgroundColor = new Color(0.12f, 0.13f, 0.16f);
             cam.fieldOfView = fov;
             // Avoid ultra-small near clips — they can make the whole Game view blank on Metal.
             cam.nearClipPlane = Mathf.Clamp(extent * 0.05f, 0.01f, 0.05f);
-            cam.farClipPlane = Mathf.Max(10f, extent * 40f);
+            cam.farClipPlane = Mathf.Max(OutsideWorldLayout.ViewDistance, extent * 40f);
             cam.depth = 100f;
-            cam.cullingMask = ~0;
+            cam.cullingMask = ChamberWallHider.OverviewCullingMask;
             cam.targetTexture = null;
         }
     }

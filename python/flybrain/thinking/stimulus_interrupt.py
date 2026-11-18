@@ -48,6 +48,9 @@ _DEEP_THOUGHT_SENSE_KEYS = (
 
 DEFAULT_MODALITIES: tuple[str, ...] = ("left_eye", "right_eye", "sensors")
 
+# Internal-state rising edges that force a deep-thought reframe (no STM novelty needed).
+STATUS_REFRAME_CUES = frozenset({"hunger", "low_energy", "survival"})
+
 _MODALITY_PART_ATTR = {
     "left_eye": "left_eye_vec",
     "right_eye": "right_eye_vec",
@@ -106,6 +109,10 @@ class StimulusInterruptConfig:
     passive_smell_refresh_ms: float = 500.0  # forced probe cadence
     passive_smell_ttl_seconds: float = 0.0  # optional wall-clock sample cadence
     modalities: tuple[str, ...] = DEFAULT_MODALITIES
+    # Rising-edge internal status → deep-thought reframe (hunger / low energy / survival).
+    # Bypasses STM history + crisis_skip so the mind can rethink when needs change.
+    status_reframe_enabled: bool = True
+    status_deep_thought_steps: int | None = None  # None ⇒ use deep_thought_steps
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> StimulusInterruptConfig:
@@ -386,6 +393,52 @@ def build_interrupt_joint_vec(
     joint = np.concatenate([p, s, sens]).astype(np.float32)
     assert joint.shape[0] == INTERRUPT_JOINT_VEC_DIM
     return _l2_normalize(joint)
+
+
+@dataclass
+class StatusReframeTracker:
+    """Detect rising edges on hunger / low-energy / survival for deep-thought reframes."""
+
+    was_hungry: bool = False
+    was_low_energy: bool = False
+    was_high_survival: bool = False
+
+    def reset(self) -> None:
+        self.was_hungry = False
+        self.was_low_energy = False
+        self.was_high_survival = False
+
+    def observe(
+        self,
+        signals: dict[str, Any],
+        affect: dict[str, Any],
+        *,
+        stimulus_thresholds: dict[str, float] | None = None,
+    ) -> str | None:
+        """Return a status cue on rising edge, else None. Always updates latches."""
+        from flybrain.thinking.composer import is_hungry
+        from flybrain.thinking.two_layer_future import DEFAULT_STIMULUS_THRESHOLDS
+
+        thr = {**DEFAULT_STIMULUS_THRESHOLDS, **(stimulus_thresholds or {})}
+        hungry = bool(is_hungry(signals, affect))
+        energy = float(signals.get("energy", 1.0 - float(signals.get("hunger", 0.0) or 0.0)))
+        low_energy = energy < float(thr.get("low_energy", 0.55))
+        survival = float(affect.get("survival_risk", 0.0) or 0.0)
+        high_survival = survival > float(thr.get("survival", 0.35))
+
+        cue: str | None = None
+        # Prefer the most specific need cue when several edges fire together.
+        if hungry and not self.was_hungry:
+            cue = "hunger"
+        elif low_energy and not self.was_low_energy:
+            cue = "low_energy"
+        elif high_survival and not self.was_high_survival:
+            cue = "survival"
+
+        self.was_hungry = hungry
+        self.was_low_energy = low_energy
+        self.was_high_survival = high_survival
+        return cue
 
 
 def has_candidate_cue(
@@ -826,16 +879,18 @@ def evaluate_stimulus_interrupt(
     sensors_vec: np.ndarray | None = None,
     passive_smell: PassiveSmellGate | None = None,
     now_ms: float | None = None,
+    status_tracker: StatusReframeTracker | None = None,
 ) -> StimulusInterruptDecision:
     """Decide whether to arm a stimulus interrupt.
 
     Default (``history_backend=joint``):
-      0) Passive smell (cheap, in-memory) gates the STM smell probe, and a
+      0) Status rising edge (hunger / low_energy / survival) → arm reframe immediately.
+      1) Passive smell (cheap, in-memory) gates the STM smell probe, and a
          no-cue step returns before any STM query.
-      1) Taste / visual / STM smell-novelty opens the candidate cue.
-      2) Build L2-block-normalized joint(patch, smell, sensors).
-      3) L1: retrieve top-k by joint_vec, then compare only the cue column.
-      4) STM miss ⇒ may arm; on confirm patch+smell+sensors+joint are saved.
+      2) Taste / visual / STM smell-novelty opens the candidate cue.
+      3) Build L2-block-normalized joint(patch, smell, sensors).
+      4) L1: retrieve top-k by joint_vec, then compare only the cue column.
+      5) STM miss ⇒ may arm; on confirm patch+smell+sensors+joint are saved.
          (L2 whole-joint familiarity deferred.)
     """
     del patch_cache
@@ -846,6 +901,22 @@ def evaluate_stimulus_interrupt(
     if step < int(cooldown_until_step):
         out.reason = "cooldown"
         return out
+
+    # Internal need change: reframe deep thought even under survival crisis.
+    if bool(config.status_reframe_enabled) and status_tracker is not None:
+        status_cue = status_tracker.observe(
+            signals, affect, stimulus_thresholds=stimulus_thresholds
+        )
+        if status_cue:
+            out.candidate = True
+            out.cue = status_cue
+            out.history_miss = True
+            out.should_arm = True
+            out.soft_low_load = True
+            out.crisis = False
+            out.novel_modalities = ["status"]
+            out.reason = f"status_reframe:{status_cue}"
+            return out
 
     smell_emb: np.ndarray | None = None
     if smell_vec is not None:
@@ -1038,7 +1109,8 @@ def evaluate_stimulus_interrupt(
     soft = can_investigate_interest(signals=signals, affect=affect, config=retrospective)
     out.soft_low_load = soft
     out.crisis = not soft
-    if out.crisis:
+    # Status reframes already returned above; novelty interrupts still skip in crisis.
+    if out.crisis and cue not in STATUS_REFRAME_CUES:
         out.reason = "crisis_skip"
         return out
 

@@ -8,15 +8,35 @@ namespace FlySimulation.Fly.Sensors
     [RequireComponent(typeof(Camera))]
     public sealed class FlyEyeCamera : MonoBehaviour
     {
-        /// <summary>Near clip in meters.</summary>
-        public const float NearClip = 0.01f;
+        /// <summary>
+        /// Near clip in meters. The near plane's corners must stay inside the solid head sphere
+        /// (<see cref="Body.FlyBodyController.HeadRadius"/>) at <see cref="MountOffset"/> /
+        /// <see cref="MountRotation"/>, or a wall touching the head is clipped away and the eye
+        /// sees through it. 0.6 mm fits the 4 mm spacing with ±2° outward yaw.
+        /// </summary>
+        public const float NearClip = 0.0006f;
+
+        /// <summary>Half the left/right eye spacing in meters (4 mm apart).</summary>
+        public const float HalfSpacing = 0.002f;
+
+        /// <summary>
+        /// Yaw of each eye away from body forward in degrees (left −yaw, right +yaw).
+        /// Gives distinct left/right views in the eye PIP overlay.
+        /// </summary>
+        public const float MountYawDegrees = 2f;
+
+        /// <summary>Default vertical field of view in degrees.</summary>
+        public const float DefaultFieldOfView = 140f;
+
+        /// <summary>Far clip in meters: far enough to see the outside world's trees and town.</summary>
+        public const float FarClip = FlySimulation.Environment.OutsideWorldLayout.ViewDistance;
 
         /// <summary>TagManager "Fly" layer: the fly's own antennae / proboscis, culled from the eyes.</summary>
         public const int SelfLayer = 8;
 
         [SerializeField] private int width = 64;
         [SerializeField] private int height = 64;
-        [SerializeField] private float fieldOfView = 140f;
+        [SerializeField] private float fieldOfView = DefaultFieldOfView;
         [SerializeField] private bool grayscale = false;
         [SerializeField] private bool isLeftEye = true;
 
@@ -68,7 +88,8 @@ namespace FlySimulation.Fly.Sensors
                 _renderTexture.Release();
             }
 
-            _renderTexture = new RenderTexture(width, height, 16, RenderTextureFormat.ARGB32)
+            // 24-bit depth: NearClip..FarClip spans five orders of magnitude; 16 bits z-fights.
+            _renderTexture = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32)
             {
                 filterMode = FilterMode.Bilinear,
                 name = isLeftEye ? "LeftEyeRT" : "RightEyeRT"
@@ -85,7 +106,7 @@ namespace FlySimulation.Fly.Sensors
             _camera.targetTexture = _renderTexture;
             _camera.nearClipPlane = NearClip;
             _camera.cullingMask = ~(1 << SelfLayer);
-            _camera.farClipPlane = 10f;
+            _camera.farClipPlane = FarClip;
             _camera.allowHDR = false;
             _camera.allowMSAA = false;
         }
@@ -116,11 +137,16 @@ namespace FlySimulation.Fly.Sensors
             RenderTexture.active = previous;
         }
 
-        public float[] CaptureFrame()
+        /// <summary>
+        /// Render and read back without the hex aperture mask, bottom row first — what the
+        /// ML-Agents camera sensor sends to Python (after its top-first flip).
+        /// </summary>
+        public Color32[] CaptureRawPixels()
         {
+            EnsureRenderTarget();
             if (_camera == null || _renderTexture == null)
             {
-                return _frameBuffer;
+                return null;
             }
 
             var previous = RenderTexture.active;
@@ -129,8 +155,17 @@ namespace FlySimulation.Fly.Sensors
             _readback.ReadPixels(new Rect(0, 0, width, height), 0, 0, false);
             _readback.Apply(false);
             RenderTexture.active = previous;
+            return _readback.GetPixels32();
+        }
 
-            var pixels = _readback.GetPixels32();
+        public float[] CaptureFrame()
+        {
+            if (_camera == null || _renderTexture == null)
+            {
+                return _frameBuffer;
+            }
+
+            var pixels = CaptureRawPixels();
             FlyEyeHexGeometry.ApplyApertureMask(pixels, width, height);
             _readback.SetPixels32(pixels);
             _readback.Apply(false);
@@ -158,6 +193,30 @@ namespace FlySimulation.Fly.Sensors
         {
             CaptureFrame();
             return _readback != null ? _readback.EncodeToPNG() : System.Array.Empty<byte>();
+        }
+
+        /// <summary>
+        /// Local offset on an unscaled mount at the head center; +X is the fly's right.
+        /// Parent under <c>AntennaMount</c> (not the scaled Head mesh) so spacing is true meters.
+        /// </summary>
+        public static Vector3 MountOffset(bool isLeft)
+        {
+            return new Vector3(isLeft ? -HalfSpacing : HalfSpacing, 0f, 0f);
+        }
+
+        /// <summary>Local yaw: left eye −<see cref="MountYawDegrees"/>, right eye +.</summary>
+        public static Quaternion MountRotation(bool isLeft)
+        {
+            float yaw = isLeft ? -MountYawDegrees : MountYawDegrees;
+            return Quaternion.Euler(0f, yaw, 0f);
+        }
+
+        /// <summary>Distance from the eye to a corner of its near clip plane.</summary>
+        public static float NearPlaneCornerDistance(float verticalFovDegrees, float aspect)
+        {
+            float tanV = Mathf.Tan(0.5f * verticalFovDegrees * Mathf.Deg2Rad);
+            float tanH = tanV * aspect;
+            return NearClip * Mathf.Sqrt(1f + tanV * tanV + tanH * tanH);
         }
 
         public Vector3 Forward => transform.forward;

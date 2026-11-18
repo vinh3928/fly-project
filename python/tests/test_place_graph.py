@@ -270,6 +270,192 @@ def test_same_place_micro_motion_keeps_node() -> None:
     assert stay.edge_created is False
 
 
+def test_should_leave_same_place_on_novelty_and_landmarks() -> None:
+    from flybrain.memory.place_graph import should_leave_same_place
+
+    leave, why = should_leave_same_place(visual_novelty=0.4, novelty_split_min=0.25)
+    assert leave is True and why == "novelty"
+    leave, why = should_leave_same_place(new_stimulus=True)
+    assert leave is True and why == "new_stimulus"
+    leave, why = should_leave_same_place(
+        opening=0.9, prev_opening=0.5, opening_delta_min=0.15
+    )
+    assert leave is True and why == "opening_delta"
+    leave, why = should_leave_same_place(
+        wall=0.8, prev_wall=0.1, wall_delta_min=0.15
+    )
+    assert leave is True and why == "wall_delta"
+    leave, why = should_leave_same_place(visual_novelty=0.1, opening=0.5, prev_opening=0.5)
+    assert leave is False and why == ""
+
+
+def test_leave_same_place_creates_new_node_on_identical_view() -> None:
+    from flybrain.memory.place_graph import observe_place
+
+    g = InMemoryPlaceGraph()
+    first = observe_place(g, _view(7), fly_id="fly_a", step=1)
+    split = observe_place(
+        g,
+        _view(7),
+        fly_id="fly_a",
+        step=2,
+        from_place_id=first.place.id,
+        context_enabled=True,
+        leave_same_place=True,
+        split_reason="opening_delta",
+    )
+    assert split.is_new is True
+    assert split.match_reason == "created"
+    assert split.split_reason == "opening_delta"
+    assert split.place.id != first.place.id
+    assert split.edge_created is True
+    assert g.has_adjacent(first.place.id, split.place.id)
+
+
+def test_leave_same_place_can_take_adjacent_hop() -> None:
+    from flybrain.memory.place_graph import observe_place
+
+    g = InMemoryPlaceGraph()
+    lobby = observe_place(g, _view(1), fly_id="fly_a", step=1)
+    room = observe_place(
+        g,
+        _view(2),
+        fly_id="fly_a",
+        step=2,
+        from_place_id=lobby.place.id,
+        context_enabled=True,
+    )
+    # Landmark split while looking at the known adjacent room → hop there.
+    hop = observe_place(
+        g,
+        _view(2),
+        fly_id="fly_a",
+        step=3,
+        from_place_id=lobby.place.id,
+        context_enabled=True,
+        leave_same_place=True,
+        split_reason="opening_delta",
+    )
+    assert hop.place.id == room.place.id
+    assert hop.match_reason == "adjacent"
+    assert hop.split_reason == "opening_delta"
+
+
+def test_mapped_feedback_splits_on_opening_delta() -> None:
+    from flybrain.memory.place_graph import PlaceGraphConfig
+    from flybrain.sensors.mapped_feedback import MappedSensorFeedback
+
+    g = InMemoryPlaceGraph()
+    cfg = PlaceGraphConfig(
+        enabled=True,
+        backend="in_memory",
+        match_min=0.97,
+        split_on_novelty=False,
+        split_on_landmark=True,
+        opening_delta_min=0.15,
+    )
+    fb = MappedSensorFeedback(store=g, config=cfg, fly_id="fly_a")
+    view = _view(7)
+    first = fb.sense(
+        raw={"opening_strength": 0.95, "wall_hazard": 0.0},
+        view_vec=view,
+        step=1,
+    )
+    assert first.match_reason in ("created", "view_only", "same_place")
+    stuck = fb.sense(
+        raw={"opening_strength": 0.95, "wall_hazard": 0.0},
+        view_vec=view,
+        step=2,
+    )
+    assert stuck.place is not None and first.place is not None
+    assert stuck.place.id == first.place.id
+    assert stuck.match_reason == "same_place"
+    split = fb.sense(
+        raw={"opening_strength": 0.50, "wall_hazard": 0.0},
+        view_vec=view,
+        step=3,
+    )
+    assert split.place is not None
+    assert split.place.id != first.place.id
+    assert split.split_reason == "opening_delta"
+    assert split.is_new is True
+
+
+def _walk(a: np.ndarray, b: np.ndarray, steps: int) -> list[np.ndarray]:
+    return [encode_place_view((1.0 - t) * a + t * b) for t in np.linspace(0.0, 1.0, steps)]
+
+
+def test_revisits_do_not_move_the_place_view() -> None:
+    g = InMemoryPlaceGraph()
+    node = g.upsert_place(_view(1), fly_id="fly_a", match_min=0.9)
+    anchor = node.view_vec.copy()
+    nudged = encode_place_view(_view(1) + 0.05 * _view(2))
+    g.upsert_place(nudged, fly_id="fly_a", match_min=0.9)
+    g.refresh_place(node.id, nudged)
+    assert np.allclose(g.get(node.id).view_vec, anchor)
+
+
+def test_gradual_walk_leaves_the_start_place() -> None:
+    """Box → tunnel → outside in tiny steps must not stay one place (no view drift)."""
+    from flybrain.memory.place_graph import observe_place
+
+    g = InMemoryPlaceGraph()
+    inside, outside = _view(1), _view(2)
+    prev = None
+    seen = []
+    for step, view in enumerate(_walk(inside, outside, 200)):
+        obs = observe_place(g, view, fly_id="fly_a", step=step, from_place_id=prev)
+        prev = obs.place.id
+        seen.append(prev)
+    assert len(set(seen)) > 2
+    assert place_similarity(g.get(seen[-1]).view_vec, outside) >= 0.97
+    assert place_similarity(g.get(seen[0]).view_vec, inside) > 0.999
+
+
+def test_find_places_filters_by_label() -> None:
+    g = InMemoryPlaceGraph()
+    g.create_place(_view(1), fly_id="fly_a", props={"label": "outside"})
+    g.create_place(_view(2), fly_id="fly_a", props={"label": "puddle"})
+    found = g.find_places(fly_id="fly_a", label="puddle")
+    assert len(found) == 1
+    assert found[0].props["label"] == "puddle"
+
+
+def test_neo4j_shortest_path_uses_undirected_cypher(monkeypatch) -> None:
+    driver = _FakeNeo4jDriver()
+    driver.vector_rows = [{"place_ids": ["a", "b", "c"]}]
+    # shortest_path uses _query, not vector index — override after construct.
+    graph_database = SimpleNamespace(driver=lambda *args, **kwargs: driver)
+    monkeypatch.setitem(sys.modules, "neo4j", SimpleNamespace(GraphDatabase=graph_database))
+    graph = Neo4jPlaceGraph(password="test-password")
+    captured: list[tuple[str, dict]] = []
+
+    def _query(cypher, params=None):
+        captured.append((str(cypher), dict(params or {})))
+        if "shortestPath" in str(cypher):
+            return [{"place_ids": ["a", "b", "c"]}]
+        return []
+
+    graph._query = _query  # type: ignore[method-assign]
+    path = graph.shortest_path("a", "c", undirected=True, max_hops=8)
+    assert path == ["a", "b", "c"]
+    assert "shortestPath" in captured[-1][0]
+    assert "-[:ADJACENT*1..8]-" in captured[-1][0]
+    graph.close()
+
+
+def test_walking_back_reuses_places_via_reverse_edges() -> None:
+    from flybrain.memory.place_graph import observe_place
+
+    g = InMemoryPlaceGraph()
+    box = observe_place(g, _view(1), fly_id="fly_a", step=0)
+    out = observe_place(g, _view(2), fly_id="fly_a", step=1, from_place_id=box.place.id)
+    back = observe_place(g, _view(1), fly_id="fly_a", step=2, from_place_id=out.place.id)
+    assert back.place.id == box.place.id
+    assert back.match_reason == "adjacent"
+    assert len(g.list_places(fly_id="fly_a")) == 2
+
+
 def test_place_graph_config_from_dict() -> None:
     from flybrain.memory.place_graph import PlaceGraphConfig
 
@@ -280,6 +466,9 @@ def test_place_graph_config_from_dict() -> None:
             "hazard_decay_floor": 0.2,
             "context_enabled": False,
             "context_top_k": 4,
+            "split_on_novelty": False,
+            "novelty_split_min": 0.4,
+            "opening_delta_min": 0.2,
         }
     )
     assert cfg.backend == "neo4j"
@@ -288,6 +477,9 @@ def test_place_graph_config_from_dict() -> None:
     assert cfg.enabled is True
     assert cfg.context_enabled is False
     assert cfg.context_top_k == 4
+    assert cfg.split_on_novelty is False
+    assert cfg.novelty_split_min == 0.4
+    assert cfg.opening_delta_min == 0.2
 
 
 class _FakeNeo4jDriver:
@@ -390,3 +582,94 @@ def test_neo4j_save_materializes_four_wall_nodes() -> None:
     assert "MERGE (w:Wall" in query
     assert "MERGE (p)-[:HAS_WALL" in query
     assert {wall["direction"] for wall in params["walls"]} == set(WALL_DIRS)
+
+
+def test_neo4j_find_food_places_queries_has_sense(monkeypatch) -> None:
+    driver = _FakeNeo4jDriver()
+    graph_database = SimpleNamespace(driver=lambda *args, **kwargs: driver)
+    monkeypatch.setitem(sys.modules, "neo4j", SimpleNamespace(GraphDatabase=graph_database))
+    graph = Neo4jPlaceGraph(password="test-password")
+    captured: list[tuple[str, dict]] = []
+
+    def _query(cypher, params=None):
+        captured.append((str(cypher), dict(params or {})))
+        if "HAS_SENSE" in str(cypher):
+            row = _neo_record()
+            row["sense_kind"] = "sugar"
+            row["sense_value"] = 0.7
+            row["sense_step"] = 12
+            row["props"] = row["walls"]
+            return [row]
+        return []
+
+    graph._query = _query  # type: ignore[method-assign]
+    hits = graph.find_food_places(fly_id="fly_a", min_value=0.05, limit=4)
+    assert len(hits) == 1
+    assert hits[0].kind == "sugar"
+    assert hits[0].value == 0.7
+    assert hits[0].first_step == 12
+    assert "HAS_SENSE" in captured[-1][0]
+    assert "sugar" in captured[-1][1]["kinds"] or "sugar" in str(captured[-1][1]["kinds"])
+    graph.close()
+
+
+def test_neo4j_shortest_path_with_edges_returns_props(monkeypatch) -> None:
+    driver = _FakeNeo4jDriver()
+    graph_database = SimpleNamespace(driver=lambda *args, **kwargs: driver)
+    monkeypatch.setitem(sys.modules, "neo4j", SimpleNamespace(GraphDatabase=graph_database))
+    graph = Neo4jPlaceGraph(password="test-password")
+
+    def _query(cypher, params=None):
+        if "shortestPath" in str(cypher):
+            return [
+                {
+                    "place_ids": ["out", "mid", "food"],
+                    "edge_rows": [
+                        {
+                            "src_id": "mid",
+                            "dst_id": "out",
+                            "props_json": '{"turn": 0.5, "opening_strength": 0.9}',
+                        },
+                        {
+                            "src_id": "food",
+                            "dst_id": "mid",
+                            "props_json": '{"turn": 0.2}',
+                        },
+                    ],
+                }
+            ]
+        return []
+
+    graph._query = _query  # type: ignore[method-assign]
+    detailed = graph.shortest_path_with_edges("out", "food", undirected=True, max_hops=8)
+    assert detailed is not None
+    ids, hops = detailed
+    assert ids == ["out", "mid", "food"]
+    assert len(hops) == 2
+    assert hops[0].reversed is True  # mid→out edge followed out→mid
+    assert hops[0].props["turn"] == 0.5
+    graph.close()
+
+
+def test_neo4j_find_places_filters_label_in_cypher(monkeypatch) -> None:
+    driver = _FakeNeo4jDriver()
+    graph_database = SimpleNamespace(driver=lambda *args, **kwargs: driver)
+    monkeypatch.setitem(sys.modules, "neo4j", SimpleNamespace(GraphDatabase=graph_database))
+    graph = Neo4jPlaceGraph(password="test-password")
+    captured: list[tuple[str, dict]] = []
+
+    def _query(cypher, params=None):
+        captured.append((str(cypher), dict(params or {})))
+        if "label_marker" in (params or {}):
+            row = _neo_record()
+            row["props_json"] = '{"label": "puddle"}'
+            return [row]
+        return []
+
+    graph._query = _query  # type: ignore[method-assign]
+    found = graph.find_places(fly_id="fly_a", label="puddle", limit=4)
+    assert captured
+    assert "CONTAINS $label_marker" in captured[-1][0]
+    assert captured[-1][1]["label_marker"] == '"label": "puddle"'
+    assert len(found) == 1
+    graph.close()

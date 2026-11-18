@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -18,31 +19,53 @@ class VisionNavCues:
     wall_hazard: float
     forward_bias: float
     turn_bias: float
+    # Way out of the box: mean bearing (−1 left … +1 right) and share of the view that sees out.
+    opening_bearing: float = 0.0
+    opening_strength: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
-        return {
-            "target_bearing": float(self.target_bearing),
-            "target_confidence": float(self.target_confidence),
-            "wall_hazard": float(self.wall_hazard),
-            "forward_bias": float(self.forward_bias),
-            "turn_bias": float(self.turn_bias),
-        }
+        return {f.name: float(getattr(self, f.name)) for f in fields(self)}
+
+
+CUE_NAMES: tuple[str, ...] = tuple(f.name for f in fields(VisionNavCues))
+NUM_CUES = len(CUE_NAMES)
+# Unit-interval cues (sigmoid); the rest are signed (tanh).
+_SIGMOID_CUES = frozenset({"target_confidence", "wall_hazard", "opening_strength"})
 
 
 class RecurrentVisionHead(nn.Module):
-    """VisionEncoder + GRU → navigation cues (no privileged target XYZ)."""
+    """VisionEncoder + GRU → navigation cues (no privileged target XYZ).
 
-    def __init__(self, latent_dim: int = 128, hidden_dim: int = 128) -> None:
+    ``stateless`` heads were trained on independent frames, so inference starts from a
+    zero hidden state every call instead of carrying it across ticks.
+    """
+
+    def __init__(
+        self,
+        latent_dim: int = 128,
+        hidden_dim: int = 128,
+        *,
+        in_channels: int = 1,
+        stateless: bool = False,
+    ) -> None:
         super().__init__()
-        self.encoder = VisionEncoder(in_channels=1, latent_dim=latent_dim)
+        self.latent_dim = latent_dim
+        self.in_channels = in_channels
+        self.stateless = stateless
+        self.encoder = VisionEncoder(in_channels=in_channels, latent_dim=latent_dim)
         self.gru = nn.GRU(latent_dim, hidden_dim, batch_first=True)
         self.head = nn.Sequential(
             nn.Linear(hidden_dim, 64),
             nn.ReLU(inplace=True),
-            nn.Linear(64, 5),
+            nn.Linear(64, NUM_CUES),
         )
         self.hidden_dim = hidden_dim
         self._hidden: torch.Tensor | None = None
+        self.register_buffer(
+            "_sigmoid_mask",
+            torch.tensor([name in _SIGMOID_CUES for name in CUE_NAMES]),
+            persistent=False,
+        )
 
     def reset_state(self, batch_size: int = 1, device: torch.device | None = None) -> None:
         dev = device or next(self.parameters()).device
@@ -59,13 +82,7 @@ class RecurrentVisionHead(nn.Module):
         seq = vision.unsqueeze(1)
         out, hidden_out = self.gru(seq, hidden)
         raw = self.head(out.squeeze(1))
-        # bearing, confidence, wall_hazard, forward_bias, turn_bias
-        bearing = torch.tanh(raw[:, 0])
-        confidence = torch.sigmoid(raw[:, 1])
-        wall = torch.sigmoid(raw[:, 2])
-        forward = torch.tanh(raw[:, 3])
-        turn = torch.tanh(raw[:, 4])
-        cues = torch.stack([bearing, confidence, wall, forward, turn], dim=-1)
+        cues = torch.where(self._sigmoid_mask, torch.sigmoid(raw), torch.tanh(raw))
         return cues, hidden_out
 
     @torch.no_grad()
@@ -89,17 +106,55 @@ class RecurrentVisionHead(nn.Module):
             right_t = right_t.unsqueeze(0).unsqueeze(0)
         elif right_t.ndim == 3:
             right_t = right_t.unsqueeze(0)
-        if self._hidden is None or self._hidden.shape[1] != left_t.shape[0]:
+        if self.stateless or self._hidden is None or self._hidden.shape[1] != left_t.shape[0]:
             self.reset_state(batch_size=left_t.shape[0], device=dev)
         cues, self._hidden = self.forward(left_t, right_t, self._hidden)
         row = cues[0].cpu().numpy()
-        return VisionNavCues(
-            target_bearing=float(row[0]),
-            target_confidence=float(row[1]),
-            wall_hazard=float(row[2]),
-            forward_bias=float(row[3]),
-            turn_bias=float(row[4]),
-        )
+        return VisionNavCues(**{name: float(row[i]) for i, name in enumerate(CUE_NAMES)})
+
+
+def save_vision_head(model: RecurrentVisionHead, path: str | Path, **extra: float) -> Path:
+    """Checkpoint with the shape needed to rebuild the head (see :func:`load_vision_head`)."""
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "model": model.state_dict(),
+            "latent_dim": model.latent_dim,
+            "hidden_dim": model.hidden_dim,
+            "in_channels": model.in_channels,
+            "stateless": model.stateless,
+            "cues": list(CUE_NAMES),
+            **extra,
+        },
+        out,
+    )
+    return out
+
+
+class IncompatibleVisionCheckpoint(ValueError):
+    """Checkpoint was saved for a different cue set or head shape (e.g. pre-opening 5-cue heads)."""
+
+
+def load_vision_head(path: str | Path) -> RecurrentVisionHead:
+    state = torch.load(Path(path), map_location="cpu", weights_only=True)
+    if not isinstance(state, dict) or "model" not in state:
+        state = {"model": state}
+    saved_cues = state.get("cues")
+    if saved_cues is not None and list(saved_cues) != list(CUE_NAMES):
+        raise IncompatibleVisionCheckpoint(f"{path}: cues {list(saved_cues)} != {list(CUE_NAMES)}")
+    model = RecurrentVisionHead(
+        latent_dim=int(state.get("latent_dim", 128)),
+        hidden_dim=int(state.get("hidden_dim", 128)),
+        in_channels=int(state.get("in_channels", 1)),
+        stateless=bool(state.get("stateless", False)),
+    )
+    try:
+        model.load_state_dict(state["model"])
+    except RuntimeError as exc:
+        raise IncompatibleVisionCheckpoint(f"{path}: {exc}") from exc
+    model.eval()
+    return model
 
 
 def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNavCues:
@@ -134,21 +189,24 @@ def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNav
     right_bar = float(frame[:, -edge:].mean())
     left_std = float(frame[:, :edge].std())
     right_std = float(frame[:, -edge:].std())
-    # Classic synthetic cue: dark edge columns.
-    dark_edge = float(np.clip(1.0 - min(left_bar, right_bar) / 0.35, 0.0, 1.0))
+    # Classic synthetic cue: dark edge columns (darker bar ⇒ stronger hazard).
+    # 0.28 (was 0.35) so only quite dark edges score high — textured grass edges less so.
+    dark_edge = float(np.clip(1.0 - min(left_bar, right_bar) / 0.28, 0.0, 1.0))
     # Unity chamber walls are often light + low-texture when close.
     def _uniform_bright(mean: float, std: float) -> float:
-        if mean < 0.4:
+        if mean < 0.45:
             return 0.0
-        return float(np.clip(mean * (1.0 - min(1.0, std / 0.12)), 0.0, 1.0))
+        # Grass is bright but high-std; require flatter columns (was /0.12).
+        return float(np.clip(mean * (1.0 - min(1.0, std / 0.08)), 0.0, 1.0))
 
     light_edge = max(_uniform_bright(left_bar, left_std), _uniform_bright(right_bar, right_std))
     # Frontal fill: low stereo difference + low spatial variance ⇒ near wall.
+    # Outdoor meadow has high spatial variance; keep this for near blank walls only.
     stereo = float(np.mean(np.abs(l - r)))
     global_std = float(frame.std())
     frontal = 0.0
-    if stereo < 0.06 and global_std < 0.12:
-        frontal = float(np.clip(0.55 + 0.35 * (0.06 - stereo) / 0.06, 0.0, 1.0))
+    if stereo < 0.045 and global_std < 0.08:
+        frontal = float(np.clip(0.55 + 0.35 * (0.045 - stereo) / 0.045, 0.0, 1.0))
     wall_hazard = float(np.clip(max(dark_edge, light_edge, frontal), 0.0, 1.0))
     forward = float(np.clip(0.7 * confidence - 0.8 * wall_hazard, -1.0, 1.0))
     turn = float(np.clip(bearing * confidence - 0.55 * (right_bar - left_bar), -1.0, 1.0))

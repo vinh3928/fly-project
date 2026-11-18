@@ -54,6 +54,8 @@ class PlaceCacheConfig:
     l2_ttl_seconds: float = 86400.0  # 24h; full reset on this cadence
     match_min: float = 0.97
     l1_persist_every: float = 1.0  # seconds between L1 disk mirrors
+    # A place revisited every step never expires from L1, so push its updates durably on a cadence.
+    neo4j_flush_every: float = 5.0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> "PlaceCacheConfig":
@@ -66,6 +68,7 @@ class PlaceCacheConfig:
             l2_ttl_seconds=float(data.get("l2_ttl_seconds", 86400.0)),
             match_min=float(data.get("match_min", 0.97)),
             l1_persist_every=float(data.get("l1_persist_every", 1.0)),
+            neo4j_flush_every=float(data.get("neo4j_flush_every", 5.0)),
         )
 
 
@@ -74,12 +77,14 @@ class _CacheEntry:
     place: PlaceNode
     touched_at: float
     dirty: bool = False
+    flushed_at: float = 0.0
 
     def to_disk(self) -> dict[str, Any]:
         return {
             "place": self.place.to_dict(),
             "touched_at": float(self.touched_at),
             "dirty": bool(self.dirty),
+            "flushed_at": float(self.flushed_at),
         }
 
     @classmethod
@@ -88,6 +93,7 @@ class _CacheEntry:
             place=PlaceNode.from_dict(raw["place"]),
             touched_at=float(raw.get("touched_at") or _now()),
             dirty=bool(raw.get("dirty", False)),
+            flushed_at=float(raw.get("flushed_at") or 0.0),
         )
 
 
@@ -238,8 +244,9 @@ class CachedPlaceGraph:
         now = float(now if now is not None else _now())
         ttl = float(self.config.l1_ttl_seconds)
         expired = [k for k, e in self._l1.items() if now - e.touched_at > ttl]
-        for k in expired:
-            ent = self._l1.pop(k)
+        # Evict all before flushing: the flush re-enters this method via _persist_l1.
+        evicted = [self._l1.pop(k) for k in expired]
+        for ent in evicted:
             if ent.dirty:
                 self._persist_all_layers(ent.place, flush_neo4j=True)
 
@@ -284,15 +291,15 @@ class CachedPlaceGraph:
         dirty: bool = True,
         now: float | None = None,
     ) -> PlaceNode:
-        """L1 hit path: RAM (+ optional L1 disk). No L2 / Neo4j I/O."""
+        """L1 hit path: RAM (+ optional L1 disk); Neo4j only every ``neo4j_flush_every`` seconds."""
         now = float(now if now is not None else _now())
         key = str(place.id)
         prev = self._l1.get(key)
-        self._l1[key] = _CacheEntry(
-            place=place,
-            touched_at=now,
-            dirty=dirty or bool(prev.dirty if prev else False),
-        )
+        dirty = dirty or bool(prev.dirty if prev else False)
+        flushed_at = prev.flushed_at if prev else now
+        if dirty and (now - flushed_at) >= float(self.config.neo4j_flush_every):
+            return self._persist_all_layers(place, flush_neo4j=True, now=now)
+        self._l1[key] = _CacheEntry(place=place, touched_at=now, dirty=dirty, flushed_at=flushed_at)
         self._persist_l1()
         return place
 
@@ -310,8 +317,8 @@ class CachedPlaceGraph:
             saved = self._flush_neo4j(place)
             self.stats.neo4j_writes += 1
         key = str(saved.id)
-        self._l1[key] = _CacheEntry(place=saved, touched_at=now, dirty=False)
-        self._l2[key] = _CacheEntry(place=saved, touched_at=now, dirty=False)
+        self._l1[key] = _CacheEntry(place=saved, touched_at=now, dirty=False, flushed_at=now)
+        self._l2[key] = _CacheEntry(place=saved, touched_at=now, dirty=False, flushed_at=now)
         self._persist_l1(force=True)
         self._persist_l2()
         return saved
@@ -350,20 +357,15 @@ class CachedPlaceGraph:
     def _merge_place(
         self,
         node: PlaceNode,
-        vec: np.ndarray,
         *,
         fly_id: str,
         walls: dict[str, Any] | None,
         prop_map: dict[str, Any],
     ) -> PlaceNode:
-        merged_vec = encode_place_view(
-            0.85 * np.asarray(node.view_vec, dtype=np.float32) + 0.15 * vec,
-            self.view_dim,
-        )
         return PlaceNode(
             id=node.id,
             fly_id=fly_id,
-            view_vec=merged_vec,
+            view_vec=node.view_vec,
             walls=_normalize_walls({**node.walls, **(walls or {})}),
             props={**dict(node.props), **prop_map},
             created_at=node.created_at,
@@ -447,13 +449,9 @@ class CachedPlaceGraph:
         return node
 
     def list_places(self, *, fly_id: str = "fly_001", limit: int = 64) -> list[PlaceNode]:
+        """Read-only listing — do not inflate L1/L2 or rewrite JSON on browse."""
         self.stats.neo4j_reads += 1
-        rows = self.inner.list_places(fly_id=fly_id, limit=limit)
-        now = _now()
-        out: list[PlaceNode] = []
-        for node in rows:
-            out.append(self._persist_all_layers(node, flush_neo4j=False, now=now))
-        return out
+        return self.inner.list_places(fly_id=fly_id, limit=limit)
 
     def upsert_place(
         self,
@@ -486,7 +484,7 @@ class CachedPlaceGraph:
         if l1_hits and l1_hits[0][1] >= float(match_min):
             self.stats.l1_hits += 1
             updated = self._merge_place(
-                l1_hits[0][0], vec, fly_id=fly_id, walls=walls, prop_map=prop_map
+                l1_hits[0][0], fly_id=fly_id, walls=walls, prop_map=prop_map
             )
             return self._put_l1_only(updated, dirty=True, now=now)
 
@@ -502,7 +500,7 @@ class CachedPlaceGraph:
         if l2_hits and l2_hits[0][1] >= float(match_min):
             self.stats.l2_hits += 1
             updated = self._merge_place(
-                l2_hits[0][0], vec, fly_id=fly_id, walls=walls, prop_map=prop_map
+                l2_hits[0][0], fly_id=fly_id, walls=walls, prop_map=prop_map
             )
             return self._persist_all_layers(updated, flush_neo4j=True, now=now)
 
@@ -511,7 +509,7 @@ class CachedPlaceGraph:
         matches = self.inner.nearest(vec, fly_id=fly_id, top_k=1)
         if matches and matches[0][1] >= float(match_min):
             updated = self._merge_place(
-                matches[0][0], vec, fly_id=fly_id, walls=walls, prop_map=prop_map
+                matches[0][0], fly_id=fly_id, walls=walls, prop_map=prop_map
             )
             return self._persist_all_layers(updated, flush_neo4j=True, now=now)
 
@@ -566,7 +564,6 @@ class CachedPlaceGraph:
         key = str(place_id)
         now = _now()
         self._prune_l1(now)
-        vec = self._pad_vec(view_vec)
         prop_map = dict(props or {})
         if step is not None:
             prop_map["last_step"] = int(step)
@@ -577,7 +574,7 @@ class CachedPlaceGraph:
         if node is None:
             return None
         updated = self._merge_place(
-            node, vec, fly_id=node.fly_id, walls=walls, prop_map=prop_map
+            node, fly_id=node.fly_id, walls=walls, prop_map=prop_map
         )
         if l1_hot:
             self.stats.l1_hits += 1
@@ -655,3 +652,103 @@ class CachedPlaceGraph:
         for e in rows:
             self._adj.add((str(e.src_id), str(e.dst_id)))
         return rows
+
+    def neighbors(
+        self,
+        place_id: int | str,
+        *,
+        undirected: bool = True,
+    ) -> list[PlaceEdge]:
+        # Prefer inner Neo4j neighbor query — never dump the full edge table.
+        inner_n = getattr(self.inner, "neighbors", None)
+        if callable(inner_n):
+            rows = inner_n(place_id, undirected=undirected)
+            for e in rows:
+                self._adj.add((str(e.src_id), str(e.dst_id)))
+            return rows
+        from flybrain.memory.place_graph import neighbors_from_edges
+
+        return neighbors_from_edges(self.edges(), place_id, undirected=undirected)
+
+    def find_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        label: str | None = None,
+        limit: int = 64,
+    ) -> list[PlaceNode]:
+        """Delegate to inner (Cypher label filter when Neo4j); read-only."""
+        inner_fn = getattr(self.inner, "find_places", None)
+        if callable(inner_fn):
+            self.stats.neo4j_reads += 1
+            return inner_fn(fly_id=fly_id, label=label, limit=limit)
+        rows = self.list_places(fly_id=fly_id, limit=max(1, int(limit)) * 4)
+        if label is not None:
+            want = str(label)
+            rows = [n for n in rows if str((n.props or {}).get("label") or "") == want]
+        return rows[: max(1, int(limit))]
+
+    def find_food_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        min_value: float = 0.05,
+        kinds: tuple[str, ...] | list[str] | None = None,
+        limit: int = 32,
+    ):
+        """Prefer Neo4j Sense query; fall back to read-only place props scan."""
+        inner_fn = getattr(self.inner, "find_food_places", None)
+        if callable(inner_fn):
+            self.stats.neo4j_reads += 1
+            return inner_fn(
+                fly_id=fly_id, min_value=min_value, kinds=kinds, limit=limit
+            )
+        from flybrain.memory.place_graph import find_food_places_in_nodes
+
+        rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
+        return find_food_places_in_nodes(
+            rows, min_value=min_value, limit=limit, kinds=kinds
+        )
+
+    def shortest_path(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> list[int | str] | None:
+        # Prefer cheap id-only Cypher / BFS; avoid building PathHop when unused.
+        inner_path = getattr(self.inner, "shortest_path", None)
+        if callable(inner_path):
+            return inner_path(
+                src_id, dst_id, undirected=undirected, max_hops=max_hops
+            )
+        detailed = self.shortest_path_with_edges(
+            src_id, dst_id, undirected=undirected, max_hops=max_hops
+        )
+        return None if detailed is None else detailed[0]
+
+    def shortest_path_with_edges(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ):
+        # Prefer inner Neo4j Cypher (nodes + ADJACENT edge props) when available.
+        inner_detailed = getattr(self.inner, "shortest_path_with_edges", None)
+        if callable(inner_detailed):
+            return inner_detailed(
+                src_id, dst_id, undirected=undirected, max_hops=max_hops
+            )
+        from flybrain.memory.place_graph import path_hops_from_ids, shortest_path_bfs
+
+        edges = self.edges()  # load once
+        path = shortest_path_bfs(
+            edges, src_id, dst_id, undirected=undirected, max_hops=max_hops
+        )
+        if path is None:
+            return None
+        return path, path_hops_from_ids(edges, path)

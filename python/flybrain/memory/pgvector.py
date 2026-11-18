@@ -46,6 +46,19 @@ _MODALITY_ATTR = {
     "joint": "joint_vec",
 }
 
+
+def _json_default(obj: Any) -> Any:
+    """Serialize numpy scalars/arrays for jsonb columns."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _json_dumps(payload: Any) -> str:
+    return json.dumps(payload, default=_json_default)
+
 _MODALITY_DIM = {
     "embedding": TOTAL_EMBEDDING_DIM,
     "left_eye": EYE_VEC_DIM,
@@ -437,8 +450,8 @@ class PgVectorShortTermMemory:
                     smell.tolist(),
                     joint.tolist(),
                     emb.tolist(),
-                    json.dumps(signals),
-                    json.dumps(affect),
+                    _json_dumps(signals),
+                    _json_dumps(affect),
                 ),
             )
             row = cur.fetchone()
@@ -562,7 +575,7 @@ class PgVectorShortTermMemory:
                     reflection,
                     devil_critique,
                     refined_thought,
-                    json.dumps(intent),
+                    _json_dumps(intent),
                 ),
             )
             row = cur.fetchone()

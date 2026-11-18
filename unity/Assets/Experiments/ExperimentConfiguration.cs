@@ -30,6 +30,16 @@ namespace FlySimulation.Experiments
         public Vector3 WindDirection = Vector3.forward;
         public float WindStrength = 0f;
 
+        [Header("Exit tunnel (+Z wall) and outside world")]
+        public bool TunnelEnabled = true;
+        // Passage depth beyond the wall's outer face (meters).
+        public float TunnelLength = 0.08f;
+        // Opening width as a fraction of ChamberSize.x.
+        public float TunnelWidthFraction = 0.5f;
+        // Opening runs from the floor up to the chamber ceiling; TunnelHeight applies when false.
+        public bool TunnelFullHeight = true;
+        public float TunnelHeight = 0.06f;
+
         [Header("Chemistry")]
         public const float SourcePuddleDiameter = 0.012f;
         // Hard plume radius (meters). Zero smell beyond this distance from puddle center.

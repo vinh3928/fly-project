@@ -30,7 +30,8 @@ def test_is_hungry_thresholds() -> None:
     assert is_hungry(_HUNGRY)
     assert not is_hungry(_FED)
     assert is_hungry({"energy": 0.25})
-    assert not is_hungry({"energy": 0.5})
+    assert is_hungry({"energy": 0.5})  # below ENERGY_SEEK_MAX 0.55
+    assert not is_hungry({"energy": 0.7})
 
 
 @pytest.mark.parametrize("bearing", [-0.6, 0.6])
@@ -88,6 +89,28 @@ def test_steering_does_not_mutate_candidate_table() -> None:
     before = _candidate("explore").copy()
     steer_candidate("explore", _candidate("explore"), {**_HUNGRY, "sugar_smell": 0.2, "sugar_bearing": -1.0})
     np.testing.assert_allclose(_candidate("explore"), before)
+
+
+def test_layer1_prefers_feed_over_explore_when_low_energy() -> None:
+    """Survival/low_energy must rank feed above explore (not only route-lock plan)."""
+    best, scored, _ = layer1_quick_scan(
+        signals={"hunger": 0.8, "energy": 0.2, "sugar": 0.0, "curiosity_drive": 0.0},
+        affect={"survival_risk": 0.4, "novelty": 0.0, "exploration": 0.1},
+        experience=LifeExperience(),
+    )
+    by_name = {r.name: r.value for r in scored}
+    assert best.name == "feed"
+    assert by_name["feed"] > by_name["explore"]
+
+
+def test_layer1_hungry_without_sugar_contact_still_chooses_feed() -> None:
+    best, scored, _ = layer1_quick_scan(
+        signals={"hunger": 0.5, "energy": 0.5, "sugar": 0.0, "sugar_smell": 0.0},
+        affect={"survival_risk": 0.35},
+        experience=LifeExperience(),
+    )
+    assert best.name == "feed"
+    assert scored[0].name == "feed" or {r.name: r for r in scored}["feed"].value >= scored[0].value - 1e-6
 
 
 @pytest.mark.parametrize("bearing", [-0.7, 0.7])

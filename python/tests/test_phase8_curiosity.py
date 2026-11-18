@@ -37,6 +37,13 @@ def test_curiosity_gate_suppresses_under_threat() -> None:
     )
     assert open_gate > 0.4
     assert closed == 0.0
+    # Food-seek band (hunger ≥ 0.45 / energy < 0.55) also closes explore.
+    seeking = curiosity_gate(
+        signals={"energy": 0.5, "hunger": 0.5},
+        affect={"survival_risk": 0.2},
+        config=cfg,
+    )
+    assert seeking == 0.0
 
 
 def test_curiosity_drive_prediction_and_bias() -> None:
@@ -105,6 +112,7 @@ def test_curious_live_mind_covers_more_than_disabled() -> None:
             max_steps=steps,
             llm_mock=True,
             fly_id="fly_explore",
+            mind_interval=1,
             curiosity=CuriosityConfig(enabled=enabled),
             use_vision_head=False,
         )

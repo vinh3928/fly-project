@@ -8,6 +8,8 @@ from flybrain.memory.place_graph import InMemoryPlaceGraph, PlaceGraphConfig
 from flybrain.phase4 import PATCH_VEC_DIM, SMELL_VEC_DIM
 from flybrain.sensors.mapped_feedback import MappedSensorFeedback
 from flybrain.sensors.place_senses import (
+    OUTSIDE_OPENING_MIN,
+    SENSE_CHANNELS,
     infer_place_label,
     merge_place_senses,
     sense_rows_for_neo4j,
@@ -95,5 +97,35 @@ def test_vision_place_gets_puddle_label_and_bitter_sense() -> None:
 
 def test_senses_vector_order_stable() -> None:
     v = senses_vector({"bitter": 0.49, "wall_hazard": 0.1})
-    assert v.shape[0] == 6
+    assert v.shape[0] == len(SENSE_CHANNELS)
     assert abs(float(v[4]) - 0.49) < 1e-6  # bitter index in SENSE_CHANNELS
+
+
+def test_mostly_open_view_is_labelled_outside() -> None:
+    assert infer_place_label({"opening_strength": OUTSIDE_OPENING_MIN, "odor": 0.3}) == "outside"
+    assert infer_place_label({"opening_strength": OUTSIDE_OPENING_MIN - 0.01, "odor": 0.3}) == "odor_plume"
+    assert infer_place_label({"opening_strength": 0.9, "sugar": 0.3}) == "puddle"
+
+
+def test_outside_label_wins_over_plume_but_not_the_reverse() -> None:
+    outside = merge_place_senses({"label": "odor_plume"}, {"opening_strength": 0.9})
+    assert outside["label"] == "outside"
+    assert abs(float(outside["senses"]["opening_strength"]["value"]) - 0.9) < 1e-6
+    still_outside = merge_place_senses(outside, {"odor": 0.4})
+    assert still_outside["label"] == "outside"
+
+
+def test_vision_place_outside_the_box_is_labelled_outside() -> None:
+    fb = MappedSensorFeedback(
+        store=InMemoryPlaceGraph(),
+        config=PlaceGraphConfig(enabled=True, backend="in_memory", context_enabled=False),
+        fly_id="fly_a",
+        sense_gate_ttl_seconds=0.0,
+        smell_gate_ttl_seconds=0.0,
+    )
+    view = np.zeros(PATCH_VEC_DIM, dtype=np.float32)
+    view[3] = 1.0
+    report = fb.sense(raw={"wall_hazard": 0.0, "opening_strength": 0.95, "odor": 0.2}, view_vec=view, step=0)
+    assert report.label == "outside"
+    assert report.place is not None and report.place.props["label"] == "outside"
+    assert "opening_strength" not in report.readings  # stored as a detail, never attenuated

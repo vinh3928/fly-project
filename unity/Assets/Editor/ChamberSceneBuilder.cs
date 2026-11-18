@@ -7,6 +7,7 @@ using FlySimulation.Environment;
 using FlySimulation.Experiments;
 using FlySimulation.Fly.Body;
 using FlySimulation.Fly.Brain;
+using FlySimulation.Fly.DebugViz;
 using FlySimulation.Fly.Motors;
 using FlySimulation.Fly.Recording;
 using FlySimulation.Fly.Sensors;
@@ -19,6 +20,9 @@ namespace FlySimulation.EditorTools
     [InitializeOnLoad]
     public static class ChamberSceneBuilder
     {
+        // Opaque to the fly's eyes (the tunnel is the only view out); the overview camera culls the wall layer.
+        private static readonly Color WallColor = new Color(0.78f, 0.76f, 0.72f);
+
         static ChamberSceneBuilder()
         {
             // Confirms the editor script loaded; look for menus under Tools/Fly and Fly.
@@ -47,7 +51,7 @@ namespace FlySimulation.EditorTools
 
             // Built-in Unlit/Color — works with GraphicsSettings pipeline = null.
             Material floorMat = CreateColorMaterial("FloorMat", new Color(0.45f, 0.48f, 0.52f), overwrite: true);
-            Material wallMat = CreateColorMaterial("WallMat", new Color(0.55f, 0.7f, 0.95f, 0.12f), transparent: true, overwrite: true);
+            Material wallMat = CreateColorMaterial("WallMat", WallColor, overwrite: true);
             Material sugarMat = CreateColorMaterial("SugarMat", new Color(0.95f, 0.75f, 0.2f), overwrite: true);
             Material bitterMat = CreateColorMaterial("BitterMat", new Color(0.55f, 0.2f, 0.75f), overwrite: true);
             Material flyMat = CreateColorMaterial("FlyMat", new Color(0.12f, 0.12f, 0.12f), overwrite: true);
@@ -61,21 +65,19 @@ namespace FlySimulation.EditorTools
             TrySetTag(chamberRoot, "Chamber");
 
             var floor = CreateCube("Floor", chamberRoot.transform, floorMat);
-            var ceiling = CreateCube("Ceiling", chamberRoot.transform, wallMat);
-            ceiling.GetComponent<MeshRenderer>().enabled = false; // keep collider, hide mesh
+            var ceiling = CreateCube(ChamberWallHider.CeilingName, chamberRoot.transform, wallMat);
 
             var walls = new Transform[4];
             for (int i = 0; i < 4; i++)
             {
-                walls[i] = CreateCube($"Wall_{i}", chamberRoot.transform, wallMat).transform;
+                walls[i] = CreateCube($"{ChamberWallHider.WallPrefix}{i}", chamberRoot.transform, wallMat).transform;
             }
 
-            // Hide all wall meshes so Game view looks into the arena.
-            // Colliders stay active for physics.
-            for (int i = 0; i < walls.Length; i++)
-            {
-                SetRendererEnabled(walls[i], false);
-            }
+            Transform[] northSegments = CreateCubes(TunnelLayout.NorthWallSegments(config), chamberRoot.transform, _ => wallMat);
+            Transform[] tunnelPieces = CreateCubes(
+                TunnelLayout.TunnelPieces(config),
+                chamberRoot.transform,
+                spec => spec.Name == TunnelLayout.TunnelFloor ? floorMat : wallMat);
 
             var sugar = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             sugar.name = "SugarSource";
@@ -156,15 +158,15 @@ namespace FlySimulation.EditorTools
             var randomizer = chamberRoot.AddComponent<EnvironmentRandomizer>();
             chamberRoot.AddComponent<ChamberWallHider>();
 
-            SetPrivate(chamber, "floor", floor.transform);
-            SetPrivate(chamber, "ceiling", ceiling.transform);
-            SetPrivate(chamber, "walls", walls);
+            chamber.BindStructure(floor.transform, ceiling.transform, walls, northSegments, tunnelPieces);
             SetPrivate(chamber, "mainLight", light);
             SetPrivate(chamber, "sugarSource", sugarSource);
             SetPrivate(chamber, "bitterSource", bitterSource);
             SetPrivate(chamber, "chemicalField", chemicalField);
             SetPrivate(chamber, "configuration", config);
             chamber.ApplyConfiguration(config);
+            ChamberWallHider.ApplyWallLayer(chamberRoot.transform);
+            BuildOutsideWorld(config);
 
             // Phase 5: visible dark pillars (not giant white cubes).
             var soRandomizer = new SerializedObject(randomizer);
@@ -197,13 +199,16 @@ namespace FlySimulation.EditorTools
             SetPrivate(agent, "episodeManager", episode);
             SetPrivate(agent, "recorder", recorder);
 
-            // Scene overview camera: cutaway corner view into the open chamber.
+            // Scene overview camera: cutaway corner view into the open chamber (Display 1).
             var overview = new GameObject("OverviewCamera");
             var cam = overview.AddComponent<Camera>();
             var overviewRig = overview.AddComponent<ChamberOverviewCamera>();
             overviewRig.Configure(config.ChamberSize);
             overview.AddComponent<AudioListener>();
             ChamberOverviewCamera.Place(cam, overview.transform, config.ChamberSize);
+
+            EnsureFlyFollowCamera(fly.transform);
+            EnsureMindLogDisplay();
 
             DirectoryEnsure("Assets/Scenes");
             EditorSceneManager.SaveScene(scene, "Assets/Scenes/Chamber.unity");
@@ -217,7 +222,151 @@ namespace FlySimulation.EditorTools
                 "Chamber scene ready: Assets/Scenes/Chamber.unity. " +
                 $"Arena {config.ChamberSize}, BodyScale={config.BodyScale}, " +
                 $"spawn Y={config.FlySpawnPosition.y:F4} (feet on floor). " +
-                "Game view uses OverviewCamera (cutaway).");
+                "Display 1 = OverviewCamera; Display 2 = FlyFollowCamera; " +
+                "Display 3 = MindLogDisplay (mind/deep thoughts).");
+        }
+
+        /// <summary>Third-person chase cam on Unity Display 2, always centered on the fly.</summary>
+        private static void EnsureFlyFollowCamera(Transform fly)
+        {
+            var followGo = GameObject.Find(FlyFollowCamera.ObjectName);
+            if (followGo == null)
+            {
+                followGo = new GameObject(FlyFollowCamera.ObjectName);
+            }
+
+            var followCam = followGo.GetComponent<Camera>() ?? followGo.AddComponent<Camera>();
+            var follow = followGo.GetComponent<FlyFollowCamera>() ?? followGo.AddComponent<FlyFollowCamera>();
+            if (fly != null)
+            {
+                follow.Bind(fly);
+            }
+
+            FlyFollowCamera.Place(followCam);
+            follow.SnapToTarget();
+        }
+
+        /// <summary>Mind / deep-thought text log on Unity Display 3.</summary>
+        private static void EnsureMindLogDisplay()
+        {
+            var logGo = GameObject.Find(MindLogDisplay.ObjectName);
+            if (logGo == null)
+            {
+                logGo = new GameObject(MindLogDisplay.ObjectName);
+            }
+
+            var logCam = logGo.GetComponent<Camera>() ?? logGo.AddComponent<Camera>();
+            if (logGo.GetComponent<MindLogDisplay>() == null)
+            {
+                logGo.AddComponent<MindLogDisplay>();
+            }
+
+            MindLogDisplay.Place(logCam);
+        }
+
+        /// <summary>Drop asset-pack prefabs here to replace the primitive flowers, trees and houses.</summary>
+        public const string OutsideWorldPackRoot = "Assets/OutsideWorld";
+        public const string OutsideFlowersFolder = OutsideWorldPackRoot + "/Flowers";
+        public const string OutsideTreesFolder = OutsideWorldPackRoot + "/Trees";
+        public const string OutsideBuildingsFolder = OutsideWorldPackRoot + "/Buildings";
+
+        [MenuItem("Tools/Fly/Rebuild Outside World", priority = 3)]
+        [MenuItem("Fly/Rebuild Outside World", priority = 3)]
+        public static void RebuildOutsideWorld()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                Debug.LogWarning("Stop Play mode before Rebuild Outside World.");
+                return;
+            }
+
+            var existing = GameObject.Find(OutsideWorldBuilder.RootName);
+            if (existing != null)
+            {
+                UnityEngine.Object.DestroyImmediate(existing);
+            }
+
+            var chamber = UnityEngine.Object.FindFirstObjectByType<ChamberController>();
+            var config = chamber != null && chamber.Configuration != null
+                ? chamber.Configuration
+                : ExperimentConfiguration.Default();
+            BuildOutsideWorld(config);
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        }
+
+        private static void BuildOutsideWorld(ExperimentConfiguration config)
+        {
+            if (!config.TunnelEnabled)
+            {
+                return;
+            }
+
+            DirectoryEnsure(OutsideFlowersFolder);
+            DirectoryEnsure(OutsideTreesFolder);
+            DirectoryEnsure(OutsideBuildingsFolder);
+
+            var assets = OutsideWorldAssets.CreatePalette((name, color) => CreateColorMaterial(name, color, overwrite: true));
+            assets.FlowerPrefabs = LoadPrefabs(OutsideFlowersFolder);
+            assets.TreePrefabs = LoadPrefabs(OutsideTreesFolder);
+            assets.HousePrefabs = LoadPrefabs(OutsideBuildingsFolder);
+            assets.Instantiate = (prefab, parent) => (GameObject)PrefabUtility.InstantiatePrefab(prefab, parent);
+
+            OutsideWorldBuilder.Build(null, config, assets);
+            EnsureSkybox();
+            Debug.Log(
+                $"Outside world built: flowers={Describe(assets.FlowerPrefabs)}, trees={Describe(assets.TreePrefabs)}, " +
+                $"houses={Describe(assets.HousePrefabs)}. Add prefabs under {OutsideWorldPackRoot}/ to swap in a pack.");
+        }
+
+        private static string Describe(GameObject[] prefabs)
+        {
+            return prefabs.Length > 0 ? $"{prefabs.Length} prefab(s)" : "primitives";
+        }
+
+        private static GameObject[] LoadPrefabs(string folder)
+        {
+            var prefabs = new List<GameObject>();
+            foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { folder }))
+            {
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
+                if (prefab != null)
+                {
+                    prefabs.Add(prefab);
+                }
+            }
+
+            return prefabs.ToArray();
+        }
+
+        private static void EnsureSkybox()
+        {
+            var shader = Shader.Find("Skybox/Procedural");
+            if (shader == null)
+            {
+                return;
+            }
+
+            const string path = "Assets/Fly/Materials/SkyMat.mat";
+            var sky = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (sky == null)
+            {
+                DirectoryEnsure("Assets/Fly/Materials");
+                sky = new Material(shader) { name = "SkyMat" };
+                AssetDatabase.CreateAsset(sky, path);
+            }
+
+            RenderSettings.skybox = sky;
+        }
+
+        private static Transform[] CreateCubes(BoxSpec[] specs, Transform parent, Func<BoxSpec, Material> material)
+        {
+            var cubes = new Transform[specs.Length];
+            for (int i = 0; i < specs.Length; i++)
+            {
+                cubes[i] = CreateCube(specs[i].Name, parent, material(specs[i])).transform;
+            }
+
+            return cubes;
         }
 
         [MenuItem("Tools/Fly/Fix Chamber Visibility", priority = 2)]
@@ -234,7 +383,6 @@ namespace FlySimulation.EditorTools
             RecreateAllMaterials();
 
             var wallMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/Fly/Materials/WallMat.mat");
-            var ceiling = GameObject.Find("Ceiling");
             var overview = GameObject.Find("OverviewCamera");
             Vector3 chamberSize = ExperimentConfiguration.Default().ChamberSize;
             var chamber = UnityEngine.Object.FindFirstObjectByType<ChamberController>();
@@ -243,23 +391,18 @@ namespace FlySimulation.EditorTools
                 chamberSize = chamber.Configuration.ChamberSize;
             }
 
-            // Ensure transparent wall material is applied and near walls are cut away.
-            for (int i = 0; i < 4; i++)
+            var chamberRootGo = chamber != null ? chamber.gameObject : GameObject.Find("Chamber");
+            if (chamberRootGo != null)
             {
-                var wall = GameObject.Find($"Wall_{i}");
-                if (wall == null)
+                foreach (var part in chamberRootGo.GetComponentsInChildren<Transform>(includeInactive: true))
                 {
-                    continue;
+                    if (ChamberWallHider.IsWallSurface(part.name))
+                    {
+                        ApplyMaterial(part.gameObject, wallMat);
+                    }
                 }
 
-                ApplyMaterial(wall, wallMat);
-                // Hide every wall mesh — opaque slabs block the Game-view camera.
-                SetRendererEnabled(wall.transform, false);
-            }
-
-            if (ceiling != null)
-            {
-                SetRendererEnabled(ceiling.transform, false);
+                ChamberWallHider.ApplyWallLayer(chamberRootGo.transform);
             }
 
             if (overview == null)
@@ -274,16 +417,31 @@ namespace FlySimulation.EditorTools
             rig.Configure(chamberSize);
             ChamberOverviewCamera.Place(cam, overview.transform, chamberSize);
 
+            var flyBody = UnityEngine.Object.FindFirstObjectByType<FlySimulation.Fly.Body.FlyBodyController>();
+            EnsureFlyFollowCamera(flyBody != null ? flyBody.transform : null);
+            EnsureMindLogDisplay();
+
             // Disable fly-eye cameras in Game view if they were left enabled.
+            // Keep Overview (1), FlyFollow (2), and MindLog (3) enabled.
             foreach (var eye in UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
             {
-                if (eye != null && eye.gameObject.name != "OverviewCamera")
+                if (eye == null)
                 {
-                    eye.enabled = false;
-                    if (eye.CompareTag("MainCamera"))
-                    {
-                        eye.tag = "Untagged";
-                    }
+                    continue;
+                }
+
+                if (eye.gameObject.name == "OverviewCamera"
+                    || FlyFollowCamera.IsFollowCamera(eye)
+                    || MindLogDisplay.IsLogCamera(eye))
+                {
+                    eye.enabled = true;
+                    continue;
+                }
+
+                eye.enabled = false;
+                if (eye.CompareTag("MainCamera"))
+                {
+                    eye.tag = "Untagged";
                 }
             }
 
@@ -339,10 +497,47 @@ namespace FlySimulation.EditorTools
                 }
             }
 
+            EnsureRoutePathVisualizer();
+            EnsurePlaceGraphVisualizer();
+
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
             Debug.Log(
-                "Chamber visibility fixed: wall meshes hidden, Phase 5 visual target/obstacles ready, " +
+                "Chamber visibility fixed: walls culled from the overview camera, Phase 5 visual target/obstacles ready, " +
                 $"OverviewCamera reframed for {chamberSize}. Press Play → Game tab.");
+        }
+
+        [MenuItem("Tools/Fly/Ensure Route Path Visualizer", priority = 12)]
+        [MenuItem("Fly/Ensure Route Path Visualizer", priority = 12)]
+        public static void EnsureRoutePathVisualizer()
+        {
+            var fly = GameObject.Find("Fly");
+            if (fly == null)
+            {
+                Debug.LogWarning("No Fly GameObject found — run Setup Chamber Scene first.");
+                return;
+            }
+
+            var viz = fly.GetComponent<RoutePathVisualizer>() ?? fly.AddComponent<RoutePathVisualizer>();
+            viz.Bind(fly.transform);
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            Debug.Log("RoutePathVisualizer bound on Fly (SideChannel + LineRenderer).");
+        }
+
+        [MenuItem("Tools/Fly/Ensure Place Graph Visualizer", priority = 13)]
+        [MenuItem("Fly/Ensure Place Graph Visualizer", priority = 13)]
+        public static void EnsurePlaceGraphVisualizer()
+        {
+            var fly = GameObject.Find("Fly");
+            if (fly == null)
+            {
+                Debug.LogWarning("No Fly GameObject found — run Setup Chamber Scene first.");
+                return;
+            }
+
+            var viz = fly.GetComponent<PlaceGraphVisualizer>() ?? fly.AddComponent<PlaceGraphVisualizer>();
+            viz.Bind(fly.transform);
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            Debug.Log("PlaceGraphVisualizer bound on Fly (latent place map + edges).");
         }
 
         [MenuItem("Tools/Fly/Fix Pink Materials", priority = 1)]
@@ -359,7 +554,7 @@ namespace FlySimulation.EditorTools
         private static void RecreateAllMaterials()
         {
             CreateColorMaterial("FloorMat", new Color(0.45f, 0.48f, 0.52f), overwrite: true);
-            CreateColorMaterial("WallMat", new Color(0.55f, 0.7f, 0.95f, 0.12f), transparent: true, overwrite: true);
+            CreateColorMaterial("WallMat", WallColor, overwrite: true);
             CreateColorMaterial("SugarMat", new Color(0.95f, 0.75f, 0.2f), overwrite: true);
             CreateColorMaterial("BitterMat", new Color(0.55f, 0.2f, 0.75f), overwrite: true);
             CreateColorMaterial("FlyMat", new Color(0.12f, 0.12f, 0.12f), overwrite: true);
@@ -393,14 +588,15 @@ namespace FlySimulation.EditorTools
                 RigidbodyConstraints.FreezeRotationX |
                 RigidbodyConstraints.FreezeRotationZ;
             // Sphere under the thorax is the ground contact; legs remain visual + sensing.
-            const float groundRadius = 0.005f;
+            const float groundRadius = FlyBodyController.GroundRadius;
             var ground = fly.AddComponent<SphereCollider>();
             ground.radius = groundRadius;
             ground.center = Vector3.zero;
 
             var thorax = CreateSegment(fly.transform, "Thorax", Vector3.zero, 0.012f, flyMat);
-            var head = CreateSegment(fly.transform, "Head", new Vector3(0f, 0f, 0.01f), 0.009f, accentMat);
-            var abdomen = CreateSegment(fly.transform, "Abdomen", new Vector3(0f, 0f, -0.012f), 0.011f, flyMat);
+            var head = CreateSegment(
+                fly.transform, "Head", FlyBodyController.HeadCenter, FlyBodyController.HeadRadius * 2f, accentMat);
+            var abdomen = CreateSegment(fly.transform, "Abdomen", FlyBodyController.AbdomenCenter, 0.011f, flyMat);
 
             // Mount legs on an unscaled child. Parenting under Thorax (scaled ~0.012)
             // previously crushed leg meshes to near-invisible size.
@@ -437,9 +633,16 @@ namespace FlySimulation.EditorTools
             SnapFeetToFloor(fly, feet, floorTop);
             config.FlySpawnPosition = fly.transform.position;
 
+            // Eyes + antennae on an unscaled mount at the head: under Head (scaled 0.009)
+            // their spacing shrank ~100× (eyes ~0.02 mm, antennae too close for bearing).
+            var antennaMount = new GameObject("AntennaMount");
+            antennaMount.transform.SetParent(fly.transform, false);
+            antennaMount.transform.localPosition = head.transform.localPosition;
+
             var leftEyeGo = new GameObject("LeftEye");
-            leftEyeGo.transform.SetParent(head.transform, false);
-            leftEyeGo.transform.localPosition = new Vector3(-0.002f, 0.002f, 0.004f);
+            leftEyeGo.transform.SetParent(antennaMount.transform, false);
+            leftEyeGo.transform.localPosition = FlyEyeCamera.MountOffset(isLeft: true);
+            leftEyeGo.transform.localRotation = FlyEyeCamera.MountRotation(isLeft: true);
             var leftCam = leftEyeGo.AddComponent<Camera>();
             leftCam.enabled = false; // RenderTexture capture only; keep OverviewCamera as Game view
             leftCam.depth = -10;
@@ -448,8 +651,9 @@ namespace FlySimulation.EditorTools
             SetPrivate(leftEye, "grayscale", false);
 
             var rightEyeGo = new GameObject("RightEye");
-            rightEyeGo.transform.SetParent(head.transform, false);
-            rightEyeGo.transform.localPosition = new Vector3(0.002f, 0.002f, 0.004f);
+            rightEyeGo.transform.SetParent(antennaMount.transform, false);
+            rightEyeGo.transform.localPosition = FlyEyeCamera.MountOffset(isLeft: false);
+            rightEyeGo.transform.localRotation = FlyEyeCamera.MountRotation(isLeft: false);
             var rightCam = rightEyeGo.AddComponent<Camera>();
             rightCam.enabled = false;
             rightCam.depth = -10;
@@ -457,17 +661,12 @@ namespace FlySimulation.EditorTools
             SetPrivate(rightEye, "isLeftEye", false);
             SetPrivate(rightEye, "grayscale", false);
 
-            // Antennae on an unscaled mount at the head: under Head (scaled 0.009) their
-            // spacing shrank ~100× and left/right smell could not give a bearing.
-            var antennaMount = new GameObject("AntennaMount");
-            antennaMount.transform.SetParent(fly.transform, false);
-            antennaMount.transform.localPosition = head.transform.localPosition;
-
             var leftAntenna = BuildAntenna(antennaMount.transform, isLeft: true, field, flyMat);
             var rightAntenna = BuildAntenna(antennaMount.transform, isLeft: false, field, flyMat);
 
             var proboscis = BuildProboscis(antennaMount.transform, floorTop, accentMat);
-            fly.AddComponent<FlyHeadPose>().Bind(antennaMount.transform, head.transform, proboscis);
+            var headPose = fly.AddComponent<FlyHeadPose>();
+            headPose.Bind(antennaMount.transform, head.transform, proboscis);
 
             var body = fly.AddComponent<FlyBodyController>();
             SetPrivate(body, "rootBody", bodyRb);
@@ -499,6 +698,7 @@ namespace FlySimulation.EditorTools
 
             var motors = fly.AddComponent<FlyMotorController>();
             motors.Bind(body, proboscisActuator);
+            motors.BindHead(headPose);
 
             var demo = fly.AddComponent<WalkingDemoDriver>();
             demo.Bind(motors);
@@ -512,6 +712,11 @@ namespace FlySimulation.EditorTools
             SetPrivate(agent, "useWalkingDemo", false);
             fly.AddComponent<FlyEyeMlAgentsBridge>();
             ConfigureMlAgents(fly);
+
+            var pathViz = fly.AddComponent<RoutePathVisualizer>();
+            pathViz.Bind(fly.transform);
+            var graphViz = fly.AddComponent<PlaceGraphVisualizer>();
+            graphViz.Bind(fly.transform);
 
             return fly;
         }
@@ -877,20 +1082,6 @@ namespace FlySimulation.EditorTools
                     // Sprites/Default / Unlit/Transparent sample texture alpha; keep white.
                     material.SetTexture("_MainTex", Texture2D.whiteTexture);
                 }
-            }
-        }
-
-        private static void SetRendererEnabled(Transform target, bool enabled)
-        {
-            if (target == null)
-            {
-                return;
-            }
-
-            var renderer = target.GetComponent<MeshRenderer>();
-            if (renderer != null)
-            {
-                renderer.enabled = enabled;
             }
         }
 

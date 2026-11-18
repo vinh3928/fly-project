@@ -18,6 +18,11 @@ from flybrain.world_model.outcomes import (
     priority_value,
     spiritual_growth_score,
 )
+
+# When hungry / low-energy, raw explore still outscores feed (no sugar underfoot ⇒
+# feed heuristic predicts no energy gain). Nudge so L1 ranking matches forage intent.
+HUNGRY_FEED_BONUS = 0.35
+HUNGRY_EXPLORE_PENALTY = 0.15
 from flybrain.world_model.predictor import NextStateWorldModel
 
 
@@ -42,6 +47,8 @@ SUGAR_SMELL_MIN = 0.005
 SUGAR_TURN_GAIN = 0.9
 NOVELTY_STEER_MIN = 0.15
 NOVELTY_TURN_GAIN = 0.75
+OPENING_STEER_MIN = 0.1
+OPENING_TURN_GAIN = 0.75
 WALL_TURN_MIN = 0.05
 
 
@@ -53,10 +60,13 @@ def sugar_approach_turn(bearing: float) -> float:
 def cue_turn(signals: dict[str, Any]) -> tuple[float | None, str]:
     """Signed turn (+ = right) toward the strongest sensed cue, or (None, "") if none.
 
-    Priority: sugar smell when hungry → peak visual novelty → wall-avoidance bias.
-    When the live pipeline supplies ``sugar_search_turn`` (smell trend over time),
-    it replaces plain left/right steering so a non-improving search turns harder.
+    Priority: remembered place-graph route home (when hungry) → sugar smell when hungry
+    → peak visual novelty → seen way out of the box → wall-avoidance bias.
+    ``route_home_turn`` wins over chemotaxis so the fly re-enters via the tunnel
+    instead of walking through the chamber wall toward the smell.
     """
+    if is_hungry(signals) and signals.get("route_home_turn") is not None:
+        return float(np.clip(float(signals["route_home_turn"]), -1.0, 1.0)), "route_home"
     if is_hungry(signals) and float(signals.get("sugar_smell", 0.0) or 0.0) >= SUGAR_SMELL_MIN:
         search = signals.get("sugar_search_turn")
         if search is not None:
@@ -65,6 +75,9 @@ def cue_turn(signals: dict[str, Any]) -> tuple[float | None, str]:
     if float(signals.get("visual_novelty", 0.0) or 0.0) >= NOVELTY_STEER_MIN:
         bearing = float(signals.get("novelty_bearing", 0.0) or 0.0)
         return float(np.clip(NOVELTY_TURN_GAIN * bearing, -CUE_TURN_MAX, CUE_TURN_MAX)), "novelty"
+    if float(signals.get("opening_strength", 0.0) or 0.0) >= OPENING_STEER_MIN:
+        bearing = float(signals.get("opening_bearing", 0.0) or 0.0)
+        return float(np.clip(OPENING_TURN_GAIN * bearing, -CUE_TURN_MAX, CUE_TURN_MAX)), "opening"
     wall_turn = float(signals.get("turn_bias", 0.0) or 0.0)
     if abs(wall_turn) >= WALL_TURN_MIN:
         return float(np.clip(wall_turn, -CUE_TURN_MAX, CUE_TURN_MAX)), "wall"
@@ -77,7 +90,7 @@ def steer_candidate(name: str, action: np.ndarray, signals: dict[str, Any]) -> n
     turn, source = cue_turn(signals)
     if turn is None:
         return out
-    if name in ROAM_CANDIDATES or (name == "feed" and source == "sugar"):
+    if name in ROAM_CANDIDATES or (name == "feed" and source in ("sugar", "route_home")):
         out[1] = turn
     return out
 
@@ -87,9 +100,10 @@ DEFAULT_STIMULUS_THRESHOLDS: dict[str, float] = {
     "bitter": 0.2,
     "sugar": 0.15,
     "odor": 0.25,
-    "wall": 0.25,
+    "wall": 0.45,  # grass / outdoor clutter; real chamber walls still clear this
     "survival": 0.35,
     "low_energy": 0.55,  # energy below this ⇒ low_energy peak
+    "hunger": 0.25,  # hunger above this ⇒ hunger peak (earlier than hard seek)
     "novelty": 0.22,
 }
 
@@ -147,6 +161,9 @@ def _stimulus_peaks(
         peaks.append("survival")
     if float(signals.get("energy", 0.5)) < thr["low_energy"]:
         peaks.append("low_energy")
+    hunger = float(signals.get("hunger", 0.0) or 0.0)
+    if hunger >= thr["hunger"] and "low_energy" not in peaks:
+        peaks.append("hunger")
     if float(affect.get("novelty", affect.get("exploration", 0.0))) > thr["novelty"]:
         peaks.append("novelty")
     return peaks
@@ -233,6 +250,12 @@ def _heuristic_next_state(
         next_affect["joy"] = min(1.0, float(affect.get("joy", 0.0)) + 0.1)
         next_affect["survival_risk"] = max(0.0, survival - 0.12)
         next_affect["comfort"] = min(1.0, comfort + 0.08)
+    elif is_hungry(signals) and proboscis > 0.5:
+        # Hungry feed bout / forage intent: survival improves even before contact.
+        smell = float(signals.get("sugar_smell", 0.0) or 0.0)
+        next_affect["survival_risk"] = max(0.0, survival - (0.18 if smell >= 0.1 else 0.1))
+        next_affect["comfort"] = min(1.0, comfort + 0.05)
+        next_signals["energy"] = max(0.0, energy - 0.005)
     elif wall > 0.4 and forward > 0.35:
         next_affect["survival_risk"] = min(1.0, survival + 0.25)
         next_affect["fear"] = min(1.0, fear + 0.15)
@@ -338,15 +361,22 @@ def score_candidate(
         altruism_utility=nxt_a,
         spiritual_utility=nxt_g,
     )
+    peaks = stimulus_peaks if stimulus_peaks is not None else _stimulus_peaks(signals, affect)
+    hungry = is_hungry(signals) or ("low_energy" in peaks) or ("hunger" in peaks)
     # Phase 8: soft boost for explore/forward when gated curiosity drive is active.
+    # Suppressed while hungry — survival forage must outrank curiosity roam.
     curiosity_drive = float(signals.get("curiosity_drive", signals.get("explore_bias", 0.0)))
-    if curiosity_drive > 0.05 and name in ("explore", "forward"):
+    if not hungry and curiosity_drive > 0.05 and name in ("explore", "forward"):
         from flybrain.phase8 import EXPLORE_CANDIDATE_BONUS
 
         nxt_v = float(nxt_v + EXPLORE_CANDIDATE_BONUS * curiosity_drive)
-    # Eye novelty: new visual stimuli make explore/court more attractive.
+    # Eye novelty: new visual stimuli make explore/court more attractive (not while starving).
     visual_novelty = float(signals.get("visual_novelty", 0.0))
-    if visual_novelty > 0.15 and name in ("explore", "forward", "court", "turn_left", "turn_right"):
+    if (
+        not hungry
+        and visual_novelty > 0.15
+        and name in ("explore", "forward", "court", "turn_left", "turn_right")
+    ):
         bearing = float(signals.get("novelty_bearing", 0.0))
         bonus = 0.28 * visual_novelty
         if name == "explore":
@@ -356,14 +386,18 @@ def score_candidate(
         if name == "turn_right" and bearing > 0.15:
             bonus += 0.1 * visual_novelty
         nxt_v = float(nxt_v + bonus)
-    peaks = stimulus_peaks if stimulus_peaks is not None else _stimulus_peaks(signals, affect)
     # Calm / novelty: prefer walking over stop/spin-in-place so motor goals stay locomotor.
     calmish = (not peaks) or peaks == ["novelty"]
-    if calmish:
+    if calmish and not hungry:
         if name in ("forward", "explore"):
             nxt_v = float(nxt_v + 0.12)
         elif name == "stop":
             nxt_v = float(nxt_v - 0.08)
+    if hungry:
+        if name == "feed":
+            nxt_v = float(nxt_v + HUNGRY_FEED_BONUS)
+        elif name in ("explore", "court"):
+            nxt_v = float(nxt_v - HUNGRY_EXPLORE_PENALTY)
     # Stimulus-agnostic boredom: stuck thoughts/body punish stop and reward motion.
     from flybrain.curiosity.boredom import apply_boredom_to_candidate_value
 
@@ -426,9 +460,13 @@ def layer1_quick_scan(
             for c in pool
             if c[0] in ("turn_left", "turn_right", "stop", "forward", "explore", "feed", "court")
         ]
-    if "sugar" in peaks or "low_energy" in peaks:
+    if "sugar" in peaks or "low_energy" in peaks or "hunger" in peaks:
         # Prefer feed/forward early in list for tie-breaks
         pool = sorted(pool, key=lambda c: 0 if c[0] in ("feed", "forward") else 1)
+    # Place-graph route home / landmark scan: commit to feed; do not wander on odor.
+    routing = str(signals.get("route_home_mode") or "") in ("route", "scan")
+    if routing:
+        pool = sorted(pool, key=lambda c: 0 if c[0] == "feed" else 1)
     if not peaks or peaks == ["novelty"] or safe_mode:
         # Safe / calm: prefer tendency-aligned actions over feed loophole.
         if tendency is not None and getattr(tendency, "config", None) and tendency.config.enabled:
@@ -457,6 +495,16 @@ def layer1_quick_scan(
         if cand.improves:
             best = cand
             break
+    hungry = is_hungry(signals) or ("low_energy" in peaks) or ("hunger" in peaks)
+    # Hungry / routing: commit to feed unless a wall/bitter escape clearly wins.
+    if routing or hungry:
+        feed_cand = next((c for c in scored if c.name == "feed"), None)
+        if feed_cand is not None:
+            escape = scored[0].name in ("turn_left", "turn_right", "stop") and (
+                "wall" in peaks or "bitter" in peaks
+            )
+            if not escape or scored[0].value <= feed_cand.value + 0.05:
+                best = feed_cand
     # Boredom force: never settle on stop when stuck in thought/body.
     if bool(signals.get("force_locomotion")) and best.name == "stop":
         for cand in scored:
@@ -464,8 +512,11 @@ def layer1_quick_scan(
                 best = cand
                 break
     # Safe-mode: never default to feed with nothing to eat — follow tendency.
+    # Route-home / hunger overrides safe-mode: the fly is foraging for food.
     if (
         safe_mode
+        and not routing
+        and not hungry
         and tendency is not None
         and getattr(tendency, "config", None)
         and tendency.config.enabled
@@ -541,6 +592,11 @@ def layer2_reflect_outcomes(
                 True,
                 f"prefer_history_{cand.name}_over_{layer1.name}",
             )
+
+    if str(signals.get("route_home_mode") or "") in ("route", "scan"):
+        for cand in scored:
+            if cand.name == "feed":
+                return cand, cand.name != layer1.name, "route_home_feed"
 
     sugar = float(signals.get("sugar", 0.0))
     if sugar > 0.4 and layer1.name != "feed":

@@ -85,6 +85,65 @@ namespace FlySimulation.Tests.EditMode
         }
 
         [Test]
+        public void Concentration_IsZeroWhenWallBlocksLineOfSight()
+        {
+            var sugarGo = new GameObject("sugar");
+            sugarGo.transform.position = new Vector3(0f, 0f, 0f);
+            var sugar = sugarGo.AddComponent<ChemicalSource>();
+            sugar.Configure(ChemicalSource.SourceType.Sugar, 1f, 1f, 0.01f);
+
+            var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            wall.name = "Wall";
+            wall.layer = ChamberWallHider.WallLayer;
+            wall.transform.position = new Vector3(0f, 0f, 0.05f);
+            wall.transform.localScale = new Vector3(0.2f, 0.1f, 0.01f);
+
+            Vector3 beyond = new Vector3(0f, 0f, 0.12f);
+            Vector3 clear = new Vector3(0.15f, 0f, 0f); // same side as source, no wall between
+
+            Assert.IsTrue(ChemicalSource.IsOccludedByWall(sugarGo.transform.position, beyond));
+            Assert.IsFalse(ChemicalSource.IsOccludedByWall(sugarGo.transform.position, clear));
+            Assert.AreEqual(0f, sugar.ConcentrationAt(beyond), 1e-6f);
+            Assert.AreEqual(0f, sugar.SampleAt(beyond).Odor, 1e-6f);
+            Assert.Greater(sugar.ConcentrationAt(clear), 0f);
+            Assert.Greater(sugar.SampleAt(clear).Odor, 0f);
+
+            Object.DestroyImmediate(sugarGo);
+            Object.DestroyImmediate(wall);
+        }
+
+        [Test]
+        public void Concentration_PassesThroughOpenGapInWall()
+        {
+            var sugarGo = new GameObject("sugar");
+            sugarGo.transform.position = new Vector3(0f, 0f, 0f);
+            var sugar = sugarGo.AddComponent<ChemicalSource>();
+            sugar.Configure(ChemicalSource.SourceType.Sugar, 1f, 1f, 0.01f);
+
+            // Two wall slabs with a gap on the +Z axis (tunnel-style opening).
+            var left = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            left.layer = ChamberWallHider.WallLayer;
+            left.transform.position = new Vector3(-0.08f, 0f, 0.05f);
+            left.transform.localScale = new Vector3(0.1f, 0.1f, 0.01f);
+            var right = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            right.layer = ChamberWallHider.WallLayer;
+            right.transform.position = new Vector3(0.08f, 0f, 0.05f);
+            right.transform.localScale = new Vector3(0.1f, 0.1f, 0.01f);
+
+            Vector3 throughGap = new Vector3(0f, 0f, 0.12f);
+            Vector3 blocked = new Vector3(0.08f, 0f, 0.12f);
+
+            Assert.IsFalse(ChemicalSource.IsOccludedByWall(sugarGo.transform.position, throughGap));
+            Assert.IsTrue(ChemicalSource.IsOccludedByWall(sugarGo.transform.position, blocked));
+            Assert.Greater(sugar.SampleAt(throughGap).Odor, 0f);
+            Assert.AreEqual(0f, sugar.SampleAt(blocked).Odor, 1e-6f);
+
+            Object.DestroyImmediate(sugarGo);
+            Object.DestroyImmediate(left);
+            Object.DestroyImmediate(right);
+        }
+
+        [Test]
         public void SugarAndBitter_AlsoWriteOdorChannel()
         {
             const float radius = 0.100f;

@@ -51,6 +51,27 @@ def test_format_live_step_log_always_shows_mind_state() -> None:
     assert "devil:" in mind_line
     assert "plan=explore" in mind_line
     assert "L1[explore=0.90, stop=0.80, forward=0.70]" in mind_line
+    # Chosen plan not in top-3 still appears so survival feed isn't hidden behind explore.
+    feed_line = format_live_step_log(
+        1,
+        [0.4, 0.1, 0.5, 0.5, 0.9],
+        {
+            "mind_tick": True,
+            "intent": {
+                "future": {
+                    "chosen_name": "feed",
+                    "layer1_values": [
+                        {"name": "explore", "value": 0.46},
+                        {"name": "forward", "value": 0.45},
+                        {"name": "turn_left", "value": 0.44},
+                        {"name": "feed", "value": 0.72},
+                    ],
+                }
+            },
+        },
+    )
+    assert "plan=feed" in feed_line
+    assert "feed=0.72" in feed_line
     assert "wall=0.30" in mind_line
     assert "fear=0.20" in mind_line
     assert " ant[" not in mind_line

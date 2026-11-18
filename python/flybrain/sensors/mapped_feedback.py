@@ -23,6 +23,7 @@ from flybrain.memory.place_graph import (
     PlaceNode,
     mean_wall_familiarity,
     observe_place,
+    should_leave_same_place,
 )
 from flybrain.phase4 import SMELL_VEC_DIM
 from flybrain.sensors.modal_gate import ModalChangeGate
@@ -113,6 +114,7 @@ class MappedSensorReport:
     senses_l1_hit: bool = False
     smell_l1_hit: bool = False
     match_reason: str = ""
+    split_reason: str = ""
 
     def reported(self, channel: str, default: float = 0.0) -> float:
         r = self.readings.get(channel)
@@ -134,6 +136,7 @@ class MappedSensorReport:
             "mapped": not bool(self.is_new) and self.place is not None,
             "mean_familiarity": float(self.mean_familiarity),
             "match_reason": self.match_reason,
+            "split_reason": self.split_reason,
             "senses_l1_hit": bool(self.senses_l1_hit),
             "smell_l1_hit": bool(self.smell_l1_hit),
             "walls": (
@@ -203,6 +206,9 @@ class MappedSensorFeedback:
     sense_gate_ttl_seconds: float = 10.0
     smell_gate_ttl_seconds: float = 10.0
     _last_place_id: int | str | None = field(default=None, init=False, repr=False)
+    _prev_opening: float | None = field(default=None, init=False, repr=False)
+    _prev_wall: float | None = field(default=None, init=False, repr=False)
+    _prev_novelty: float | None = field(default=None, init=False, repr=False)
     _sense_gate: ModalChangeGate = field(init=False, repr=False)
     _smell_gate: ModalChangeGate = field(init=False, repr=False)
 
@@ -230,6 +236,9 @@ class MappedSensorFeedback:
 
     def reset(self) -> None:
         self._last_place_id = None
+        self._prev_opening = None
+        self._prev_wall = None
+        self._prev_novelty = None
         self._sense_gate.reset()
         self._smell_gate.reset()
 
@@ -241,8 +250,13 @@ class MappedSensorFeedback:
         smell_vec: np.ndarray | None = None,
         step: int | None = None,
         now_ms: float | None = None,
+        unattenuated: tuple[str, ...] = (),
+        edge_props: dict[str, Any] | None = None,
     ) -> MappedSensorReport:
-        """Upsert vision Place, attach correlated senses, attenuate known items."""
+        """Upsert vision Place, attach correlated senses, attenuate known items.
+
+        Channels in ``unattenuated`` are reported raw this tick (familiarity still tracked).
+        """
         cfg = self.config
         place: PlaceNode | None = None
         is_new = True
@@ -250,6 +264,7 @@ class MappedSensorFeedback:
         mean_fam = 0.0
         mapped = False
         match_reason = ""
+        split_reason = ""
         label = infer_place_label(raw)
         senses_l1 = False
         smell_l1 = False
@@ -267,6 +282,28 @@ class MappedSensorFeedback:
         senses_l1 = bool(sense_sample.l1_hit)
         smell_l1 = bool(smell_sample.l1_hit)
 
+        opening = float(raw.get("opening_strength", 0.0) or 0.0)
+        wall = float(raw.get("wall_hazard", 0.0) or 0.0)
+        novelty = float(raw.get("visual_novelty", 0.0) or 0.0)
+        # Rising novelty only — a flat high score must not mint a Place every tick.
+        novelty_rising = self._prev_novelty is None or novelty >= float(self._prev_novelty) + 0.05
+        leave_same, leave_why = should_leave_same_place(
+            visual_novelty=novelty if novelty_rising else 0.0,
+            new_stimulus=bool(raw.get("new_stimulus", 0.0)),
+            opening=opening,
+            wall=wall,
+            prev_opening=self._prev_opening,
+            prev_wall=self._prev_wall,
+            split_on_novelty=bool(cfg.split_on_novelty),
+            novelty_split_min=float(cfg.novelty_split_min),
+            split_on_landmark=bool(cfg.split_on_landmark),
+            opening_delta_min=float(cfg.opening_delta_min),
+            wall_delta_min=float(cfg.wall_delta_min),
+        )
+        self._prev_opening = opening
+        self._prev_wall = wall
+        self._prev_novelty = novelty
+
         if view_vec is not None and cfg.enabled:
             obs = observe_place(
                 self.store,
@@ -278,6 +315,9 @@ class MappedSensorFeedback:
                 from_place_id=self._last_place_id,
                 context_enabled=bool(cfg.context_enabled),
                 context_top_k=int(cfg.context_top_k),
+                edge_props=edge_props,
+                leave_same_place=bool(leave_same),
+                split_reason=leave_why,
             )
             place = obs.place
             is_new = bool(obs.is_new)
@@ -285,6 +325,7 @@ class MappedSensorFeedback:
             mean_fam = float(obs.mean_familiarity)
             mapped = not is_new
             match_reason = str(obs.match_reason)
+            split_reason = str(obs.split_reason or "")
             self._last_place_id = place.id if place is not None else self._last_place_id
 
             if place is not None:
@@ -331,7 +372,9 @@ class MappedSensorFeedback:
             raw_v = float(raw[channel] or 0.0)
             fam = item_familiarity(place, channel, mapped=mapped)
             item = CHANNEL_ITEMS.get(channel, channel)
-            channel_mapped = mapped and (item == "wall" or fam > 0.0)
+            channel_mapped = (
+                mapped and (item == "wall" or fam > 0.0) and channel not in unattenuated
+            )
             reported, scale = attenuate_mapped_reading(
                 raw_v,
                 mapped=channel_mapped,
@@ -359,4 +402,5 @@ class MappedSensorFeedback:
             senses_l1_hit=senses_l1,
             smell_l1_hit=smell_l1,
             match_reason=match_reason,
+            split_reason=split_reason,
         )

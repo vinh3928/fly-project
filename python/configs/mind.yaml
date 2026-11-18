@@ -27,6 +27,13 @@ place_graph:
   # creates distinct Place nodes linked by ADJACENT edges.
   context_enabled: true
   context_top_k: 8
+  # Break same_place when novelty / landmarks change even if patch cosine still
+  # matches (open meadow otherwise glues one Place and route_home stalls).
+  split_on_novelty: true
+  novelty_split_min: 0.25
+  split_on_landmark: true
+  opening_delta_min: 0.15
+  wall_delta_min: 0.15
   # Sensor feedback (MappedSensorFeedback): once a wall/odor/taste item is
   # mapped on the current Place in Neo4j, the *reported* sensor channel is
   # scaled by max(floor, 1 - strength * item_familiarity). Raw transducers
@@ -44,6 +51,7 @@ place_graph:
     l2_ttl_seconds: 86400
     match_min: 0.97
     l1_persist_every: 1.0
+    neo4j_flush_every: 5.0 # seconds; durable save of the place the fly keeps revisiting
 
 embedding:
   latent_dim: 256
@@ -98,12 +106,14 @@ thinking:
     frequency_default: 0.5
     survival_forward_scale: 0.35
   # Lower ⇒ sugar/novelty/hunger peaks fire sooner → walk/forage plans.
+  # Wall is higher so textured grass / distant clutter outside does not peak as a wall.
   stimulus_thresholds:
     bitter: 0.2
     sugar: 0.15
-    wall: 0.25
+    wall: 0.45
     survival: 0.35
     low_energy: 0.55
+    hunger: 0.25 # earlier than hard seek — Present/L1 notice rising hunger
     novelty: 0.22
   enable_retrospective: true
 
@@ -175,6 +185,21 @@ curiosity:
     first_visit_bonus: 1.0
     repeat_decay: 0.85
     arena_half_extent: 0.25
+    # Experience novelty: full 256-d fused embedding, normalized per dimension
+    # (running mean/spread), mean RMS z-distance to the knn nearest of the last
+    # memory_size embeddings (skipping the newest recent_exclude), then scaled by
+    # the run's own distances: baseline_percentile → 0, percentile → 1.
+    # Unity sends no position, so this replaces the missing spatial term (0.45).
+    experience_weight: 0.6
+    experience_new_threshold: 0.5
+    experience:
+      memory_size: 1000
+      knn: 5
+      recent_exclude: 8
+      history_size: 500
+      percentile: 95
+      baseline_percentile: 50
+      warmup: 20
 
 # Stimulus-agnostic: rises when thoughts repeat and/or body stays still; forces turn+crawl.
 boredom:
@@ -190,11 +215,72 @@ boredom:
   locomotor_bonus: 0.22
   escape_forward: 0.45
   escape_turn: 0.55
+  # Blocked: forward >= blocked_forward_min, wall_hazard >= blocked_wall_min, and
+  # body still (pose Δ < motion_eps, else speed < blocked_speed_max) for
+  # blocked_horizon_steps → back up (escape_backup) and turn for escape_hold_steps.
+  # Open space (wall≈0) never arms escape. While blocked, wall stays raw (no fade).
+  blocked_forward_min: 0.3
+  blocked_speed_max: 0.01
+  blocked_wall_min: 0.25
+  blocked_horizon_steps: 200
+  escape_hold_steps: 160
+  escape_backup: 0.5
 
 # Hungry sugar search: compare sugar smell across mind ticks.
 # Rising → gentle antenna steering; flat → turn harder each tick (base + step·n,
 # capped); sharp drop → near U-turn. Side comes from antenna bearing, else the
 # last side. Resets when not hungry or no sugar smell.
+# When hungry outside (or multi-hop from home), follow ADJACENT place memory
+# back into the box before sugar chemotaxis. Home = sugar puddle if known,
+# else the chamber place left when first stepping outside.
+route_home:
+  enabled: true
+  max_hops: 64
+  handoff_sugar_min: 0.35
+  cruise_forward: 0.55
+  pivot_turn: 0.8
+  # Hold one turn direction until ≥180° AND hops drop (cap 360° if thrashing).
+  min_turn_degrees: 180
+  max_turn_degrees: 360
+  commit_turn: 0.8
+  commit_forward_min: 0.3 # crawl while committed (avoid fwd=0 spin lock)
+  commit_escape_ticks: 2 # soft-steer after max yaw with no hop progress
+  commit_escape_turn: 0.55 # below pivot_turn so escape keeps forward
+  deg_per_unit_turn: 90 # mind_interval≈20; use ~183 if mind_interval is 40
+  bookmark_sugar_smell: 0.25 # bookmark enclosed puddle/place only (not outdoor plume)
+  trail_plume_home: true # reverse-path to session outdoor/odor_plume smell peaks
+  trail_plume_smell_min: 0.25 # ignore weak outdoor smell when picking plume trail
+  max_opening_for_home: 0.4 # reject meadow/tunnel-mouth views as food/chamber home
+  # Steer toward next place's Unity world_xyz as a checkpoint (falls back to edge
+  # turn if unmapped). Arriving within world_arrive_m advances even if place-id
+  # rematch minted a new outdoor node (keeps hops from climbing forever).
+  world_steer: true
+  world_steer_gain: 1.0
+  world_arrive_m: 0.08
+  # Session smell trail: when hungry, reverse-path to last strong enclosed smell;
+  # rising smell blends antenna bearing; walls outside steer toward openings.
+  trail_max: 64
+  trail_smell_min: 0.08
+  rise_eps: 0.002
+  smell_blend: 0.55
+  wall_avoid: 0.45
+  entrance_opening_min: 0.25
+  wall_path_penalty: 1.5 # Dijkstra: avoid high-wall places when routing around
+  opening_path_bonus: 0.75 # prefer edges that recorded a tunnel/opening
+  # Hungry: query Neo4j for sugar / sugar_smell only (ignore generic odor plumes)
+  # and follow ADJACENT nodes+edges back to the earliest sugar experience.
+  graph_food_enabled: true
+  graph_food_min: 0.05
+  prefer_first_food: true
+  # No home / unreachable / missing edge → body spins 360° in 20° steps;
+  # Unity yaws the thorax and keeps the head leading ~one step.
+  landmark_scan: true
+  scan_step_degrees: 20
+  scan_span_degrees: 360
+  scan_turn: 0.12
+  scan_landmark_opening: 0.35
+  scan_landmark_novelty: 0.25
+
 sugar_search:
   enabled: true
   rise_eps: 0.002 # relative smell gain per mind tick that counts as closer
@@ -205,18 +291,22 @@ sugar_search:
   reverse_turn: 1.0
   bearing_min: 0.05
   # Per-motor-step orient reflex: turn = steer_gain·bearing every step (not just
-  # mind ticks); forward = cruise·(1 − |turn|/pivot_turn) ⇒ pivots in place for
-  # sharp angles instead of orbiting the food on the motor's forward floor.
+  # mind ticks); forward = cruise·(1 − |turn|/pivot_turn). Sharp angles pivot
+  # in place for pivot_max_ticks, then crawl at ≥align_go_forward while turning
+  # (align, then go — avoids forever-spin on saturated ±1 bearings).
   # Antenna tips are 38 mm apart ⇒ bearing ≈ 1.75·sin(angle); pivot beyond ~27°.
   orient_enabled: true
   steer_gain: 1.0
   cruise_forward: 0.6
   pivot_turn: 0.8
+  pivot_max_ticks: 12
+  align_go_forward: 0.35
   # Arrive + feed: extend proboscis and slow once smell ≥ probe_smell; on sugar
   # (feet or proboscis taste ≥ feed_taste_min) stop the motor for a feed bout of
   # feed_ticks motor ticks (= mind_interval). Repeats while the proboscis tastes
-  # sugar and the fly is hungry. Hungry at energy < 0.3 (hunger ≥ 0.7); once a
-  # feed bout starts, feeding continues until energy ≥ 0.9 (composer.ENERGY_SATED).
+  # sugar and the fly is hungry. Hungry / food-seek at energy < 0.55 (hunger ≥ 0.45),
+  # matching Layer-1 low_energy; once a feed bout starts, feeding continues until
+  # energy ≥ 0.9 (composer.ENERGY_SATED).
   probe_smell: 0.6
   probe_extension: 1.0
   arrive_slow: 0.6
@@ -333,6 +423,10 @@ stimulus_interrupt:
   deep_thought_steps: 80
   deep_thought_gain: 10.0
   deep_thought_mind_interval: 4 # mind+devil every 4 steps while frozen (vs mind_interval 40)
+  # Rising-edge hunger / low_energy / survival → freeze + deep reframe (no STM novelty).
+  # Suppressed while route_home is in progress (do not freeze mid-return path).
+  status_reframe_enabled: true
+  status_deep_thought_steps: 40 # shorter freeze than novelty inspect; null = same as deep_thought_steps
   # Hazard conditioning during deep thought: hits to mark a risk conditioned;
   # consecutive agreeing accept/acknowledge judgements early-unlock the freeze.
   conditioning_hit_threshold: 3

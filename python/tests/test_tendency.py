@@ -68,3 +68,16 @@ def test_safe_mode_prefers_explore_not_feed_for_juvenile() -> None:
 def test_safe_mode_false_when_hungry_for_sugar() -> None:
     signals = {"energy": 0.3, "sugar": 0.5, "bitter": 0.0}
     assert TendencyDrive.is_safe_mode(signals, ["sugar", "low_energy"]) is False
+
+
+def test_safe_mode_false_on_hunger_peak_or_rising_hunger() -> None:
+    from flybrain.thinking.two_layer_future import _stimulus_peaks
+
+    calm = {"energy": 0.8, "sugar": 0.0, "bitter": 0.0, "hunger": 0.1}
+    assert TendencyDrive.is_safe_mode(calm, ["novelty"]) is True
+    assert TendencyDrive.is_safe_mode(calm, ["hunger"]) is False
+    rising = {"energy": 0.8, "sugar": 0.0, "bitter": 0.0, "hunger": 0.3}
+    assert TendencyDrive.is_safe_mode(rising, ["novelty"]) is False
+    peaks = _stimulus_peaks(rising, {"novelty": 0.0, "survival_risk": 0.0})
+    assert "hunger" in peaks
+    assert "low_energy" not in peaks

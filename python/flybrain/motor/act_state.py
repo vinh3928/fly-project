@@ -42,6 +42,8 @@ class MotorDirective:
     goal: np.ndarray
     reason: str = ""
     step: int = 0
+    # Skip the motor's forward floor (turn in place / back up out of a jam).
+    allow_pivot: bool = False
 
     def __post_init__(self) -> None:
         g = clip_goal(self.goal).copy()
@@ -58,6 +60,7 @@ def make_directive(
     goal: np.ndarray | None = None,
     reason: str = "",
     step: int = 0,
+    allow_pivot: bool = False,
 ) -> MotorDirective:
     """Build a directive from mode and/or plan name + goal."""
     resolved_mode = mode if mode is not None else mode_for_plan(plan_name)
@@ -74,6 +77,7 @@ def make_directive(
         goal=g,
         reason=str(reason or ""),
         step=int(step),
+        allow_pivot=bool(allow_pivot),
     )
 
 
@@ -105,7 +109,7 @@ class MotorActController:
     def push(self, directive: MotorDirective) -> MotorDirective:
         """Mind interrupt intake: replace held mode/goal."""
         self._directive = directive
-        self.motor.set_goal(directive.goal.copy())
+        self.motor.set_goal(directive.goal.copy(), allow_pivot=directive.allow_pivot)
         return self._directive
 
     def apply_tick(self, observation: np.ndarray | None = None) -> np.ndarray:

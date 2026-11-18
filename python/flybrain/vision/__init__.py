@@ -9,11 +9,25 @@ from .novelty import (
     apply_visual_explore_goal,
     stereo_patch_embedding,
 )
-from .recurrent_head import RecurrentVisionHead, VisionNavCues, heuristic_cues_from_frames
+from .recurrent_head import (
+    CUE_NAMES,
+    NUM_CUES,
+    IncompatibleVisionCheckpoint,
+    RecurrentVisionHead,
+    VisionNavCues,
+    heuristic_cues_from_frames,
+    load_vision_head,
+    save_vision_head,
+)
 from .synthetic import SyntheticNavSample, make_synthetic_batch, make_synthetic_sample, render_synthetic_frame
 
 __all__ = [
+    "CUE_NAMES",
+    "NUM_CUES",
+    "IncompatibleVisionCheckpoint",
     "RecurrentVisionHead",
+    "load_vision_head",
+    "save_vision_head",
     "SyntheticNavSample",
     "VisionNavCues",
     "PatchNovelty",

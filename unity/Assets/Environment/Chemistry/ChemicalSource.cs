@@ -51,8 +51,34 @@ namespace FlySimulation.Environment
 
         public float ConcentrationAt(Vector3 worldPosition)
         {
-            float distance = Vector3.Distance(transform.position, worldPosition);
+            Vector3 origin = transform.position;
+            if (IsOccludedByWall(origin, worldPosition))
+            {
+                return 0f;
+            }
+
+            float distance = Vector3.Distance(origin, worldPosition);
             return ComputeConcentration(strength, distance, spread, edgeFraction);
+        }
+
+        /// <summary>
+        /// True when a chamber/tunnel wall sits on the straight line between two points.
+        /// Odor (and other plume channels) cannot travel through walls; the tunnel opening
+        /// still passes smell when the line of sight is clear.
+        /// </summary>
+        public static bool IsOccludedByWall(Vector3 from, Vector3 to)
+        {
+            Vector3 delta = to - from;
+            if (delta.sqrMagnitude < 1e-12f)
+            {
+                return false;
+            }
+
+            return Physics.Linecast(
+                from,
+                to,
+                1 << ChamberWallHider.WallLayer,
+                QueryTriggerInteraction.Ignore);
         }
 
         public ChemicalChannels SampleAt(Vector3 worldPosition)

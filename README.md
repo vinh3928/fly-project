@@ -27,12 +27,12 @@ Flight is intentionally deferred until walking, sensing, recording, and learning
 
 ## Technology stack
 
-| Layer | Tools |
-| --- | --- |
-| Simulation | Unity 6, C#, Unity Physics, ArticulationBody, ML-Agents |
-| Learning | Python 3.11+, PyTorch, NumPy, Gymnasium-compatible wrappers |
-| Data | Parquet, JSON/JSONL, MP4/image sequences, PyTorch checkpoints |
-| Tooling | Git LFS, Docker, Unity Test Framework, Pytest, Ruff, Black, GitHub Actions |
+| Layer      | Tools                                                                      |
+| ---------- | -------------------------------------------------------------------------- |
+| Simulation | Unity 6, C#, Unity Physics, ArticulationBody, ML-Agents                    |
+| Learning   | Python 3.11+, PyTorch, NumPy, Gymnasium-compatible wrappers                |
+| Data       | Parquet, JSON/JSONL, MP4/image sequences, PyTorch checkpoints              |
+| Tooling    | Git LFS, Docker, Unity Test Framework, Pytest, Ruff, Black, GitHub Actions |
 
 ## Repository layout
 
@@ -62,6 +62,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
+
+Command to run python in /python.
+.venv-mlagents/bin/python -m scripts.run_live_mind --editor --continuous --mind-interval 4
 
 ### Unity setup (interactive chamber)
 

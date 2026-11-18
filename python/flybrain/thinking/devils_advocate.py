@@ -259,13 +259,16 @@ _PROPOSAL_SYSTEM = (
     "energy (1=full), visual_novelty (something new in view). "
     "When stimulus_interrupt / deep_thought is set the body is already frozen "
     "for interrupt_remaining ticks: do not fight the freeze, instead reason about "
-    "interrupt_cue (what stopped the fly, e.g. smell_novelty) and say what to do "
+    "interrupt_cue (what stopped the fly, e.g. smell_novelty or hunger) and say what to do "
     "when motion resumes. Center your reason on that cue when present. "
+    "If interrupt_cue is hunger / low_energy / survival, or energy is low / hunger high, "
+    "reframe to seeking sugar food (risk=energy): follow sugar_smell / route home only, "
+    "ignore generic odor plumes, do not prioritize odor exploration over feeding. "
     "Name the single biggest risk or cue the draft ignores, and say how to soften it: "
     "forward_scale is the fraction of planned speed to keep, "
     "turn_delta steers toward/away (negative left, positive right), "
     "confidence is how strongly the signals back you up, reason is under 10 words. "
-    "Prefer odor when the plume is the strongest new signal. "
+    "Prefer odor when the plume is the strongest new signal and the fly is not hungry. "
     "Do not invent a risk the signals do not show.\n"
     "Examples:\n"
     'in {"signals":{"energy":0.9,"toxin_taste":0.0,"wall_hazard":0.85,"visual_novelty":0.1,"odor":0.0}} '
@@ -277,6 +280,10 @@ _PROPOSAL_SYSTEM = (
     'in {"signals":{"energy":0.9,"toxin_taste":0.0,"wall_hazard":0.2,"visual_novelty":0.1,"odor":3.7}} '
     'out {"risk":"odor","forward_scale":0.5,"turn_delta":0.2,"confidence":0.8,'
     '"reason":"strong novel odor plume"}\n'
+    'in {"signals":{"energy":0.2,"hunger":0.8,"toxin_taste":0.0,"wall_hazard":0.0,"odor":0.3,'
+    '"interrupt_cue":"hunger","deep_thought":true}} '
+    'out {"risk":"energy","forward_scale":0.55,"turn_delta":0.0,"confidence":0.85,'
+    '"reason":"hungry, seek sugar home"}\n'
     'in {"signals":{"energy":0.15,"toxin_taste":0.0,"wall_hazard":0.1,"visual_novelty":0.2,"odor":0.0}} '
     'out {"risk":"energy","forward_scale":0.5,"turn_delta":0.0,"confidence":0.6,'
     '"reason":"low energy, conserve"}\n'
@@ -330,6 +337,10 @@ def heuristic_proposal(
     survival = float(affect.get("survival_risk", 0.0) or 0.0)
     deep = bool(signals.get("deep_thought") or signals.get("stimulus_interrupt"))
     cue = str(signals.get("interrupt_cue") or "").lower()
+    from flybrain.thinking.composer import is_hungry
+
+    hungry = is_hungry(signals) or cue in ("hunger", "low_energy", "survival")
+    energy = float(signals.get("energy", 1.0) or 1.0)
     # Conditioning tip: prefer a conditioned active risk over raw wall spam.
     cond_top = str(signals.get("conditioning_top_risk") or "").strip().lower()
     cond_strength = float(signals.get("conditioning_top_strength", 0.0) or 0.0)
@@ -340,9 +351,13 @@ def heuristic_proposal(
     forward_scale = 1.0
     turn_delta = 0.0
     reason = "no major counter"
-    # During a smell interrupt the cue itself is the subject, even if the plume
-    # reading dips between ticks.
-    if cond_top in ("odor", "toxin", "fall", "energy") and cond_strength >= 0.25:
+    # Hungry / status reframe: seek food, not explore odor (unless toxin/wall crisis).
+    if hungry and bitter < 0.35 and wall < 0.7:
+        risk = "energy"
+        forward_scale = 0.55
+        turn_delta = 0.0
+        reason = "hungry, seek sugar / route home"
+    elif cond_top in ("odor", "toxin", "fall", "energy") and cond_strength >= 0.25 and not hungry:
         risk = cond_top
         if cond_top == "odor":
             forward_scale = 0.5
@@ -358,7 +373,7 @@ def heuristic_proposal(
         else:
             forward_scale = 0.7
             reason = "conditioned energy pressure"
-    elif odor > 0.25 or (deep and "smell" in cue):
+    elif (odor > 0.25 or (deep and "smell" in cue)) and not hungry:
         risk = "odor"
         forward_scale = 0.5
         turn_delta = 0.25 if right_odor >= left_odor else -0.25
@@ -373,14 +388,18 @@ def heuristic_proposal(
         forward_scale = 0.55
         turn_delta = 0.25
         reason = "toxin risk sample before commit"
-    elif deep and "visual" in cue:
+    elif deep and "visual" in cue and not hungry:
         risk = "none"
         forward_scale = 0.6
         reason = "inspect novel sight before moving"
-    elif survival > 0.6:
-        risk = "fall"
-        forward_scale = 0.4
-        reason = "stability risk ease forward"
+    elif survival > 0.6 or energy < 0.3:
+        risk = "fall" if survival > 0.6 and not hungry else "energy"
+        forward_scale = 0.4 if survival > 0.6 and not hungry else 0.55
+        reason = (
+            "stability risk ease forward"
+            if survival > 0.6 and not hungry
+            else "energy pressure seek food"
+        )
     elif survival > 0.35:
         risk = "energy"
         forward_scale = 0.7

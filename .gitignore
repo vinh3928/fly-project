@@ -89,6 +89,7 @@ data/checkpoints/*/
 !data/checkpoints/.gitkeep
 data/exports/*/
 !data/exports/.gitkeep
+data/vision_unity/
 *.parquet
 *.pt
 *.pth

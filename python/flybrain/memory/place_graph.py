@@ -13,6 +13,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from collections import deque
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -21,6 +22,85 @@ import numpy as np
 from flybrain.phase4 import PATCH_VEC_DIM
 
 WALL_DIRS: tuple[str, ...] = ("north", "east", "south", "west")
+
+
+def neighbors_from_edges(
+    edges: list[PlaceEdge],
+    place_id: int | str,
+    *,
+    undirected: bool = True,
+) -> list[PlaceEdge]:
+    """Edges touching ``place_id`` (both directions when ``undirected``)."""
+    key = str(place_id)
+    out: list[PlaceEdge] = []
+    for edge in edges:
+        if str(edge.src_id) == key:
+            out.append(edge)
+        elif undirected and str(edge.dst_id) == key:
+            out.append(edge)
+    return out
+
+
+def shortest_path_bfs(
+    edges: list[PlaceEdge],
+    src_id: int | str,
+    dst_id: int | str,
+    *,
+    undirected: bool = True,
+    max_hops: int = 64,
+) -> list[int | str] | None:
+    """BFS place-id path over ADJACENT edges (inclusive endpoints), or ``None``."""
+    src, dst = str(src_id), str(dst_id)
+    if src == dst:
+        return [src_id]
+    adj: dict[str, list[tuple[str, PlaceEdge]]] = {}
+    for edge in edges:
+        a, b = str(edge.src_id), str(edge.dst_id)
+        adj.setdefault(a, []).append((b, edge))
+        if undirected:
+            adj.setdefault(b, []).append((a, edge))
+    limit = max(1, int(max_hops))
+    prev: dict[str, str | None] = {src: None}
+    queue: deque[tuple[str, int]] = deque([(src, 0)])
+    while queue:
+        cur, depth = queue.popleft()
+        if depth >= limit:
+            continue
+        for nxt, _edge in adj.get(cur, []):
+            if nxt in prev:
+                continue
+            prev[nxt] = cur
+            if nxt == dst:
+                path = [dst]
+                node: str | None = dst
+                while node is not None and node != src:
+                    node = prev[node]
+                    if node is not None:
+                        path.append(node)
+                path.reverse()
+                id_map = {str(e.src_id): e.src_id for e in edges}
+                id_map.update({str(e.dst_id): e.dst_id for e in edges})
+                id_map[src] = src_id
+                id_map[dst] = dst_id
+                return [id_map.get(p, p) for p in path]
+            queue.append((nxt, depth + 1))
+    return None
+
+
+def edge_toward(
+    edges: list[PlaceEdge],
+    src_id: int | str,
+    dst_id: int | str,
+) -> PlaceEdge | None:
+    """Directed edge ``src→dst`` if present, else the reverse (for undirected follow)."""
+    src, dst = str(src_id), str(dst_id)
+    forward = reverse = None
+    for edge in edges:
+        if str(edge.src_id) == src and str(edge.dst_id) == dst:
+            forward = edge
+        elif str(edge.src_id) == dst and str(edge.dst_id) == src:
+            reverse = edge
+    return forward if forward is not None else reverse
 
 
 @dataclass
@@ -45,6 +125,13 @@ class PlaceGraphConfig:
     # places become distinct Place nodes linked by ADJACENT edges.
     context_enabled: bool = True
     context_top_k: int = 8
+    # Leave same_place when landmarks / novelty say the scene changed even if
+    # patch cosine still matches (open meadow otherwise glues one Place forever).
+    split_on_novelty: bool = True
+    novelty_split_min: float = 0.25
+    split_on_landmark: bool = True
+    opening_delta_min: float = 0.15
+    wall_delta_min: float = 0.15
     cache: dict[str, Any] | None = None
 
     @classmethod
@@ -65,8 +152,47 @@ class PlaceGraphConfig:
             hazard_decay_floor=float(data.get("hazard_decay_floor", 0.15)),
             context_enabled=bool(data.get("context_enabled", True)),
             context_top_k=max(1, int(data.get("context_top_k", 8))),
+            split_on_novelty=bool(data.get("split_on_novelty", True)),
+            novelty_split_min=float(data.get("novelty_split_min", 0.25)),
+            split_on_landmark=bool(data.get("split_on_landmark", True)),
+            opening_delta_min=float(data.get("opening_delta_min", 0.15)),
+            wall_delta_min=float(data.get("wall_delta_min", 0.15)),
             cache=dict(data["cache"]) if isinstance(data.get("cache"), dict) else None,
         )
+
+
+def should_leave_same_place(
+    *,
+    visual_novelty: float = 0.0,
+    new_stimulus: bool = False,
+    opening: float = 0.0,
+    wall: float = 0.0,
+    prev_opening: float | None = None,
+    prev_wall: float | None = None,
+    split_on_novelty: bool = True,
+    novelty_split_min: float = 0.25,
+    split_on_landmark: bool = True,
+    opening_delta_min: float = 0.15,
+    wall_delta_min: float = 0.15,
+) -> tuple[bool, str]:
+    """Whether landmark / novelty cues should break a ``same_place`` match.
+
+    Returns ``(leave, reason)`` with reason in
+    ``novelty`` | ``new_stimulus`` | ``opening_delta`` | ``wall_delta`` | ``\"\"``.
+    """
+    if bool(split_on_novelty):
+        if bool(new_stimulus):
+            return True, "new_stimulus"
+        if float(visual_novelty) >= float(novelty_split_min):
+            return True, "novelty"
+    if bool(split_on_landmark):
+        if prev_opening is not None and abs(float(opening) - float(prev_opening)) >= float(
+            opening_delta_min
+        ):
+            return True, "opening_delta"
+        if prev_wall is not None and abs(float(wall) - float(prev_wall)) >= float(wall_delta_min):
+            return True, "wall_delta"
+    return False, ""
 
 
 def default_walls() -> dict[str, dict[str, Any]]:
@@ -221,6 +347,129 @@ class PlaceEdge:
         }
 
 
+# Hungry food search: sugar contact + sugar antenna odor only (not generic odor plumes).
+SUGAR_SENSE_KINDS: tuple[str, ...] = (
+    "sugar",
+    "sugar_smell",
+)
+# Alias kept for callers; hunger routing uses sugar senses exclusively.
+FOOD_SENSE_KINDS: tuple[str, ...] = SUGAR_SENSE_KINDS
+
+
+@dataclass
+class FoodPlaceHit:
+    """A Place that carries a food/scent Sense (Neo4j ``HAS_SENSE`` or props.senses)."""
+
+    place: PlaceNode
+    kind: str
+    value: float
+    # Earliest known encounter step when available (else None).
+    first_step: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "place_id": self.place.id,
+            "kind": self.kind,
+            "value": float(self.value),
+            "first_step": self.first_step,
+            "label": str((self.place.props or {}).get("label") or ""),
+            "created_at": self.place.created_at.isoformat(),
+        }
+
+
+@dataclass
+class PathHop:
+    """One ADJACENT hop on a return path (node pair + edge props for steering)."""
+
+    src_id: int | str
+    dst_id: int | str
+    props: dict[str, Any] = field(default_factory=dict)
+    reversed: bool = False  # True when following the undirected reverse of a recorded edge
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "src_id": self.src_id,
+            "dst_id": self.dst_id,
+            "props": dict(self.props),
+            "reversed": bool(self.reversed),
+        }
+
+
+def food_sense_value(
+    props: dict[str, Any] | None,
+    *,
+    kinds: tuple[str, ...] | list[str] | None = None,
+) -> tuple[str, float, int | None]:
+    """Best sugar-food channel on place props.senses → (kind, value, first_step)."""
+    senses = (props or {}).get("senses") if isinstance(props, dict) else None
+    if not isinstance(senses, dict):
+        return "", 0.0, None
+    best_kind = ""
+    best_val = 0.0
+    best_step: int | None = None
+    for kind in kinds or SUGAR_SENSE_KINDS:
+        row = senses.get(kind)
+        if not isinstance(row, dict):
+            continue
+        val = float(row.get("value") or 0.0)
+        if val > best_val:
+            best_val = val
+            best_kind = str(kind)
+            step = row.get("last_seen_step")
+            best_step = int(step) if step is not None else None
+    return best_kind, best_val, best_step
+
+
+def find_food_places_in_nodes(
+    nodes: list[PlaceNode],
+    *,
+    min_value: float = 0.05,
+    limit: int = 32,
+    kinds: tuple[str, ...] | list[str] | None = None,
+) -> list[FoodPlaceHit]:
+    """Scan in-memory place props for sugar food senses; earliest experience first."""
+    hit_kinds = tuple(kinds) if kinds is not None else SUGAR_SENSE_KINDS
+    hits: list[FoodPlaceHit] = []
+    for node in nodes:
+        kind, value, step = food_sense_value(node.props, kinds=hit_kinds)
+        if value < float(min_value) or not kind:
+            continue
+        hits.append(FoodPlaceHit(place=node, kind=kind, value=value, first_step=step))
+    # First experience: lowest step, then oldest created_at, then strongest smell.
+    hits.sort(
+        key=lambda h: (
+            h.first_step if h.first_step is not None else 10**12,
+            h.place.created_at,
+            -h.value,
+        )
+    )
+    return hits[: max(1, int(limit))]
+
+
+def path_hops_from_ids(
+    edges: list[PlaceEdge],
+    place_ids: list[int | str],
+) -> list[PathHop]:
+    """Resolve ADJACENT edge props along a place-id path (undirected)."""
+    hops: list[PathHop] = []
+    for i in range(len(place_ids) - 1):
+        src, dst = place_ids[i], place_ids[i + 1]
+        edge = edge_toward(edges, src, dst)
+        if edge is None:
+            hops.append(PathHop(src_id=src, dst_id=dst, props={}, reversed=False))
+            continue
+        reversed_hop = str(edge.src_id) == str(dst) and str(edge.dst_id) == str(src)
+        hops.append(
+            PathHop(
+                src_id=src,
+                dst_id=dst,
+                props=dict(edge.props or {}),
+                reversed=reversed_hop,
+            )
+        )
+    return hops
+
+
 class PlaceGraphStore(Protocol):
     """Graph store for place nodes and ADJACENT reference edges."""
 
@@ -291,6 +540,48 @@ class PlaceGraphStore(Protocol):
 
     def edges(self) -> list[PlaceEdge]: ...
 
+    def neighbors(
+        self,
+        place_id: int | str,
+        *,
+        undirected: bool = True,
+    ) -> list[PlaceEdge]: ...
+
+    def find_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        label: str | None = None,
+        limit: int = 64,
+    ) -> list[PlaceNode]: ...
+
+    def find_food_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        min_value: float = 0.05,
+        kinds: tuple[str, ...] | list[str] | None = None,
+        limit: int = 32,
+    ) -> list[FoodPlaceHit]: ...
+
+    def shortest_path(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> list[int | str] | None: ...
+
+    def shortest_path_with_edges(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> tuple[list[int | str], list[PathHop]] | None: ...
+
 
 @dataclass
 class InMemoryPlaceGraph:
@@ -333,12 +624,6 @@ class InMemoryPlaceGraph:
                 best = node
         now = datetime.now(timezone.utc)
         if best is not None and best_sim >= float(match_min):
-            # Same place: refresh vector slightly toward new view; keep walls unless provided.
-            alpha = 0.15
-            best.view_vec = encode_place_view(
-                (1.0 - alpha) * best.view_vec + alpha * vec,
-                self.view_dim,
-            )
             if walls is not None:
                 best.walls = _normalize_walls({**best.walls, **walls})
             if props:
@@ -401,12 +686,6 @@ class InMemoryPlaceGraph:
         node = self.get(place_id)
         if node is None:
             return None
-        vec = self._pad_vec(view_vec)
-        alpha = 0.15
-        node.view_vec = encode_place_view(
-            (1.0 - alpha) * node.view_vec + alpha * vec,
-            self.view_dim,
-        )
         if walls is not None:
             node.walls = _normalize_walls({**node.walls, **walls})
         if props:
@@ -511,6 +790,67 @@ class InMemoryPlaceGraph:
 
     def edges(self) -> list[PlaceEdge]:
         return list(self._edges.values())
+
+    def neighbors(
+        self,
+        place_id: int | str,
+        *,
+        undirected: bool = True,
+    ) -> list[PlaceEdge]:
+        return neighbors_from_edges(self.edges(), place_id, undirected=undirected)
+
+    def find_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        label: str | None = None,
+        limit: int = 64,
+    ) -> list[PlaceNode]:
+        rows = self.list_places(fly_id=fly_id, limit=max(1, int(limit)) * 4)
+        if label is not None:
+            want = str(label)
+            rows = [n for n in rows if str((n.props or {}).get("label") or "") == want]
+        return rows[: max(1, int(limit))]
+
+    def find_food_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        min_value: float = 0.05,
+        kinds: tuple[str, ...] | list[str] | None = None,
+        limit: int = 32,
+    ) -> list[FoodPlaceHit]:
+        rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
+        return find_food_places_in_nodes(
+            rows, min_value=min_value, limit=limit, kinds=kinds
+        )
+
+    def shortest_path(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> list[int | str] | None:
+        return shortest_path_bfs(
+            self.edges(), src_id, dst_id, undirected=undirected, max_hops=max_hops
+        )
+
+    def shortest_path_with_edges(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> tuple[list[int | str], list[PathHop]] | None:
+        path = self.shortest_path(
+            src_id, dst_id, undirected=undirected, max_hops=max_hops
+        )
+        if path is None:
+            return None
+        return path, path_hops_from_ids(self.edges(), path)
 
 
 @dataclass
@@ -660,11 +1000,7 @@ class PgPlaceGraph:
             prop_map["last_step"] = int(step)
         if neighbors and neighbors[0][1] >= float(match_min):
             node, _sim = neighbors[0]
-            alpha = 0.15
-            merged_vec = encode_place_view(
-                (1.0 - alpha) * node.view_vec + alpha * vec,
-                self.view_dim,
-            )
+            merged_vec = node.view_vec
             merged_walls = _normalize_walls({**node.walls, **(walls or {})})
             merged_props = {**node.props, **prop_map}
             with self._conn.cursor() as cur:
@@ -745,12 +1081,7 @@ class PgPlaceGraph:
         node = self.get(int(place_id))
         if node is None:
             return None
-        vec = self._pad_vec(view_vec)
-        alpha = 0.15
-        merged_vec = encode_place_view(
-            (1.0 - alpha) * node.view_vec + alpha * vec,
-            self.view_dim,
-        )
+        merged_vec = node.view_vec
         merged_walls = _normalize_walls({**node.walls, **(walls or {})}) if walls else node.walls
         prop_map = {**dict(node.props), **dict(props or {})}
         if step is not None:
@@ -908,6 +1239,67 @@ class PgPlaceGraph:
                 )
             )
         return out
+
+    def neighbors(
+        self,
+        place_id: int | str,
+        *,
+        undirected: bool = True,
+    ) -> list[PlaceEdge]:
+        return neighbors_from_edges(self.edges(), place_id, undirected=undirected)
+
+    def find_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        label: str | None = None,
+        limit: int = 64,
+    ) -> list[PlaceNode]:
+        rows = self.list_places(fly_id=fly_id, limit=max(1, int(limit)) * 4)
+        if label is not None:
+            want = str(label)
+            rows = [n for n in rows if str((n.props or {}).get("label") or "") == want]
+        return rows[: max(1, int(limit))]
+
+    def find_food_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        min_value: float = 0.05,
+        kinds: tuple[str, ...] | list[str] | None = None,
+        limit: int = 32,
+    ) -> list[FoodPlaceHit]:
+        rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
+        return find_food_places_in_nodes(
+            rows, min_value=min_value, limit=limit, kinds=kinds
+        )
+
+    def shortest_path(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> list[int | str] | None:
+        return shortest_path_bfs(
+            self.edges(), src_id, dst_id, undirected=undirected, max_hops=max_hops
+        )
+
+    def shortest_path_with_edges(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> tuple[list[int | str], list[PathHop]] | None:
+        path = self.shortest_path(
+            src_id, dst_id, undirected=undirected, max_hops=max_hops
+        )
+        if path is None:
+            return None
+        return path, path_hops_from_ids(self.edges(), path)
 
 
 @dataclass
@@ -1250,15 +1642,11 @@ class Neo4jPlaceGraph:
             prop_map["last_step"] = int(step)
         if matches and matches[0][1] >= float(match_min):
             node = matches[0][0]
-            merged_vec = encode_place_view(
-                0.85 * node.view_vec + 0.15 * vec,
-                self.view_dim,
-            )
             merged_walls = _normalize_walls({**node.walls, **(walls or {})})
             return self._save_place(
                 place_id=str(node.id),
                 fly_id=fly_id,
-                view_vec=merged_vec,
+                view_vec=node.view_vec,
                 walls=merged_walls,
                 props={**node.props, **prop_map},
                 created_at=node.created_at.isoformat(),
@@ -1304,11 +1692,6 @@ class Neo4jPlaceGraph:
         node = self.get(place_id)
         if node is None:
             return None
-        vec = self._pad_vec(view_vec)
-        merged_vec = encode_place_view(
-            0.85 * node.view_vec + 0.15 * vec,
-            self.view_dim,
-        )
         merged_walls = _normalize_walls({**node.walls, **(walls or {})}) if walls else node.walls
         prop_map = {**dict(node.props), **dict(props or {})}
         if step is not None:
@@ -1316,7 +1699,7 @@ class Neo4jPlaceGraph:
         return self._save_place(
             place_id=str(node.id),
             fly_id=node.fly_id,
-            view_vec=merged_vec,
+            view_vec=node.view_vec,
             walls=merged_walls,
             props=prop_map,
             created_at=node.created_at.isoformat(),
@@ -1445,6 +1828,241 @@ class Neo4jPlaceGraph:
             )
         return out
 
+    def neighbors(
+        self,
+        place_id: int | str,
+        *,
+        undirected: bool = True,
+    ) -> list[PlaceEdge]:
+        if undirected:
+            rows = self._query(
+                """
+                MATCH (p:Place {place_id: $place_id})-[edge:ADJACENT]-(other:Place)
+                RETURN elementId(edge) AS edge_id,
+                       startNode(edge).place_id AS src_id,
+                       endNode(edge).place_id AS dst_id,
+                       edge.kind AS kind,
+                       edge.props_json AS props_json
+                """,
+                {"place_id": str(place_id)},
+            )
+        else:
+            rows = self._query(
+                """
+                MATCH (p:Place {place_id: $place_id})-[edge:ADJACENT]->(other:Place)
+                RETURN elementId(edge) AS edge_id,
+                       p.place_id AS src_id,
+                       other.place_id AS dst_id,
+                       edge.kind AS kind,
+                       edge.props_json AS props_json
+                """,
+                {"place_id": str(place_id)},
+            )
+        out: list[PlaceEdge] = []
+        for row in rows:
+            props_raw = row.get("props_json") or "{}"
+            props = json.loads(props_raw) if isinstance(props_raw, str) else dict(props_raw)
+            out.append(
+                PlaceEdge(
+                    id=row["edge_id"],
+                    src_id=row["src_id"],
+                    dst_id=row["dst_id"],
+                    kind=str(row.get("kind") or "adjacent"),
+                    props=props,
+                )
+            )
+        return out
+
+    def find_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        label: str | None = None,
+        limit: int = 64,
+    ) -> list[PlaceNode]:
+        """Cypher-filter by props label when set (avoids over-fetch × client filter)."""
+        lim = max(1, int(limit))
+        if label is None:
+            return self.list_places(fly_id=fly_id, limit=lim)
+        # props_json stores {"label": "<name>", ...}; marker avoids loading all places.
+        marker = f'"label": "{str(label)}"'
+        rows = self._query(
+            f"""
+            MATCH (p:Place {{fly_id: $fly_id}})
+            WHERE p.props_json CONTAINS $label_marker
+            WITH p
+            ORDER BY p.updated_at DESC
+            LIMIT $limit
+            {self._return_clause()}
+            """,
+            {
+                "fly_id": fly_id,
+                "label_marker": marker,
+                "limit": lim,
+            },
+        )
+        out = [self._record_to_node(row) for row in rows]
+        # Exact label match (CONTAINS can false-positive on substrings).
+        want = str(label)
+        return [n for n in out if str((n.props or {}).get("label") or "") == want][:lim]
+
+    def find_food_places(
+        self,
+        *,
+        fly_id: str = "fly_001",
+        min_value: float = 0.05,
+        kinds: tuple[str, ...] | list[str] | None = None,
+        limit: int = 32,
+    ) -> list[FoodPlaceHit]:
+        """Query Neo4j ``(:Place)-[:HAS_SENSE]->(:Sense)`` for food/scent.
+
+        Returns earliest food experiences first (lowest ``last_seen_step``, then
+        oldest ``created_at``) so hungry routing can reverse-path to the first
+        food memory.
+        """
+        kind_list = [str(k) for k in (kinds or SUGAR_SENSE_KINDS)]
+        # _return_clause() starts with RETURN; fold sense fields into the same RETURN.
+        ret = self._return_clause().strip()
+        if ret.upper().startswith("RETURN"):
+            ret_body = ret[len("RETURN") :].strip()
+        else:
+            ret_body = ret
+        rows = self._query(
+            f"""
+            MATCH (p:Place {{fly_id: $fly_id}})-[r:HAS_SENSE]->(s:Sense)
+            WHERE s.kind IN $kinds AND coalesce(s.value, r.value, 0.0) >= $min_value
+            WITH p, s, r,
+                 coalesce(s.value, r.value, 0.0) AS value,
+                 coalesce(s.last_seen_step, r.last_seen_step) AS first_step
+            ORDER BY coalesce(first_step, 1000000000) ASC, p.created_at ASC, value DESC
+            LIMIT $limit
+            RETURN {ret_body},
+                   s.kind AS sense_kind,
+                   value AS sense_value,
+                   first_step AS sense_step
+            """,
+            {
+                "fly_id": str(fly_id),
+                "kinds": kind_list,
+                "min_value": float(min_value),
+                "limit": max(1, int(limit)),
+            },
+        )
+        hits: list[FoodPlaceHit] = []
+        seen: set[str] = set()
+        for row in rows:
+            node = self._record_to_node(row)
+            key = str(node.id)
+            if key in seen:
+                continue
+            seen.add(key)
+            step_raw = row.get("sense_step")
+            hits.append(
+                FoodPlaceHit(
+                    place=node,
+                    kind=str(row.get("sense_kind") or ""),
+                    value=float(row.get("sense_value") or 0.0),
+                    first_step=int(step_raw) if step_raw is not None else None,
+                )
+            )
+        if hits:
+            return hits
+        # Fallback: props.senses on listed places (cache / pre-Sense writes).
+        return find_food_places_in_nodes(
+            self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8)),
+            min_value=min_value,
+            limit=limit,
+            kinds=kind_list,
+        )
+
+    def shortest_path(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> list[int | str] | None:
+        """Id-only shortestPath (no edge props) for cheap reachability checks."""
+        if str(src_id) == str(dst_id):
+            return [src_id]
+        hops = max(1, int(max_hops))
+        rel = f"-[:ADJACENT*1..{hops}]-" if undirected else f"-[:ADJACENT*1..{hops}]->"
+        rows = self._query(
+            f"""
+            MATCH (a:Place {{place_id: $src_id}}), (b:Place {{place_id: $dst_id}})
+            MATCH path = shortestPath((a){rel}(b))
+            RETURN [n IN nodes(path) | n.place_id] AS place_ids
+            """,
+            {"src_id": str(src_id), "dst_id": str(dst_id)},
+        )
+        if not rows:
+            return None
+        ids = list(rows[0].get("place_ids") or [])
+        return ids if ids else None
+
+    def shortest_path_with_edges(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> tuple[list[int | str], list[PathHop]] | None:
+        """Neo4j shortestPath over ADJACENT, returning place ids + edge props."""
+        if str(src_id) == str(dst_id):
+            return [src_id], []
+        hops = max(1, int(max_hops))
+        rel = f"-[:ADJACENT*1..{hops}]-" if undirected else f"-[:ADJACENT*1..{hops}]->"
+        rows = self._query(
+            f"""
+            MATCH (a:Place {{place_id: $src_id}}), (b:Place {{place_id: $dst_id}})
+            MATCH path = shortestPath((a){rel}(b))
+            WITH nodes(path) AS ns, relationships(path) AS rs
+            RETURN [n IN ns | n.place_id] AS place_ids,
+                   [r IN rs | {{
+                       src_id: startNode(r).place_id,
+                       dst_id: endNode(r).place_id,
+                       props_json: coalesce(r.props_json, '{{}}')
+                   }}] AS edge_rows
+            """,
+            {"src_id": str(src_id), "dst_id": str(dst_id)},
+        )
+        if not rows:
+            return None
+        ids = list(rows[0].get("place_ids") or [])
+        if not ids:
+            return None
+        edge_rows = rows[0].get("edge_rows") or []
+        path_hops: list[PathHop] = []
+        for i in range(len(ids) - 1):
+            src, dst = ids[i], ids[i + 1]
+            matched = None
+            for raw in edge_rows:
+                if not isinstance(raw, dict):
+                    continue
+                a, b = str(raw.get("src_id")), str(raw.get("dst_id"))
+                if (a == str(src) and b == str(dst)) or (a == str(dst) and b == str(src)):
+                    matched = raw
+                    break
+            props: dict[str, Any] = {}
+            reversed_hop = False
+            if matched is not None:
+                props_raw = matched.get("props_json") or "{}"
+                try:
+                    props = (
+                        json.loads(props_raw)
+                        if isinstance(props_raw, str)
+                        else dict(props_raw or {})
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    props = {}
+                reversed_hop = str(matched.get("src_id")) == str(dst)
+            path_hops.append(
+                PathHop(src_id=src, dst_id=dst, props=props, reversed=reversed_hop)
+            )
+        return ids, path_hops
+
 
 def mean_wall_familiarity(walls: dict[str, Any] | None) -> float:
     """Average familiarity across the four chamber walls."""
@@ -1491,6 +2109,8 @@ class PlaceMapObservation:
     from_place_id: int | str | None = None
     match_reason: str = "created"  # same_place | adjacent | view_only | created
     edge_created: bool = False
+    # Why same_place was refused (novelty / landmark); empty when not split.
+    split_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1502,6 +2122,7 @@ class PlaceMapObservation:
             "from_place_id": self.from_place_id,
             "match_reason": self.match_reason,
             "edge_created": bool(self.edge_created),
+            "split_reason": self.split_reason,
             "walls": {d: dict(self.place.walls.get(d, {})) for d in WALL_DIRS},
             "items": dict((self.place.props or {}).get("items") or {}),
         }
@@ -1541,40 +2162,53 @@ def observe_place(
     from_place_id: int | str | None = None,
     context_enabled: bool = True,
     context_top_k: int = 8,
+    edge_props: dict[str, Any] | None = None,
+    leave_same_place: bool = False,
+    split_reason: str = "",
 ) -> PlaceMapObservation:
     """Resolve current view into a Place, using path context when enabled.
 
     Matching order when ``context_enabled`` and ``from_place_id`` is set:
 
-    1. Stay on the same place if the view still matches (micro-motion).
-    2. Prefer a lookalike that is already linked by ``ADJACENT`` from the
-       previous place (re-enter a known room via the same reference path).
+    1. Stay on the same place if the view still matches (micro-motion), unless
+       ``leave_same_place`` (landmark / novelty split).
+    2. Prefer a lookalike already linked by ``ADJACENT`` to/from the previous
+       place (re-enter a known room via the same path, in either direction).
     3. Otherwise **create** a new Place even if a lookalike exists — identical
        rooms reached from different references stay distinct.
 
     When context is off / cold start (no ``from_place_id``), falls back to
     pure view matching.
+
+    A place keeps the view it was created with: revisits never move it, so a
+    gradual walk (box → tunnel → outside) leaves it and maps new places.
     """
     top_k = max(1, int(context_top_k if context_enabled else 1))
     candidates = store.nearest(view_vec, fly_id=fly_id, top_k=top_k)
     chosen: PlaceNode | None = None
     similarity = 0.0
     reason = "created"
+    used_split = ""
 
     use_context = bool(context_enabled) and from_place_id is not None
     if use_context:
-        for node, sim in candidates:
-            if str(node.id) == str(from_place_id) and float(sim) >= float(match_min):
-                chosen = node
-                similarity = float(sim)
-                reason = "same_place"
-                break
+        if not bool(leave_same_place):
+            for node, sim in candidates:
+                if str(node.id) == str(from_place_id) and float(sim) >= float(match_min):
+                    chosen = node
+                    similarity = float(sim)
+                    reason = "same_place"
+                    break
+        elif split_reason:
+            used_split = str(split_reason)
         if chosen is None:
             best_adj: tuple[PlaceNode, float] | None = None
             for node, sim in candidates:
                 if float(sim) < float(match_min):
                     continue
-                if store.has_adjacent(from_place_id, node.id):
+                if store.has_adjacent(from_place_id, node.id) or store.has_adjacent(
+                    node.id, from_place_id
+                ):
                     if best_adj is None or float(sim) > best_adj[1]:
                         best_adj = (node, float(sim))
             if best_adj is not None:
@@ -1625,7 +2259,7 @@ def observe_place(
     edge_created = False
     if from_place_id is not None and str(from_place_id) != str(place.id):
         existed = store.has_adjacent(from_place_id, place.id)
-        store.upsert_adjacent(from_place_id, place.id, step=step)
+        store.upsert_adjacent(from_place_id, place.id, props=edge_props, step=step)
         edge_created = not existed
 
     return PlaceMapObservation(
@@ -1636,6 +2270,7 @@ def observe_place(
         from_place_id=from_place_id,
         match_reason=reason,
         edge_created=edge_created,
+        split_reason=used_split if reason != "same_place" else "",
     )
 
 

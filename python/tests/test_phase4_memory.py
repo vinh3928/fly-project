@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 import numpy as np
@@ -131,6 +132,22 @@ def test_as_f32_accepts_pgvector_like_tolist() -> None:
 
     out2 = _pad_vec(FakeVectorListOnly(), dim=3)
     assert out2.shape == (3,) and float(out2[0]) == 0.5 and float(out2[2]) == 0.0
+
+
+def test_json_dumps_accepts_ndarray_signals() -> None:
+    """STM jsonb insert must not choke on numpy values in signal payloads."""
+    from flybrain.memory.pgvector import _json_dumps
+
+    payload = {
+        "fly_xyz": np.asarray([0.1, 0.02, -0.3], dtype=np.float32),
+        "hunger": np.float32(0.5),
+        "label": "outside",
+    }
+    text = _json_dumps(payload)
+    restored = json.loads(text)
+    assert restored["fly_xyz"] == pytest.approx([0.1, 0.02, -0.3], abs=1e-5)
+    assert restored["hunger"] == pytest.approx(0.5)
+    assert restored["label"] == "outside"
 
 
 def test_open_short_term_memory_defaults_in_memory() -> None:

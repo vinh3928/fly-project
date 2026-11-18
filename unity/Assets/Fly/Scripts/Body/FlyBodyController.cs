@@ -8,6 +8,18 @@ namespace FlySimulation.Fly.Body
     /// </summary>
     public sealed class FlyBodyController : MonoBehaviour
     {
+        /// <summary>Thorax ground-contact sphere radius (local, at the root origin).</summary>
+        public const float GroundRadius = 0.005f;
+
+        /// <summary>Head segment center (local); the eyes sit at its center.</summary>
+        public static readonly Vector3 HeadCenter = new Vector3(0f, 0f, 0.01f);
+
+        /// <summary>Head sphere radius; must exceed the eye near-plane corner distance.</summary>
+        public const float HeadRadius = 0.0045f;
+
+        /// <summary>Abdomen collision sphere (local); radius = ground radius so it clears the floor.</summary>
+        public static readonly Vector3 AbdomenCenter = new Vector3(0f, 0f, -0.012f);
+
         [SerializeField] private Rigidbody rootBody;
         [SerializeField] private Transform head;
         [SerializeField] private Transform thorax;
@@ -27,6 +39,16 @@ namespace FlySimulation.Fly.Body
         public Vector3 LinearVelocity => rootBody != null ? rootBody.linearVelocity : Vector3.zero;
         public Vector3 AngularVelocity => rootBody != null ? rootBody.angularVelocity : Vector3.zero;
 
+        /// <summary>
+        /// Velocity from position change between physics steps. Locomotion moves the root with
+        /// MovePosition and zeroes <see cref="LinearVelocity"/>, so this is the one that drops to
+        /// zero when the fly is jammed against a wall.
+        /// </summary>
+        public Vector3 MeasuredVelocity { get; private set; }
+
+        private Vector3 _lastSampledPosition;
+        private bool _hasSampledPosition;
+
         public float TiltDegrees => Vector3.Angle(transform.up, Vector3.up);
 
         public void BindBalance(BalanceController balanceController)
@@ -42,6 +64,7 @@ namespace FlySimulation.Fly.Body
         {
             transform.localScale = Vector3.one * config.BodyScale;
             LocomotionEnabled = config.LocomotionEnabled;
+            EnsureSolidShell();
             if (rootBody != null)
             {
                 rootBody.centerOfMass = centerOfMassOffset;
@@ -93,11 +116,55 @@ namespace FlySimulation.Fly.Body
             }
 
             Physics.SyncTransforms();
+            _hasSampledPosition = false;
+            MeasuredVelocity = Vector3.zero;
 
             for (int i = 0; i < legs.Length; i++)
             {
                 legs[i]?.ApplyStandingPose();
             }
+        }
+
+        /// <summary>
+        /// Solid head and abdomen spheres on the root, alongside the thorax ground sphere, so walls
+        /// stop the whole body (and the eyes inside the head), not just the thorax. Idempotent.
+        /// </summary>
+        public void EnsureSolidShell()
+        {
+            EnsureSphere(HeadCenter, HeadRadius);
+            EnsureSphere(AbdomenCenter, GroundRadius);
+        }
+
+        private void EnsureSphere(Vector3 center, float radius)
+        {
+            foreach (var existing in GetComponents<SphereCollider>())
+            {
+                if (!existing.isTrigger && (existing.center - center).sqrMagnitude < 1e-12f)
+                {
+                    existing.radius = radius;
+                    return;
+                }
+            }
+
+            var sphere = gameObject.AddComponent<SphereCollider>();
+            sphere.center = center;
+            sphere.radius = radius;
+        }
+
+        private void FixedUpdate()
+        {
+            SampleVelocity(Time.fixedDeltaTime);
+        }
+
+        /// <summary>Update <see cref="MeasuredVelocity"/>; call once per physics step.</summary>
+        public void SampleVelocity(float dt)
+        {
+            Vector3 position = rootBody != null ? rootBody.position : transform.position;
+            MeasuredVelocity = _hasSampledPosition && dt > 0f
+                ? (position - _lastSampledPosition) / dt
+                : Vector3.zero;
+            _lastSampledPosition = position;
+            _hasSampledPosition = true;
         }
 
         public void FixedSensorUpdate()

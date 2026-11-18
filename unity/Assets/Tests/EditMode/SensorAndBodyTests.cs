@@ -2,6 +2,7 @@ using FlySimulation.Environment;
 using FlySimulation.Experiments;
 using FlySimulation.Fly.Body;
 using FlySimulation.Fly.Brain;
+using FlySimulation.Fly.Motors;
 using FlySimulation.Fly.Sensors;
 using NUnit.Framework;
 using UnityEngine;
@@ -133,6 +134,33 @@ namespace FlySimulation.Tests.EditMode
             Object.DestroyImmediate(fieldGo);
             Object.DestroyImmediate(sugarGo);
             Object.DestroyImmediate(bitterGo);
+        }
+
+        [Test]
+        public void Sample_IgnoresSourcesBehindWalls()
+        {
+            var fieldGo = new GameObject("field");
+            var field = fieldGo.AddComponent<ChemicalFieldSystem>();
+            var sugarGo = new GameObject("sugar");
+            sugarGo.transform.position = Vector3.zero;
+            var sugar = sugarGo.AddComponent<ChemicalSource>();
+            sugar.Configure(ChemicalSource.SourceType.Sugar, 1f, 1f, 0.01f);
+            field.Register(sugar);
+
+            var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            wall.layer = ChamberWallHider.WallLayer;
+            wall.transform.position = new Vector3(0f, 0f, 0.05f);
+            wall.transform.localScale = new Vector3(0.2f, 0.1f, 0.01f);
+
+            ChemicalChannels blocked = field.Sample(new Vector3(0f, 0f, 0.12f));
+            ChemicalChannels open = field.Sample(new Vector3(0.15f, 0f, 0f));
+            Assert.AreEqual(0f, blocked.Odor, 1e-6f);
+            Assert.AreEqual(0f, blocked.Sugar, 1e-6f);
+            Assert.Greater(open.Odor, 0f);
+
+            Object.DestroyImmediate(fieldGo);
+            Object.DestroyImmediate(sugarGo);
+            Object.DestroyImmediate(wall);
         }
     }
 
@@ -277,6 +305,46 @@ namespace FlySimulation.Tests.EditMode
             Assert.AreNotEqual(0, cam.cullingMask & 1); // Default layer still visible
             cam.targetTexture = null;
             Object.DestroyImmediate(go);
+        }
+
+        [Test]
+        public void EyeGeometry_SpacedAndYawedOnUnscaledMount()
+        {
+            Assert.AreEqual(0.004f, 2f * FlyEyeCamera.HalfSpacing, 1e-6f);
+            Assert.AreEqual(2f, FlyEyeCamera.MountYawDegrees, 1e-6f);
+            Assert.AreEqual(
+                Mathf.Abs(FlyEyeCamera.MountOffset(false).x),
+                FlyEyeCamera.HalfSpacing,
+                1e-6f);
+
+            var mount = new GameObject("AntennaMount");
+            var leftGo = new GameObject("LeftEye");
+            leftGo.transform.SetParent(mount.transform, false);
+            leftGo.transform.localPosition = FlyEyeCamera.MountOffset(isLeft: true);
+            leftGo.transform.localRotation = FlyEyeCamera.MountRotation(isLeft: true);
+            var rightGo = new GameObject("RightEye");
+            rightGo.transform.SetParent(mount.transform, false);
+            rightGo.transform.localPosition = FlyEyeCamera.MountOffset(isLeft: false);
+            rightGo.transform.localRotation = FlyEyeCamera.MountRotation(isLeft: false);
+
+            Assert.AreEqual(
+                2f * FlyEyeCamera.HalfSpacing,
+                Vector3.Distance(leftGo.transform.position, rightGo.transform.position),
+                1e-6f);
+            // Unity stores negative yaw as 360 - yaw.
+            float leftYaw = leftGo.transform.localEulerAngles.y;
+            if (leftYaw > 180f)
+            {
+                leftYaw -= 360f;
+            }
+            Assert.AreEqual(-FlyEyeCamera.MountYawDegrees, leftYaw, 1e-3f);
+            Assert.AreEqual(FlyEyeCamera.MountYawDegrees, rightGo.transform.localEulerAngles.y, 1e-3f);
+            Assert.AreEqual(
+                2f * FlyEyeCamera.MountYawDegrees,
+                Vector3.Angle(leftGo.transform.forward, rightGo.transform.forward),
+                1e-3f);
+
+            Object.DestroyImmediate(mount);
         }
 
         [Test]
@@ -554,6 +622,41 @@ namespace FlySimulation.Tests.EditMode
         }
     }
 
+    public sealed class MeasuredVelocityTests
+    {
+        [Test]
+        public void SampleVelocity_FromPositionChange_ZeroWhenJammed()
+        {
+            var go = new GameObject("fly");
+            var body = go.AddComponent<FlyBodyController>();
+            const float dt = 0.005f;
+
+            body.SampleVelocity(dt);
+            Assert.AreEqual(Vector3.zero, body.MeasuredVelocity, "first sample has no previous position");
+
+            go.transform.position += new Vector3(0.0003f, 0f, 0.0004f);
+            body.SampleVelocity(dt);
+            Assert.AreEqual(0.1f, body.MeasuredVelocity.magnitude, 1e-4f);
+
+            body.SampleVelocity(dt);
+            Assert.AreEqual(0f, body.MeasuredVelocity.magnitude, 1e-6f, "no displacement → stopped");
+
+            body.ResetPose(Vector3.one, Quaternion.identity);
+            Assert.AreEqual(Vector3.zero, body.MeasuredVelocity);
+            body.SampleVelocity(dt);
+            Assert.AreEqual(Vector3.zero, body.MeasuredVelocity, "reset teleport is not motion");
+
+            Object.DestroyImmediate(go);
+        }
+
+        [Test]
+        public void LinearVelocityScale_MatchesPythonBodyStateScale()
+        {
+            // python/flybrain/signals/builder.py BODY_LINEAR_VELOCITY_SCALE
+            Assert.AreEqual(2f, SensorManager.LinearVelocityScale);
+        }
+    }
+
     public sealed class FlyHeadPoseTests
     {
         private static (GameObject fly, Transform mount, Transform head, ProboscisSensor prob, FlyHeadPose pose) Build()
@@ -636,6 +739,52 @@ namespace FlySimulation.Tests.EditMode
             pose.Apply(0f);
             Assert.Greater(tip.position.y, floorTop + 0.005f, "raised head keeps the extended tip off the floor");
             Object.DestroyImmediate(fly);
+        }
+
+        [Test]
+        public void SetLookYaw_YawsMountForLandmarkScan()
+        {
+            var (fly, mount, _, _, pose) = Build();
+            pose.SetLookYaw(15f);
+            Assert.AreEqual(15f, pose.LookYaw, 1e-4f);
+            Assert.AreEqual(15f, mount.localEulerAngles.y, 1e-3f);
+            pose.SetLookYaw(-20f);
+            float yaw = mount.localEulerAngles.y;
+            if (yaw > 180f)
+            {
+                yaw -= 360f;
+            }
+            Assert.AreEqual(-20f, yaw, 1e-3f);
+            pose.SetLookYaw(FlyHeadPose.MaxLookYawDegrees + 10f);
+            Assert.AreEqual(FlyHeadPose.MaxLookYawDegrees, pose.LookYaw, 1e-4f);
+            Object.DestroyImmediate(fly);
+        }
+
+        [Test]
+        public void PivotScan_BodyTurnsAndHeadLeadsOneStep()
+        {
+            using var fixture = new LocomotionFixture();
+            var mount = new GameObject("mount").transform;
+            mount.SetParent(fixture.Fly.transform, false);
+            var head = new GameObject("head").transform;
+            head.SetParent(fixture.Fly.transform, false);
+            var pose = fixture.Fly.AddComponent<FlyHeadPose>();
+            pose.Bind(mount, head, null);
+            fixture.Motors.BindHead(pose);
+
+            Quaternion start = fixture.Fly.transform.rotation;
+            // Pivot landmark scan: no forward, sustained turn.
+            fixture.Motors.SetHighLevelCommands(0f, 0.12f, 0.5f, 0.8f);
+            const float dt = 0.02f;
+            for (int i = 0; i < 80; i++)
+            {
+                fixture.Motors.Tick(dt);
+                Physics.Simulate(dt);
+            }
+
+            float bodyYaw = Quaternion.Angle(start, fixture.Fly.transform.rotation);
+            Assert.Greater(bodyYaw, 15f, "body should yaw during landmark scan");
+            Assert.AreEqual(20f, pose.LookYaw, 0.5f, "head leads ~one 20° step, does not spin alone");
         }
 
         [Test]

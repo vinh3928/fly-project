@@ -7,9 +7,11 @@ from typing import Any
 
 import numpy as np
 
+from flybrain.curiosity.experience import ExperienceNovelty, ExperienceNoveltyConfig
 from flybrain.phase8 import (
     CHEM_SIGNATURE_BINS,
-    EMBEDDING_HASH_BINS,
+    EXPERIENCE_NEW_THRESHOLD,
+    EXPERIENCE_WEIGHT,
     FIRST_VISIT_BONUS,
     GRID_CELL_SIZE,
     REPEAT_VISIT_DECAY,
@@ -25,9 +27,11 @@ class NoveltyConfig:
     grid_cell_size: float = GRID_CELL_SIZE
     first_visit_bonus: float = FIRST_VISIT_BONUS
     repeat_decay: float = REPEAT_VISIT_DECAY
-    embedding_bins: int = EMBEDDING_HASH_BINS
     chem_bins: int = CHEM_SIGNATURE_BINS
     arena_half_extent: float = 0.25
+    experience_weight: float = EXPERIENCE_WEIGHT
+    experience_new_threshold: float = EXPERIENCE_NEW_THRESHOLD
+    experience: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -44,6 +48,7 @@ class NoveltyObservation:
     unique_cells: int
     exploration_xp: float
     streak: int
+    experience_novelty: float = 0.0
     details: dict[str, Any] = field(default_factory=dict)
 
 
@@ -53,7 +58,7 @@ class NoveltyTracker:
     def __init__(self, config: NoveltyConfig | None = None) -> None:
         self.config = config or NoveltyConfig()
         self._cell_visits: dict[tuple[int, int], int] = {}
-        self._embed_visits: dict[tuple[int, ...], int] = {}
+        self.experience = ExperienceNovelty(ExperienceNoveltyConfig.from_dict(self.config.experience))
         self._chem_visits: dict[tuple[int, ...], int] = {}
         self._events: set[str] = set()
         self.exploration_xp: float = 0.0
@@ -62,7 +67,7 @@ class NoveltyTracker:
 
     def reset(self) -> None:
         self._cell_visits.clear()
-        self._embed_visits.clear()
+        self.experience.reset()
         self._chem_visits.clear()
         self._events.clear()
         self.exploration_xp = 0.0
@@ -133,14 +138,14 @@ class NoveltyTracker:
             details["cell"] = cell
             details["cell_visits"] = before + 1
 
-        embed_key = self._hash_vector(embedding, self.config.embedding_bins, dims=8)
-        if embed_key is not None:
-            before = self._embed_visits.get(embed_key, 0)
-            bonus = self._visit_bonus(before)
-            self._embed_visits[embed_key] = before + 1
-            score += 0.3 * bonus
-            embedding_new = before == 0
-            details["embed_visits"] = before + 1
+        experience_novelty = 0.0
+        if embedding is not None:
+            exp = self.experience.observe(embedding)
+            experience_novelty = exp.novelty
+            score += float(self.config.experience_weight) * exp.novelty
+            embedding_new = exp.novelty >= float(self.config.experience_new_threshold)
+            details["experience_novelty"] = exp.novelty
+            details["experience_distance"] = exp.distance
 
         chem_key = self._hash_vector(chem_vector, self.config.chem_bins, dims=4)
         if chem_key is not None:
@@ -179,6 +184,7 @@ class NoveltyTracker:
             unique_cells=len(self._cell_visits),
             exploration_xp=float(self.exploration_xp),
             streak=int(self.streak),
+            experience_novelty=experience_novelty,
             details=details,
         )
 
@@ -186,7 +192,7 @@ class NoveltyTracker:
         return {
             "coverage": self.coverage(),
             "unique_cells": len(self._cell_visits),
-            "unique_embeddings": len(self._embed_visits),
+            "experience_memory": self.experience.memory_count,
             "unique_chem": len(self._chem_visits),
             "unique_events": len(self._events),
             "exploration_xp": float(self.exploration_xp),

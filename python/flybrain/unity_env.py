@@ -9,6 +9,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from flybrain.signals.builder import body_speed
+
 try:
     import gymnasium as gym
     from gymnasium import spaces
@@ -254,6 +256,16 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
             file_name = str(build) if build is not None else None
 
         self._engine_channel = EngineConfigurationChannel()
+        from flybrain.debug.mind_log_channel import MindLogDebugChannel
+        from flybrain.debug.route_path_channel import RoutePathDebugChannel
+
+        self._route_path = RoutePathDebugChannel()
+        self._mind_log = MindLogDebugChannel()
+        side_channels = [self._engine_channel]
+        if self._route_path.side_channel is not None:
+            side_channels.append(self._route_path.side_channel)
+        if self._mind_log.side_channel is not None:
+            side_channels.append(self._mind_log.side_channel)
         self._env = UnityEnvironment(
             file_name=file_name,
             worker_id=self.config.worker_id,
@@ -261,7 +273,7 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
             seed=self.config.seed,
             no_graphics=self.config.no_graphics if file_name else False,
             timeout_wait=self.config.timeout_wait,
-            side_channels=[self._engine_channel],
+            side_channels=side_channels,
         )
         if file_name is not None:
             self._engine_channel.set_configuration_parameters(
@@ -392,7 +404,35 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
         )
         self._left_eye = left
         self._right_eye = right
+        self._last_vector = vector
         return vector
+
+    def agent_speed(self) -> float | None:
+        """Measured horizontal body speed (m/s) from the latest observation."""
+        vector = getattr(self, "_last_vector", None)
+        return body_speed(vector) if vector is not None else None
+
+    @property
+    def route_path_channel(self):
+        """SideChannel that mirrors route_home path into Unity LineRenderer."""
+        return getattr(self, "_route_path", None)
+
+    @property
+    def mind_log_channel(self):
+        """SideChannel that mirrors mind/deep-thought panels into Unity Display 3."""
+        return getattr(self, "_mind_log", None)
+
+    def agent_position(self) -> np.ndarray | None:
+        """Latest fly world XYZ from Unity (RoutePathDebugChannel pose)."""
+        ch = getattr(self, "_route_path", None)
+        pose = getattr(ch, "last_pose", None) if ch is not None else None
+        return None if pose is None else np.asarray(pose, dtype=np.float32).copy()
+
+    def agent_yaw_degrees(self) -> float | None:
+        """Latest fly yaw (Unity euler Y degrees) from the pose SideChannel."""
+        ch = getattr(self, "_route_path", None)
+        yaw = getattr(ch, "last_yaw_deg", None) if ch is not None else None
+        return None if yaw is None else float(yaw)
 
     def close(self) -> None:
         if getattr(self, "_env", None) is not None:

@@ -29,7 +29,7 @@ def _clamp01(value: float) -> float:
 @dataclass
 class CuriosityConfig:
     enabled: bool = True
-    curiosity_weight: float = 0.35
+    curiosity_weight: float = 0.25
     novelty_weight: float = NOVELTY_WEIGHT
     prediction_weight: float = PREDICTION_WEIGHT
     reward_cap: float = CURIOSITY_REWARD_CAP

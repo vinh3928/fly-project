@@ -29,6 +29,19 @@ PROBOSCIS_CONTACT_INDEX = 1
 INTERNAL_DIM = 8
 BODY_STATE_DIM = 13
 INTERNAL_OFFSET = JOINT_DIM + CONTACT_DIM + FOOT_TASTE_DIM + ANTENNA_DIM + PROBOSCIS_DIM  # 176
+BODY_STATE_OFFSET = INTERNAL_OFFSET + INTERNAL_DIM
+# Unity SensorManager.LinearVelocityScale: body_state[0:3] = measured velocity / 2 m/s.
+BODY_LINEAR_VELOCITY_SCALE = 2.0
+
+
+def body_speed(observation: np.ndarray) -> float | None:
+    """Horizontal body speed (m/s) from the Unity body-state block, or None if absent."""
+    obs = np.asarray(observation, dtype=np.float32).reshape(-1)
+    if obs.shape[0] < BODY_STATE_OFFSET + 3:
+        return None
+    vx = float(obs[BODY_STATE_OFFSET])
+    vz = float(obs[BODY_STATE_OFFSET + 2])
+    return float(np.hypot(vx, vz) * BODY_LINEAR_VELOCITY_SCALE)
 
 
 def antenna_smell_vec(observation: np.ndarray) -> np.ndarray:

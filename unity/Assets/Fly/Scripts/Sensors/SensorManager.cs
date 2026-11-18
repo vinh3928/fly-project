@@ -16,6 +16,9 @@ namespace FlySimulation.Fly.Sensors
         public const int InternalStateCount = 8;
         public const int BodyStateCount = 13;
 
+        /// <summary>Body-state velocity channels are measured velocity / this (m/s); Python BODY_LINEAR_VELOCITY_SCALE.</summary>
+        public const float LinearVelocityScale = 2f;
+
         /// <summary>
         /// Fixed vector observation length written by <see cref="CollectVectorObservation"/>.
         /// Must match ML-Agents BehaviorParameters.VectorObservationSize.
@@ -202,15 +205,15 @@ namespace FlySimulation.Fly.Sensors
 
         private int WriteBodyState(int offset)
         {
-            Vector3 linear = body != null ? body.LinearVelocity : Vector3.zero;
+            Vector3 linear = body != null ? body.MeasuredVelocity : Vector3.zero;
             Vector3 angular = body != null ? body.AngularVelocity : Vector3.zero;
             Vector3 gravityLocal = body != null ? body.transform.InverseTransformDirection(Physics.gravity).normalized : Vector3.down;
             Vector3 up = body != null ? body.transform.up : Vector3.up;
             float height = body != null ? body.HeightAboveGround(groundMask) : 0f;
 
-            _vectorObservation[offset++] = Mathf.Clamp(linear.x / 2f, -1f, 1f);
-            _vectorObservation[offset++] = Mathf.Clamp(linear.y / 2f, -1f, 1f);
-            _vectorObservation[offset++] = Mathf.Clamp(linear.z / 2f, -1f, 1f);
+            _vectorObservation[offset++] = Mathf.Clamp(linear.x / LinearVelocityScale, -1f, 1f);
+            _vectorObservation[offset++] = Mathf.Clamp(linear.y / LinearVelocityScale, -1f, 1f);
+            _vectorObservation[offset++] = Mathf.Clamp(linear.z / LinearVelocityScale, -1f, 1f);
             _vectorObservation[offset++] = Mathf.Clamp(angular.x / 10f, -1f, 1f);
             _vectorObservation[offset++] = Mathf.Clamp(angular.y / 10f, -1f, 1f);
             _vectorObservation[offset++] = Mathf.Clamp(angular.z / 10f, -1f, 1f);

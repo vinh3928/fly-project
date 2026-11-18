@@ -10,11 +10,15 @@ import numpy as np
 from flybrain.phase4 import HIGH_LEVEL_ACTION_DIM
 
 
-HUNGER_SEEK_MIN = 0.7
-ENERGY_SEEK_MAX = 0.3
+# Align with Layer-1 ``low_energy`` (energy < 0.55 ⇒ hunger ≥ 0.45) so the mind
+# peak, route-home, and sugar search all flip together — not only near starvation.
+HUNGER_SEEK_MIN = 0.45
+ENERGY_SEEK_MAX = 0.55
 # Once feeding has started, food seeking continues until energy reaches this.
 ENERGY_SATED = 0.9
 FEEDING_UNTIL_SATED_KEY = "feeding_until_sated"
+# Match stimulus_thresholds.wall — ignore mild grass/clutter wall cues.
+WALL_HAZARD_REACT_MIN = 0.45
 
 
 def _energy(signals: dict[str, Any], affect: dict[str, Any] | None = None) -> tuple[float, float]:
@@ -126,7 +130,7 @@ def compose_thought(
     if survival > 0.6:
         forward *= float(clamps["survival_forward_scale"])
         turn = float(np.clip(turn + 0.35 * np.sign(turn + 1e-6), -1.0, 1.0))
-    if wall_hazard > 0.25:
+    if wall_hazard > WALL_HAZARD_REACT_MIN:
         scale = float(clamps.get("wall_hazard_forward_scale", 0.2))
         forward *= max(scale, 1.0 - wall_hazard)
         if abs(turn) < 0.2:

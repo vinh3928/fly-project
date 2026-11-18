@@ -161,11 +161,13 @@ class TendencyDrive:
         energy = float(signals.get("energy", 0.5))
         sugar = float(signals.get("sugar", 0.0))
         bitter = float(signals.get("bitter", 0.0))
-        if "sugar" in peaks or "low_energy" in peaks:
+        if "sugar" in peaks or "low_energy" in peaks or "hunger" in peaks:
             return False
         if sugar >= 0.25:
             return False
         if energy < 0.45:
+            return False
+        if float(signals.get("hunger", 0.0) or 0.0) >= 0.25:
             return False
         if bitter >= 0.35 or "bitter" in peaks:
             return False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from flybrain.memory.pgvector import InMemoryShortTermMemory
 from flybrain.phase4 import (
@@ -19,6 +20,7 @@ from flybrain.thinking.stimulus_interrupt import (
     STOP_GOAL,
     PassiveSmellGate,
     PatchGridHistoryCache,
+    StatusReframeTracker,
     StimulusInterruptConfig,
     best_history_similarity,
     build_interrupt_joint_vec,
@@ -559,6 +561,63 @@ def test_pipeline_hard_stop_while_pending() -> None:
     assert info.get("stimulus_interrupt_pending") is True
     assert info.get("interrupt_remaining") == 5
     assert abs(float(action[0])) <= 0.08
+    pipe.close()
+
+
+def test_pipeline_skips_interrupt_while_route_in_progress() -> None:
+    """Active return path must not be frozen by stimulus interrupt / status reframe."""
+    from flybrain.env import FakeFlyEnv
+    from flybrain.thinking.route_home import RouteHomeState
+
+    env = FakeFlyEnv()
+    mem = InMemoryShortTermMemory(dim=TOTAL_EMBEDDING_DIM)
+    pipe = LiveMindPipeline(
+        env,
+        config=LiveMindConfig(
+            backend="in_memory",
+            llm_mock=True,
+            enable_motor_layer=True,
+            mind_interval=40,
+            stimulus_interrupt=StimulusInterruptConfig(
+                enabled=True,
+                cooldown_steps=0,
+                status_reframe_enabled=True,
+            ),
+        ),
+        memory=mem,
+    )
+    obs, _ = env.reset()
+    pipe._last_mind_info = {"intent": {"future": {"chosen_name": "feed"}}, "affect": {}}
+    pipe._step = 10
+    # Simulate an armed freeze that would hard-stop the body.
+    pipe._interrupt_pending = True
+    pipe._interrupt_remaining = 40
+    pipe._interrupt_reason = "status_reframe:hunger"
+    # Route already locked / steering home.
+    pipe.route_home._active_home_id = "home-1"
+    pipe.route_home._state = RouteHomeState(
+        mode="route",
+        turn=-0.5,
+        forward=0.55,
+        home_id="home-1",
+        next_id="mid-1",
+        hops_left=3,
+        path=["here", "mid-1", "home-1"],
+        reason="plume_trail",
+    )
+    assert pipe.route_home.route_in_progress
+
+    _action, info = pipe.process_motor_only(obs)
+    assert pipe._interrupt_pending is False
+    assert info.get("stimulus_interrupt_pending") is not True
+    assert info.get("stimulus_interrupt") is not True
+    dbg = info.get("interrupt_debug") or {}
+    assert dbg.get("reason") == "routing"
+    assert dbg.get("armed") is False
+    # Route orient ran (hard-stop path would skip sugar/route orient entirely).
+    assert str(info.get("sugar_orient_mode") or "").startswith("route")
+    orient = info.get("route_home_orient") or info.get("sugar_orient")
+    assert orient is not None and float(orient[0]) == pytest.approx(0.55, abs=0.05)
     pipe.close()
 
 
@@ -1116,3 +1175,97 @@ def test_deep_thought_mismatch_does_not_early_unlock() -> None:
     assert pipe._interrupt_pending is True
     assert pipe.conditioning.confirmation_count() == 1
     pipe.close()
+
+
+def test_status_reframe_tracker_rising_edge_hunger() -> None:
+    tracker = StatusReframeTracker()
+    # Sated → no cue.
+    assert tracker.observe({"energy": 0.9}, {}) is None
+    # Crossing into hunger arms once.
+    assert tracker.observe({"energy": 0.4}, {}) == "hunger"
+    # Staying hungry does not re-arm.
+    assert tracker.observe({"energy": 0.35}, {}) is None
+    # Recover then drop again → second rising edge.
+    assert tracker.observe({"energy": 0.8}, {}) is None
+    assert tracker.observe({"energy": 0.4}, {}) == "hunger"
+
+
+def test_status_reframe_tracker_low_energy_and_survival() -> None:
+    tracker = StatusReframeTracker()
+    # Energy just above hunger gate but below low_energy thr → low_energy cue.
+    # is_hungry uses energy < 0.55; use energy=0.50 so hungry fires first.
+    assert tracker.observe({"energy": 1.0}, {"survival_risk": 0.0}) is None
+    assert tracker.observe({"energy": 0.50}, {"survival_risk": 0.0}) == "hunger"
+    tracker.reset()
+    # Force low_energy without hunger: energy between ENERGY_SEEK_MAX and low_energy thr
+    # is impossible since both default to 0.55. Prefer survival rising edge alone.
+    assert tracker.observe({"energy": 0.9}, {"survival_risk": 0.1}) is None
+    assert tracker.observe({"energy": 0.9}, {"survival_risk": 0.5}) == "survival"
+    assert tracker.observe({"energy": 0.9}, {"survival_risk": 0.6}) is None
+
+
+def test_evaluate_arms_on_hunger_status_reframe() -> None:
+    """Hunger rising edge arms deep thought without STM novelty / despite crisis."""
+    tracker = StatusReframeTracker()
+    cfg = StimulusInterruptConfig(
+        enabled=True,
+        status_reframe_enabled=True,
+        status_deep_thought_steps=40,
+        deep_thought_steps=80,
+    )
+    # Seed tracker as sated.
+    evaluate_stimulus_interrupt(
+        memory=None,
+        parts=None,
+        signals={"energy": 0.9, "wall_hazard": 0.9},
+        affect={"survival_risk": 0.9},
+        fly_id="fly",
+        step=10,
+        cooldown_until_step=0,
+        config=cfg,
+        status_tracker=tracker,
+    )
+    decision = evaluate_stimulus_interrupt(
+        memory=None,
+        parts=None,
+        signals={"energy": 0.3, "wall_hazard": 0.9},
+        affect={"survival_risk": 0.9},
+        fly_id="fly",
+        step=11,
+        cooldown_until_step=0,
+        config=cfg,
+        status_tracker=tracker,
+    )
+    assert decision.should_arm is True
+    assert decision.cue == "hunger"
+    assert decision.reason.startswith("status_reframe:")
+    assert decision.crisis is False
+    assert "status" in decision.novel_modalities
+
+
+def test_status_reframe_disabled_skips_arm() -> None:
+    tracker = StatusReframeTracker()
+    cfg = StimulusInterruptConfig(enabled=True, status_reframe_enabled=False)
+    evaluate_stimulus_interrupt(
+        memory=None,
+        parts=None,
+        signals={"energy": 0.9},
+        affect={},
+        fly_id="fly",
+        step=1,
+        cooldown_until_step=0,
+        config=cfg,
+        status_tracker=tracker,
+    )
+    decision = evaluate_stimulus_interrupt(
+        memory=None,
+        parts=None,
+        signals={"energy": 0.2},
+        affect={},
+        fly_id="fly",
+        step=2,
+        cooldown_until_step=0,
+        config=cfg,
+        status_tracker=tracker,
+    )
+    assert decision.cue != "hunger" or not decision.should_arm

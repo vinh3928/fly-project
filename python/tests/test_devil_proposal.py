@@ -220,3 +220,26 @@ def test_background_client_forwards_response_format() -> None:
     client = BackgroundLlmClient(spy, executor=None)
     propose_critique(client, draft="d", affect={}, signals={})
     assert spy.response_format == PROPOSAL_SCHEMA
+
+
+def test_heuristic_hungry_prefers_energy_over_odor() -> None:
+    """Status/hunger reframe: devil must not chase odor while hungry."""
+    prop = propose_critique(
+        HeuristicDevilClient(),
+        draft="Considering step=1 L1=explore odor=3.7 | INTERRUPT cue=hunger",
+        affect={"survival_risk": 0.5},
+        signals={
+            "wall_hazard": 0.3,
+            "energy": 0.25,
+            "odor": 3.7,
+            "odor_left": 3.7,
+            "odor_right": 3.71,
+            "stimulus_interrupt": True,
+            "deep_thought": True,
+            "interrupt_remaining": 40,
+            "interrupt_cue": "hunger",
+            "interrupt_reason": "status_reframe:hunger",
+        },
+    )
+    assert prop.risk == "energy"
+    assert "hunger" in prop.reason or "food" in prop.reason or "hungry" in prop.reason

@@ -40,8 +40,13 @@ class SugarSearchConfig:
     orient_enabled: bool = True
     steer_gain: float = 1.0
     cruise_forward: float = 0.6
-    # |turn| at or above this ⇒ forward 0 (pivot in place).
+    # |turn| at or above this ⇒ forward 0 (pivot in place) for a short align.
     pivot_turn: float = 0.8
+    # Max consecutive motor ticks of pure pivot; then crawl while still turning
+    # so saturated ±1 bearings cannot spin forever ("align, then go").
+    pivot_max_ticks: int = 12
+    # Minimum forward once the pivot budget is spent (still below cruise).
+    align_go_forward: float = 0.35
     # Arrive: at this smell (≈11 cm in the 1 m plume) extend the proboscis and
     # slow by up to arrive_slow as smell → 1.
     probe_smell: float = 0.6
@@ -104,6 +109,7 @@ class SugarSearchTracker:
         self._bout_fed = False
         self._cooldown = 0
         self._feeding_session = False
+        self._pivot_streak = 0
 
     @property
     def feeding_until_sated(self) -> bool:
@@ -152,13 +158,14 @@ class SugarSearchTracker:
         """Per-motor-step command toward sugar, or None when not searching.
 
         Turn follows the live antenna bearing so the heading is corrected every
-        step; forward shrinks as the turn grows, pivoting in place for sharp
-        angles instead of orbiting. While the smell trend says search/reverse,
-        the held search turn is used until the antennae pick a side. Near the
-        source the proboscis extends and the fly slows. Once on top of sugar the
-        motor stops for a feed bout of ``feed_ticks`` steps (proboscis down); a
-        new bout follows while the proboscis keeps tasting sugar and the fly is
-        still hungry.
+        step; forward shrinks as the turn grows. Sharp angles get a short
+        in-place pivot (``pivot_max_ticks``), then a minimum crawl while still
+        turning — align, then go — so saturated bearings cannot spin forever.
+        While the smell trend says search/reverse, the held search turn is used
+        until the antennae pick a side. Near the source the proboscis extends
+        and the fly slows. Once on top of sugar the motor stops for a feed bout
+        of ``feed_ticks`` steps (proboscis down); a new bout follows while the
+        proboscis keeps tasting sugar and the fly is still hungry.
         """
         cfg = self.config
         state = self._state
@@ -173,6 +180,7 @@ class SugarSearchTracker:
             self._bout_fed = self._bout_fed or self._proboscis_on_sugar(signals)
             if self._bout_left == 0 and not self._bout_fed:
                 self._cooldown = max(1, int(cfg.feed_ticks))
+            self._pivot_streak = 0
             return SugarOrient(
                 forward=0.0,
                 turn=0.0,
@@ -193,9 +201,20 @@ class SugarSearchTracker:
             turn = bearing_turn
         pivot = max(cfg.pivot_turn, 1e-6)
         forward = cfg.cruise_forward * float(np.clip(1.0 - abs(turn) / pivot, 0.0, 1.0))
+        if forward <= 1e-6 and abs(turn) >= pivot * 0.99:
+            self._pivot_streak += 1
+            max_pivot = max(0, int(cfg.pivot_max_ticks))
+            if self._pivot_streak > max_pivot:
+                forward = max(forward, float(cfg.align_go_forward))
+        else:
+            self._pivot_streak = 0
         near = float(np.clip((smell - cfg.probe_smell) / max(1.0 - cfg.probe_smell, 1e-6), 0.0, 1.0))
         if smell >= cfg.probe_smell:
             forward *= 1.0 - cfg.arrive_slow * near
+            # Keep a crawl floor after align-budget so arrive_slow cannot re-zero it.
+            if self._pivot_streak > max(0, int(cfg.pivot_max_ticks)):
+                floor = float(cfg.align_go_forward) * (1.0 - 0.5 * cfg.arrive_slow * near)
+                forward = max(forward, floor)
             return SugarOrient(forward=forward, turn=turn, proboscis=cfg.probe_extension, mode="probe")
         return SugarOrient(forward=forward, turn=turn, proboscis=0.0, mode="orient")
 

@@ -28,14 +28,39 @@ In the Unity **top menu bar** (not the Project window `Assets/Fly` folder):
 
 This creates `Assets/Scenes/Chamber.unity` with:
 
-- 0.5×0.25×0.5 m chamber (open ceiling + cutaway near walls)
+- 0.5×0.25×0.5 m chamber; walls and ceiling are opaque to the fly's eyes but culled
+  from the overview camera (layer 9 "Environment")
+- Walls are hard: the fly has solid thorax, head and abdomen spheres, and every walk/turn step
+  is swept against layer 9 (`BodyClearance`) so no sphere enters a wall. The eye near clip
+  (0.6 mm) stays inside the head sphere at the 4 mm eye spacing (±2° outward yaw), so a
+  wall touching the head is never clipped away
+- Exit tunnel through the +Z wall: 250 mm wide (half the box), open from floor to ceiling,
+  80 mm deep (`ExperimentConfiguration.Tunnel*`; set `TunnelFullHeight = false` to use
+  `TunnelHeight` instead; geometry in `TunnelLayout`)
+- Outside world at the fly's real scale (`OutsideWorldLayout` / `OutsideWorldBuilder`):
+  a meadow of 3–12 cm grass and 12–35 cm flowers in front of the exit, 5–12 m trees
+  6–30 m away, and a town 40–70 m out past the tunnel
 - Sugar and bitter chemical sources
 - BodyScale=1 fly with six legs planted on the floor
 - Overview camera + episode manager and recorder
 
+**Asset-pack slot:** drop prefabs into `Assets/OutsideWorld/Flowers`, `Trees` or `Buildings`,
+then run **Tools → Fly → Rebuild Outside World**. Any folder with prefabs replaces that
+feature's primitives; each prefab is scaled to the layout height and stood on the ground.
+The scene uses the Built-in render pipeline, so pick Built-in versions of packs (URP/HDRP
+materials render pink).
+
 After it runs, open `Assets/Scenes/Chamber.unity` if it is not already open. Select `Chamber` in the Hierarchy and press **F** to frame it.
 
 Press **Play** and watch the **Game** tab (not only Scene view). You should see the grey floor, yellow/purple pads, and dark fly through the cutaway.
+
+**Three displays:** Display 1 is the fixed chamber overview (cutaway). Display 2 is
+`FlyFollowCamera` — a third-person chase view that always centers on the fly.
+Display 3 is `MindLogDisplay` — human-readable **mind** and **deep thought** panels
+(plan, energy/hunger, route, thought, devil) streamed from Python over a SideChannel.
+In the Game tab, open the **Display** dropdown and pick **Display 2** / **Display 3**
+(or plug in extra monitors; Play activates them when present). Re-run
+**Tools → Fly → Fix Chamber Visibility** (or Setup Chamber Scene) if a cam is missing.
 
 **Fly eye view (Game tab):** On Play, bottom-corner PIP panels show Left/Right eye
 RenderTextures in the **Game** view (Canvas overlay). Each eye is a **pointy-top
@@ -48,7 +73,26 @@ If Play mode looks like a solid blue box with a grey square:
 
 **Tools → Fly → Fix Chamber Visibility**
 
-(or rebuild with **Setup Chamber Scene**). Walls need a transparent shader; `Unlit/Color` alone ignores alpha.
+(or rebuild with **Setup Chamber Scene**). It moves walls onto the wall layer the overview camera culls.
+In the Scene view, hide layer "Environment" (Layers dropdown) to look inside the box.
+
+## Vision model (walls and the way out)
+
+Without a checkpoint the live mind uses brightness heuristics, which read the dark meadow
+beyond the tunnel as a wall. To train the vision head on the real scene:
+
+1. Open the Chamber scene (not in Play mode) and run **Tools → Fly → Record Vision Dataset**.
+   It poses the fly at 6000 sampled spots (open interior, by walls, facing the exit, in the
+   tunnel, outside), renders both eyes and writes `data/vision_unity/` with ray-cast labels
+   (`EyeRayLabels`: wall hazard, free-space turn, opening bearing and strength).
+2. `cd python && .venv/bin/python -m scripts.train_vision_head --unity`
+   (settings under `unity_train` in `configs/visual_nav.yaml`; writes
+   `data/checkpoints/vision_head.pt` and prints validation errors per cue).
+3. Run the live mind: it loads the checkpoint automatically. The log shows
+   `open=<strength>@<bearing>`; roaming plans turn toward a seen opening
+   (`cue_turn`, after visual novelty, before wall avoidance).
+
+Re-record after changing the scene (tunnel size, colours, outside world).
 
 ## Heuristic / demo controls
 
@@ -78,6 +122,24 @@ is still Listening (or restart the Unity Editor if Academy got stuck in inferenc
 Eye-frame wall hazards (Phase 5): on Play, `FlyEyeMlAgentsBridge` registers LeftEye/RightEye
 camera sensors. Live logs should include `wall=…` when vision cues are active; approaching a
 wall should raise `wall` and bias the mind toward turn/stop instead of pure `explore`.
+
+**Route path debug light:** when `route_home` is active, Python sends the place-graph polyline
+over an ML-Agents SideChannel (`RoutePathDebugChannel`); Unity draws a ~1px cyan
+`LineRenderer` (`RoutePathVisualizer` on `Fly`). Hungry routing treats each place node as a
+world-XYZ checkpoint back to the scent (advance on proximity even if place-id rematch
+creates a new outdoor node).
+If an older scene lacks the component, run **Tools → Fly → Ensure Route Path Visualizer**
+(also attached by Setup Chamber Scene / Fix Chamber Visibility).
+
+**Latent place-graph map:** each live-mind step also sends a version=2 snapshot of remembered
+places (world XYZ). `PlaceGraphVisualizer` shows one text label on the current/home place;
+the cyan ~1px route polyline is `RoutePathVisualizer` only (debug objects use the Fly layer
+so eye cameras do not render them — avoids hitching). Graph snapshots are throttled from
+Python (route/current/home only; no full Neo4j edge dump each step).
+Label tags: `*` current, `H` home, `R` on route, `s=` sugar smell when &gt; 0.05.
+
+Use **Tools → Fly → Ensure Place Graph Visualizer** on older scenes. Watch whether plume vs
+puddle labels are where you expect while debugging route/food handoff.
 
 **Where are the live mind logs?**
 

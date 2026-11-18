@@ -15,6 +15,7 @@ import yaml
 from flybrain.affect.estimator import AffectEstimator
 from flybrain.curiosity import CuriosityConfig, CuriosityDrive
 from flybrain.thinking.composer import FEEDING_UNTIL_SATED_KEY
+from flybrain.thinking.route_home import RouteHomeConfig, RouteHomeTracker
 from flybrain.thinking.sugar_search import (
     SugarSearchConfig,
     SugarSearchTracker,
@@ -22,6 +23,7 @@ from flybrain.thinking.sugar_search import (
 from flybrain.curiosity.boredom import (
     BoredomConfig,
     BoredomTracker,
+    apply_blocked_escape_goal,
     apply_boredom_escape_goal,
 )
 from flybrain.env import FakeFlyEnv
@@ -74,17 +76,21 @@ from flybrain.thinking.devils_advocate import propose_critique
 from flybrain.thinking.retrospective import RetrospectiveConfig
 from flybrain.thinking.stimulus_interrupt import (
     STOP_GOAL,
+    STATUS_REFRAME_CUES,
     PassiveSmellGate,
     PatchGridHistoryCache,
     RelativeHistoryBaseline,
     StimulusInterruptConfig,
+    StatusReframeTracker,
     evaluate_stimulus_interrupt,
     heighten_sensory_for_deep_thought,
 )
 from flybrain.vision.recurrent_head import (
+    IncompatibleVisionCheckpoint,
     RecurrentVisionHead,
     VisionNavCues,
     heuristic_cues_from_frames,
+    load_vision_head,
 )
 from flybrain.vision.novelty import (
     VisualNoveltyConfig,
@@ -159,12 +165,22 @@ def format_live_step_log(
     if isinstance(future, dict) and future.get("chosen_name"):
         chosen = f" plan={future.get('chosen_name')}"
         layer1 = future.get("layer1_values") or []
+        chosen_name = str(future.get("chosen_name") or "")
         if isinstance(layer1, list) and layer1:
             top = []
+            seen: set[str] = set()
             for row in layer1[:3]:
                 if not isinstance(row, dict):
                     continue
-                top.append(f"{row.get('name')}={float(row.get('value', 0.0)):.2f}")
+                name = str(row.get("name") or "")
+                top.append(f"{name}={float(row.get('value', 0.0)):.2f}")
+                seen.add(name)
+            # Always surface the chosen plan's score (feed often ranks below explore raw).
+            if chosen_name and chosen_name not in seen:
+                for row in layer1:
+                    if isinstance(row, dict) and str(row.get("name") or "") == chosen_name:
+                        top.append(f"{chosen_name}={float(row.get('value', 0.0)):.2f}")
+                        break
             if top:
                 l1_s = f" L1[{', '.join(top)}]"
 
@@ -187,6 +203,14 @@ def format_live_step_log(
             f",fam={float(place.get('mean_familiarity', 0.0)):.2f}"
             f",raw={float(place.get('wall_hazard_raw', wall or 0.0)):.2f})"
         )
+        route = info.get("route_home") if isinstance(info.get("route_home"), dict) else None
+        if route and route.get("mode") == "route" and route.get("next_id") is not None:
+            home = route.get("home_id")
+            reason = route.get("reason") or ""
+            place_s += (
+                f" route={route.get('next_id')}(hops={int(route.get('hops_left') or 0)}"
+                f",home={home}{',' + reason if reason else ''})"
+            )
         senses = place.get("senses") if isinstance(place.get("senses"), dict) else {}
         bitter = senses.get("bitter") if isinstance(senses, dict) else None
         if isinstance(bitter, dict) and bitter.get("value") is not None:
@@ -197,10 +221,20 @@ def format_live_step_log(
                 place_s += f" smells(odor={float(odor['value']):.2f})"
     bearing = cues.get("target_bearing") if cues else None
     bearing_s = f" bear={float(bearing):+.2f}" if bearing is not None else ""
+    opening = cues.get("opening_strength") if cues else None
+    if opening is not None:
+        bearing_s += f" open={float(opening):.2f}@{float(cues.get('opening_bearing') or 0.0):+.2f}"
     cur = info.get("curiosity_gated")
     cur_s = f" cur={float(cur):.3f}" if cur is not None else ""
+    exp_nov = info.get("experience_novelty")
+    if exp_nov is not None:
+        cur_s += f" exp={float(exp_nov):.2f}"
     bore = info.get("boredom")
     bore_s = f" bore={float(bore):.2f}" if bore is not None else ""
+    if info.get("blocked_escape"):
+        bore_s += " ESCAPE"
+    elif int(info.get("blocked_streak") or 0) > 0:
+        bore_s += f" blocked={int(info['blocked_streak'])}"
     tend = info.get("tendency") if isinstance(info.get("tendency"), dict) else None
     tend_s = ""
     if tend and tend.get("dominant"):
@@ -356,6 +390,24 @@ def antenna_debug_payload(sensory: Any) -> dict[str, float]:
     }
 
 
+def _load_live_vision_head(path: Path) -> RecurrentVisionHead | None:
+    """Unity-trained (RGB) head, or ``None`` so live play falls back to the heuristic cues."""
+    try:
+        head = load_vision_head(path)
+    except IncompatibleVisionCheckpoint as exc:
+        reason = f"incompatible ({exc})"
+    else:
+        if head.in_channels == 3:
+            return head
+        reason = "grayscale synthetic head; live eyes are RGB"
+    print(
+        f"vision_checkpoint_skipped path={path} reason={reason} "
+        "fix=Tools/Fly/Record Vision Dataset then scripts.train_vision_head --unity",
+        flush=True,
+    )
+    return None
+
+
 def log_live_step(
     step: int,
     action: np.ndarray,
@@ -441,6 +493,7 @@ class LiveMindConfig:
     stimulus_interrupt: StimulusInterruptConfig | None = None
     place_graph: PlaceGraphConfig | None = None
     sugar_search: SugarSearchConfig | None = None
+    route_home: RouteHomeConfig | None = None
 
     @classmethod
     def from_yaml(
@@ -528,6 +581,7 @@ class LiveMindConfig:
             stimulus_interrupt=StimulusInterruptConfig.from_dict(interrupt_raw),
             place_graph=PlaceGraphConfig.from_dict(place_raw),
             sugar_search=SugarSearchConfig.from_dict(data.get("sugar_search") or {}),
+            route_home=RouteHomeConfig.from_dict(data.get("route_home") or {}),
         )
 
 
@@ -635,24 +689,37 @@ class LiveMindPipeline:
         self.vision_head = vision_head
         self._vision_trained = False
         if self.config.use_vision_head:
-            self.vision_head = self.vision_head or RecurrentVisionHead()
             ckpt = self.config.vision_checkpoint
-            if ckpt:
-                path = Path(ckpt)
-                if not path.is_absolute():
-                    path = Path(__file__).resolve().parents[2] / path
-                if path.exists():
-                    state = torch.load(path, map_location="cpu", weights_only=True)
-                    self.vision_head.load_state_dict(
-                        state["model"] if isinstance(state, dict) and "model" in state else state
-                    )
-                    self._vision_trained = True
+            path = Path(ckpt) if ckpt else None
+            if path is not None and not path.is_absolute():
+                path = Path(__file__).resolve().parents[2] / path
+            if self.vision_head is None and path is not None and path.exists():
+                self.vision_head = _load_live_vision_head(path)
+                self._vision_trained = self.vision_head is not None
+            self.vision_head = self.vision_head or RecurrentVisionHead()
             self.vision_head.eval()
             self.vision_head.reset_state(1)
         self.curiosity = CuriosityDrive(self.config.curiosity or CuriosityConfig())
         self.boredom = BoredomTracker(self.config.boredom or BoredomConfig())
         self.sugar_search = SugarSearchTracker(self.config.sugar_search or SugarSearchConfig())
         self._last_sugar_search: dict[str, Any] | None = None
+        self.route_home = RouteHomeTracker(
+            config=self.config.route_home or RouteHomeConfig(),
+            fly_id=self.config.fly_id,
+        )
+        self._last_route_home: dict[str, Any] | None = None
+        self._last_place_node = None
+        from flybrain.debug.mind_log_channel import MindLogDebugChannel
+        from flybrain.debug.route_path_channel import RoutePathDebugChannel
+
+        env_channel = getattr(env, "route_path_channel", None)
+        self.route_path = (
+            env_channel if env_channel is not None else RoutePathDebugChannel()
+        )
+        mind_log_channel = getattr(env, "mind_log_channel", None)
+        self.mind_log = (
+            mind_log_channel if mind_log_channel is not None else MindLogDebugChannel()
+        )
         self._orient_base: np.ndarray | None = None
         self.visual_novelty = VisualNoveltyTracker(
             self.config.visual_novelty or VisualNoveltyConfig()
@@ -669,6 +736,7 @@ class LiveMindPipeline:
         self._history_baseline = RelativeHistoryBaseline.from_config(self.stimulus_interrupt)
         self._patch_history = PatchGridHistoryCache.from_config(self.stimulus_interrupt)
         self._passive_smell = PassiveSmellGate.from_config(self.stimulus_interrupt)
+        self._status_reframe = StatusReframeTracker()
         si = self.stimulus_interrupt
         self.conditioning = HazardConditioning(
             ConditioningConfig(
@@ -777,6 +845,7 @@ class LiveMindPipeline:
         plan_name: str | None = None,
         goal: np.ndarray | None = None,
         reason: str = "",
+        allow_pivot: bool = False,
     ) -> Any:
         """Mind → motor interrupt: push a directive onto the act-state controller."""
         if self.act_controller is None or self.motor is None:
@@ -787,12 +856,30 @@ class LiveMindPipeline:
             goal=goal,
             reason=reason,
             step=int(self._step),
+            allow_pivot=allow_pivot,
         )
         self.act_controller.push(directive)
         set_goal = getattr(self.env, "set_goal", None)
         if callable(set_goal):
             set_goal(self.motor.goal.copy())
         return directive
+
+    def _abort_stimulus_interrupt_for_route(self) -> None:
+        """Drop an in-flight freeze without STM persist so routing can keep moving."""
+        if not self._interrupt_pending:
+            return
+        self._interrupt_pending = False
+        self._interrupt_remaining = 0
+        self._interrupt_reason = ""
+        self._interrupt_meta = {}
+        self._interrupt_patch_vec = None
+        self._interrupt_smell_vec = None
+        self._interrupt_sensors_vec = None
+        self._interrupt_joint_vec = None
+        self._resume_goal = None
+        self.conditioning.end_freeze()
+        if self.mind_scheduler is not None:
+            self.mind_scheduler.invalidate("route_blocks_interrupt")
 
     def _arm_stimulus_interrupt(
         self,
@@ -807,6 +894,17 @@ class LiveMindPipeline:
     ) -> None:
         """Evaluate cue vs STM joint history; arm when novel under soft load."""
         del observation  # reserved for future observation-driven cues
+        # Active return path wins: do not freeze / reframe mid-route (hunger after
+        # low_energy used to stop the body and spawn a second path).
+        if self.route_home.route_in_progress:
+            self._abort_stimulus_interrupt_for_route()
+            if info is not None:
+                info["interrupt_debug"] = {
+                    "reason": "routing",
+                    "armed": False,
+                    "cue": None,
+                }
+            return
         if self._interrupt_pending:
             return
         # Feeding tastes sugar every step; a deep-thought freeze would retract the proboscis.
@@ -842,6 +940,7 @@ class LiveMindPipeline:
             smell_vec=smell,
             sensors_vec=None,
             passive_smell=self._passive_smell,
+            status_tracker=self._status_reframe,
         )
         # Debug: expose *why* an interrupt did / didn't arm whenever a cue was present.
         if decision.candidate:
@@ -869,7 +968,13 @@ class LiveMindPipeline:
                 print(f"si_debug step={self._step} {debug}", flush=True)
         if decision.should_arm:
             self._interrupt_pending = True
-            self._interrupt_remaining = max(1, int(cfg.deep_thought_steps))
+            status_steps = getattr(cfg, "status_deep_thought_steps", None)
+            is_status = str(decision.cue or "") in STATUS_REFRAME_CUES
+            if is_status and status_steps is not None:
+                freeze_steps = int(status_steps)
+            else:
+                freeze_steps = int(cfg.deep_thought_steps)
+            self._interrupt_remaining = max(1, freeze_steps)
             self._interrupt_reason = decision.reason
             # Reframe: a thought planned before this stimulus must not reach the motor.
             if self.mind_scheduler is not None:
@@ -887,6 +992,7 @@ class LiveMindPipeline:
                 "novel_modalities": list(decision.novel_modalities),
                 "reason": decision.reason,
                 "deep_thought_steps": int(self._interrupt_remaining),
+                "status_reframe": is_status,
             }
             # Mind → motor: idle for deep thought (single directive bus).
             self._push_motor_directive(
@@ -1212,6 +1318,8 @@ class LiveMindPipeline:
         pre_signal = sensory.to_jsonable()
         if cues is not None:
             pre_signal.update(cues.to_dict())
+        if visual_nov is not None:
+            pre_signal.update(visual_nov.to_dict())
         place_info: dict[str, Any] = {
             "vision_cues": cues.to_dict() if cues else None,
             "_sensory_summary": sensory.summary,
@@ -1326,6 +1434,7 @@ class LiveMindPipeline:
             "coverage": curiosity_step.novelty.coverage,
             "unique_cells": curiosity_step.novelty.unique_cells,
             "exploration_xp": curiosity_step.novelty.exploration_xp,
+            "experience_novelty": curiosity_step.novelty.experience_novelty,
             "visual_novelty": visual_nov.visual_novelty if visual_nov else None,
             "novelty_bearing": visual_nov.novelty_bearing if visual_nov else None,
             "new_stimulus": visual_nov.new_stimulus if visual_nov else None,
@@ -1392,14 +1501,39 @@ class LiveMindPipeline:
             position=position,
         )
 
+    @staticmethod
+    def _wall_hazard_for_blocked(info: dict[str, Any]) -> float:
+        """Prefer raw wall cue so familiarity fade cannot disarm a real jam."""
+        cues = info.get("vision_cues") if isinstance(info.get("vision_cues"), dict) else {}
+        place = info.get("place") if isinstance(info.get("place"), dict) else {}
+        for src in (cues, place):
+            for key in ("wall_hazard_raw", "wall_hazard"):
+                if src.get(key) is not None:
+                    try:
+                        return float(src[key])
+                    except (TypeError, ValueError):
+                        continue
+        return 0.0
+
     def _observe_physical_into(
         self, info: dict[str, Any], position: np.ndarray | None, action: np.ndarray
     ) -> None:
-        bore_phys = self.boredom.observe_physical(position=position, action=action)
+        speed_fn = getattr(self.env, "agent_speed", None)
+        speed = speed_fn() if callable(speed_fn) else None
+        wall = self._wall_hazard_for_blocked(info)
+        bore_phys = self.boredom.observe_physical(
+            position=position,
+            action=action,
+            speed=speed,
+            wall_hazard=wall,
+        )
         info["boredom"] = bore_phys.boredom
         info["thought_stuck"] = bore_phys.thought_stuck
         info["physical_stuck"] = bore_phys.physical_stuck
         info["force_locomotion"] = bore_phys.force_locomotion
+        info["blocked_streak"] = bore_phys.blocked_streak
+        info["blocked_escape"] = bore_phys.escaping
+        info["blocked_wall"] = wall
 
     def _commit_deep_thought(
         self, deep: DeepThought, observation: np.ndarray, *, act: bool = True
@@ -1515,17 +1649,55 @@ class LiveMindPipeline:
             close()
 
     def _apply_sugar_orient(self, sensory: Any, info: dict[str, Any]) -> None:
-        """Per-step sugar orient reflex: steer the held goal by the live antenna bearing.
+        """Per-step orient: place-graph route home first, else sugar chemotaxis.
 
-        Pivot is allowed (no forward floor) so the body can turn any angle toward
-        sugar. The mind-pushed goal is restored once the search switches off.
+        Pivot is allowed (no forward floor) so the body can turn any angle. The
+        mind-pushed goal is restored once both route and sugar search switch off.
+        Local contact sugar / an active feed bout beats route so we do not retract
+        the proboscis while standing on food (route otherwise forces p0.0).
         """
         info.pop("sugar_orient", None)
         info.pop("sugar_orient_mode", None)
+        info.pop("route_home_orient", None)
         if self.motor is None:
             return
         held = self.act_controller is not None and self.act_controller.mode != "act_anything"
-        steer = None if held else self.sugar_search.steer(dict(sensory.summary))
+        summary = dict(sensory.summary)
+        # Feed wins over route (and over held mind goals) so energy can rise.
+        if self.sugar_search.feeding_now(summary):
+            if self._orient_base is None:
+                self._orient_base = self.motor.goal.copy()
+            steer = self.sugar_search.steer(summary)
+            if steer is not None:
+                self.motor.set_goal(
+                    orient_goal(self._orient_base, steer.forward, steer.turn, steer.proboscis),
+                    allow_pivot=True,
+                )
+                info["sugar_orient"] = steer.to_list()
+                info["sugar_orient_mode"] = (
+                    f"feed({steer.ticks_left})" if steer.mode == "feed" else steer.mode
+                )
+                return
+        route = self.route_home.state
+        # Route-home always steers (even under a held mind goal) so odor invest cannot yank it.
+        if route.active and route.turn is not None:
+            if self._orient_base is None:
+                self._orient_base = self.motor.goal.copy()
+            self.motor.set_goal(
+                orient_goal(self._orient_base, float(route.forward), float(route.turn), 0.0),
+                allow_pivot=True,
+            )
+            info["route_home_orient"] = [float(route.forward), float(route.turn), 0.0]
+            info["sugar_orient"] = info["route_home_orient"]
+            if route.mode == "scan":
+                info["sugar_orient_mode"] = (
+                    f"scan({float(route.scan_yaw_degrees):+.0f}deg,{route.reason})"
+                )
+            else:
+                info["sugar_orient_mode"] = f"route({route.hops_left})"
+            info["route_home"] = route.to_dict()
+            return
+        steer = None if held else self.sugar_search.steer(summary)
         if steer is None:
             if self._orient_base is not None:
                 self.motor.set_goal(self._orient_base)
@@ -1595,9 +1767,24 @@ class LiveMindPipeline:
         raw: dict[str, float] = {}
         if cues is not None:
             raw["wall_hazard"] = float(cues.wall_hazard)
+            raw["opening_strength"] = float(cues.opening_strength)
         elif "wall_hazard" in signal_payload:
             raw["wall_hazard"] = float(signal_payload.get("wall_hazard", 0.0) or 0.0)
-        for channel in ("odor", "odor_left", "odor_right", "bitter", "sugar"):
+        if "opening_strength" in signal_payload and "opening_strength" not in raw:
+            raw["opening_strength"] = float(signal_payload.get("opening_strength", 0.0) or 0.0)
+        # Landmark / novelty place splits (break same_place when meadow views match).
+        if "visual_novelty" in signal_payload:
+            raw["visual_novelty"] = float(signal_payload.get("visual_novelty", 0.0) or 0.0)
+        if signal_payload.get("new_stimulus"):
+            raw["new_stimulus"] = 1.0
+        for channel in (
+            "odor",
+            "odor_left",
+            "odor_right",
+            "bitter",
+            "sugar",
+            "sugar_smell",
+        ):
             if channel in signal_payload:
                 raw[channel] = float(signal_payload.get(channel, 0.0) or 0.0)
 
@@ -1609,23 +1796,64 @@ class LiveMindPipeline:
         if smell is None and "smell_vec" in signal_payload:
             smell = np.asarray(signal_payload.get("smell_vec"), dtype=np.float32)
 
+        edge_props: dict[str, Any] = {}
+        if cues is not None:
+            edge_props["opening_bearing"] = float(cues.opening_bearing)
+            edge_props["opening_strength"] = float(cues.opening_strength)
+        turn = signal_payload.get("motor_turn")
+        if turn is None and self.motor is not None:
+            goal = getattr(self.motor, "goal", None)
+            if goal is not None and len(goal) > 1:
+                turn = float(goal[1])
+        if turn is not None:
+            edge_props["turn"] = float(np.clip(float(turn), -1.0, 1.0))
+
+        # A jammed body stares at an unchanging (so "familiar") wall; keep its hazard raw.
         report = self.mapped_sensors.sense(
             raw=raw,
             view_vec=view,
             smell_vec=smell,
             step=int(self._step),
             now_ms=float(info.get("now_ms") or self._step),
+            unattenuated=("wall_hazard",) if self.boredom.state().pushing_blocked else (),
+            edge_props=edge_props or None,
         )
         for channel, reading in report.readings.items():
             signal_payload[channel] = float(reading.reported)
             signal_payload[f"{channel}_raw"] = float(reading.raw)
         if report.place is not None:
+            self._last_place_node = report.place
             signal_payload["place_id"] = report.place.id
             signal_payload["place_mapped"] = not report.is_new
             signal_payload["place_familiarity"] = float(report.mean_familiarity)
             signal_payload["place_label"] = str(
                 (report.place.props or {}).get("label") or report.label
             )
+            # Anchor place id → Unity world XYZ (path viz + physical route steering).
+            pose = None
+            pos_fn = getattr(self.env, "agent_position", None)
+            if callable(pos_fn):
+                try:
+                    pose = pos_fn()
+                except Exception:
+                    pose = None
+            self.route_path.record_place_pose(report.place.id, pose)
+            if pose is not None:
+                try:
+                    xyz = np.asarray(pose, dtype=np.float32).reshape(-1)
+                    if xyz.size >= 3 and np.all(np.isfinite(xyz[:3])):
+                        world = [float(xyz[0]), float(xyz[1]), float(xyz[2])]
+                        props = dict(report.place.props or {})
+                        props["world_xyz"] = world
+                        report.place.props = props
+                        if self.place_graph is not None:
+                            self.place_graph.refresh_place(
+                                report.place.id,
+                                report.place.view_vec,
+                                props={"world_xyz": world},
+                            )
+                except Exception:
+                    pass
 
         place_info = report.to_place_info()
         info["place"] = place_info
@@ -1835,6 +2063,14 @@ class LiveMindPipeline:
 
     def _apply_active_investigation(self, goal: np.ndarray, info: dict[str, Any]) -> np.ndarray:
         """Advance / apply any in-flight deferred investigation motor bias."""
+        # Place-graph route home wins over odor/interest investigation.
+        route = info.get("route_home") if isinstance(info.get("route_home"), dict) else None
+        if route is None:
+            route = self._last_route_home
+        if isinstance(route, dict) and route.get("mode") == "route":
+            info["investigation"] = None
+            info["interest_pending"] = len(self.interests.pending())
+            return goal
         active = self.interests.advance_tick(self._step)
         if active is None:
             active = self.interests.active
@@ -1958,6 +2194,48 @@ class LiveMindPipeline:
             signal_payload["sugar_search_turn"] = search.turn
             signal_payload["sugar_search_mode"] = search.mode
 
+        # Lay place-graph routing onto Unity: live fly pose for world bearing.
+        pos_fn = getattr(self.env, "agent_position", None)
+        yaw_fn = getattr(self.env, "agent_yaw_degrees", None)
+        if callable(pos_fn):
+            try:
+                fly_xyz = pos_fn()
+                if fly_xyz is not None:
+                    xyz = np.asarray(fly_xyz, dtype=np.float32).reshape(-1)
+                    if xyz.size >= 3 and np.all(np.isfinite(xyz[:3])):
+                        # List — STM / LLM json.dumps reject ndarray.
+                        signal_payload["fly_xyz"] = [
+                            float(xyz[0]),
+                            float(xyz[1]),
+                            float(xyz[2]),
+                        ]
+            except Exception:
+                pass
+        if callable(yaw_fn):
+            try:
+                fly_yaw = yaw_fn()
+                if fly_yaw is not None:
+                    signal_payload["fly_yaw_deg"] = float(fly_yaw)
+            except Exception:
+                pass
+        elif self.route_path.last_yaw_deg is not None:
+            signal_payload["fly_yaw_deg"] = float(self.route_path.last_yaw_deg)
+
+        route = self.route_home.observe(
+            store=self.place_graph,
+            place=self._last_place_node,
+            signals=signal_payload,
+        )
+        self._last_route_home = route.to_dict()
+        place_info["route_home"] = self._last_route_home
+        if route.active and route.turn is not None:
+            signal_payload["route_home_turn"] = float(route.turn)
+            signal_payload["route_home_mode"] = route.mode
+            signal_payload["route_home_forward"] = float(route.forward)
+            # Suppress chemotaxis while following the remembered path into the box.
+            signal_payload.pop("sugar_search_turn", None)
+            signal_payload.pop("sugar_search_mode", None)
+
         affect = self.affect.estimate(sensory)
         parts = self.embedder.embed_parts(sensory, affect)
         embedding = parts.embedding
@@ -2059,6 +2337,7 @@ class LiveMindPipeline:
             "coverage": curiosity_step.novelty.coverage,
             "unique_cells": curiosity_step.novelty.unique_cells,
             "exploration_xp": curiosity_step.novelty.exploration_xp,
+            "experience_novelty": curiosity_step.novelty.experience_novelty,
             "novelty_first_visit": curiosity_step.novelty.first_visit,
             "visual_novelty": visual_nov.visual_novelty if visual_nov else None,
             "novelty_bearing": visual_nov.novelty_bearing if visual_nov else None,
@@ -2074,6 +2353,7 @@ class LiveMindPipeline:
             "sugar_smell": sensory.summary.get("sugar_smell"),
             "sugar_bearing": sensory.summary.get("sugar_bearing"),
             "sugar_search": self._last_sugar_search,
+            "route_home": self._last_route_home,
             **_proboscis_feedback(sensory.summary),
             "antenna_debug": antenna_debug_payload(sensory),
         }
@@ -2110,7 +2390,7 @@ class LiveMindPipeline:
                 goal,
                 bore_state,
                 config=self.boredom.config,
-                escape_sign=self.boredom._escape_sign,
+                escape_sign=self.boredom.escape_sign,
             )
             goal = self._visual_think(
                 goal,
@@ -2122,6 +2402,29 @@ class LiveMindPipeline:
                 survival_risk=float(affect_payload.get("survival_risk", 0.0)),
             )
             goal = self._apply_active_investigation(goal, info)
+            route = self._last_route_home if isinstance(self._last_route_home, dict) else None
+            if (
+                route
+                and route.get("mode") in ("route", "scan")
+                and route.get("turn") is not None
+            ):
+                # Lock motor goal to the remembered path or landmark scan pivot.
+                goal = orient_goal(
+                    goal,
+                    float(route.get("forward", 0.55)),
+                    float(route["turn"]),
+                    0.0,
+                )
+                info["route_home_goal"] = True
+                info["landmark_scan_goal"] = route.get("mode") == "scan"
+            bore_now = self.boredom.state()
+            goal = apply_blocked_escape_goal(
+                goal,
+                bore_now,
+                config=self.boredom.config,
+                escape_sign=self.boredom.escape_sign,
+            )
+            info["blocked_escape_goal"] = bool(bore_now.escaping)
         return MindThought(
             info=info,
             goal=goal,
@@ -2144,16 +2447,18 @@ class LiveMindPipeline:
         if self.motor is not None:
             assert mind.goal is not None
             goal = mind.goal
+            escaping = bool(info.get("blocked_escape_goal"))
             # Mind push: think result → act_anything / still directive.
             if self.act_controller is not None:
                 self._push_motor_directive(
-                    mode=mode_for_plan(plan_name),
+                    mode="act_anything" if escaping else mode_for_plan(plan_name),
                     plan_name=str(plan_name or mode_for_plan(plan_name)),
                     goal=goal,
-                    reason="mind_think",
+                    reason="blocked_escape" if escaping else "mind_think",
+                    allow_pivot=escaping,
                 )
             else:
-                self.motor.set_goal(goal)
+                self.motor.set_goal(goal, allow_pivot=escaping)
                 set_goal = getattr(self.env, "set_goal", None)
                 if callable(set_goal):
                     set_goal(goal)
@@ -2211,6 +2516,7 @@ class LiveMindPipeline:
         info["sugar_smell"] = sensory.summary.get("sugar_smell")
         info["sugar_bearing"] = sensory.summary.get("sugar_bearing")
         info["sugar_search"] = self._last_sugar_search
+        info["route_home"] = self._last_route_home
         info.update(_proboscis_feedback(sensory.summary))
 
         # Candidate novel-vs-STM → mind pushes idle (deep-thought freeze).
@@ -2253,7 +2559,14 @@ class LiveMindPipeline:
         info["architecture"] = "B"
         self._stamp_act_state(info)
         self._observe_physical_into(info, position, action)
-        for key in ("boredom", "thought_stuck", "physical_stuck", "force_locomotion"):
+        for key in (
+            "boredom",
+            "thought_stuck",
+            "physical_stuck",
+            "force_locomotion",
+            "blocked_streak",
+            "blocked_escape",
+        ):
             self._last_mind_info[key] = info[key]
         if visual_nov is not None:
             self._last_mind_info["visual_novelty"] = visual_nov.visual_novelty
@@ -2284,6 +2597,11 @@ class LiveMindPipeline:
         self._motor_ticks = 0
         self.curiosity.reset()
         self.boredom.reset()
+        self.route_home.reset()
+        self._last_route_home = None
+        self._last_place_node = None
+        self.route_path.clear()
+        self.mind_log.clear()
         self.visual_novelty.reset()
         self.visual_thinker.reset()
         self.judgement.reset()
@@ -2293,6 +2611,7 @@ class LiveMindPipeline:
         self._history_baseline.reset()
         self._patch_history.reset()
         self._passive_smell.reset()
+        self._status_reframe.reset()
         self._interrupt_pending = False
         self._interrupt_remaining = 0
         self._interrupt_reason = ""
@@ -2439,6 +2758,28 @@ class LiveMindPipeline:
                     last_info,
                     log_path=self.config.log_path,
                     verbose=self.config.console_log_verbose,
+                )
+            # Queue route polyline + throttled place-graph map for Unity viz.
+            place_id = getattr(self._last_place_node, "id", None)
+            route = self._last_route_home if isinstance(self._last_route_home, dict) else None
+            self.route_path.send_route(route, current_place_id=place_id)
+            if self.place_graph is not None:
+                home_id = (route or {}).get("home_id")
+                path = (route or {}).get("path") or ()
+                self.route_path.send_place_graph(
+                    self.place_graph,
+                    current_place_id=place_id,
+                    home_id=home_id,
+                    route_path=path,
+                    fly_id=self.config.fly_id,
+                    step=int(self._step),
+                )
+            # Display 3: human-readable mind / deep-thought panels.
+            if last_info.get("mind_tick") or last_info.get("deep_thought"):
+                self.mind_log.send_panel(
+                    int(self._step),
+                    last_info,
+                    deep=bool(last_info.get("deep_thought")),
                 )
             obs, _reward, terminated, truncated, step_info = self.env.step(action)
             if isinstance(step_info, dict):

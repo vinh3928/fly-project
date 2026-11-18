@@ -90,9 +90,7 @@ namespace FlySimulation.Environment
             }
 
             // Avoid Unity's default white/grey primitive material.
-            var mat = new Material(Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default"));
-            mat.color = new Color(0.25f, 0.28f, 0.32f, 1f);
-            renderer.sharedMaterial = mat;
+            renderer.sharedMaterial = UnlitMaterials.Create("ObstacleFallback", new Color(0.25f, 0.28f, 0.32f, 1f));
         }
 
         private static void TrySetTag(GameObject go, string tag)

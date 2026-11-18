@@ -164,6 +164,33 @@ class FakeNeo4jPlaceGraph:
     def edges(self) -> list[PlaceEdge]:
         return list(self._edges)
 
+    def neighbors(self, place_id: int | str, *, undirected: bool = True) -> list[PlaceEdge]:
+        from flybrain.memory.place_graph import neighbors_from_edges
+
+        return neighbors_from_edges(self.edges(), place_id, undirected=undirected)
+
+    def find_places(
+        self, *, fly_id: str = "fly_001", label: str | None = None, limit: int = 64
+    ) -> list[PlaceNode]:
+        rows = self.list_places(fly_id=fly_id, limit=max(1, int(limit)) * 4)
+        if label is not None:
+            rows = [n for n in rows if str((n.props or {}).get("label") or "") == str(label)]
+        return rows[: max(1, int(limit))]
+
+    def shortest_path(
+        self,
+        src_id: int | str,
+        dst_id: int | str,
+        *,
+        undirected: bool = True,
+        max_hops: int = 64,
+    ) -> list[int | str] | None:
+        from flybrain.memory.place_graph import shortest_path_bfs
+
+        return shortest_path_bfs(
+            self.edges(), src_id, dst_id, undirected=undirected, max_hops=max_hops
+        )
+
     def close(self) -> None:
         return None
 
@@ -242,6 +269,77 @@ def test_l2_hit_saves_l1_l2_and_neo4j(tmp_path: Path) -> None:
     cache.close()
 
 
+def test_prune_flushes_several_expired_dirty_entries_once(tmp_path: Path) -> None:
+    inner = FakeNeo4jPlaceGraph()
+    cache = CachedPlaceGraph(
+        inner=inner,
+        config=PlaceCacheConfig(
+            enabled=True,
+            dir=str(tmp_path / "cache"),
+            l1_ttl_seconds=10.0,
+            l2_ttl_seconds=86400.0,
+            match_min=0.99,
+            l1_persist_every=0.0,
+        ),
+    )
+    ids = [str(cache.upsert_place(_view(10 + i), fly_id="fly_a", step=i).id) for i in range(3)]
+    for ent in cache._l1.values():
+        ent.touched_at -= 60.0
+        ent.dirty = True
+    saves_before = inner.save_calls
+
+    cache.nearest(_view(99), fly_id="fly_a", top_k=1)
+
+    assert inner.save_calls == saves_before + len(ids)
+    assert all(not cache._l1[i].dirty for i in ids)
+    cache.close()
+
+
+def _hot_cache(tmp_path: Path, inner: FakeNeo4jPlaceGraph, flush_every: float) -> CachedPlaceGraph:
+    return CachedPlaceGraph(
+        inner=inner,
+        config=PlaceCacheConfig(
+            enabled=True,
+            dir=str(tmp_path / "cache"),
+            l1_ttl_seconds=10.0,
+            match_min=0.9,
+            l1_persist_every=0.0,
+            neo4j_flush_every=flush_every,
+        ),
+    )
+
+
+def test_hot_place_is_saved_to_neo4j_on_a_cadence(tmp_path: Path) -> None:
+    inner = FakeNeo4jPlaceGraph()
+    cache = _hot_cache(tmp_path, inner, flush_every=5.0)
+    node = cache.upsert_place(_view(1), fly_id="fly_a", step=0)
+    saves = inner.save_calls
+
+    cache.upsert_place(_view(1), fly_id="fly_a", step=1, walls={"north": {"familiarity": 0.3}})
+    assert inner.save_calls == saves  # within the cadence: L1 only
+    assert cache._l1[str(node.id)].dirty
+
+    cache._l1[str(node.id)].flushed_at -= 6.0
+    cache.upsert_place(_view(1), fly_id="fly_a", step=2, walls={"north": {"familiarity": 0.4}})
+    assert inner.save_calls == saves + 1
+    assert inner._nodes[str(node.id)].walls["north"]["familiarity"] == 0.4
+    assert not cache._l1[str(node.id)].dirty
+    cache.close()
+
+
+def test_cache_revisit_keeps_the_place_view(tmp_path: Path) -> None:
+    inner = FakeNeo4jPlaceGraph()
+    cache = _hot_cache(tmp_path, inner, flush_every=0.0)
+    node = cache.upsert_place(_view(1), fly_id="fly_a", step=0)
+    anchor = np.asarray(node.view_vec).copy()
+    nudged = _view(1) + 0.05 * _view(2)
+    cache.upsert_place(nudged, fly_id="fly_a", step=1)
+    cache.refresh_place(node.id, nudged, step=2)
+    assert np.allclose(cache._l1[str(node.id)].place.view_vec, anchor)
+    assert np.allclose(inner._nodes[str(node.id)].view_vec, anchor)
+    cache.close()
+
+
 def test_l2_resets_after_24h_window(tmp_path: Path) -> None:
     inner = FakeNeo4jPlaceGraph()
     cache = CachedPlaceGraph(
@@ -291,3 +389,25 @@ def test_l1_disk_reloads_within_ttl(tmp_path: Path) -> None:
     assert inner2.save_calls == 0  # L1 stop — no Neo4j
     assert cache2.stats.l1_hits >= 1
     cache2.close()
+
+
+def test_list_places_does_not_inflate_l2(tmp_path: Path) -> None:
+    """Browse/list must not rewrite L2 JSON for every listed Neo4j row."""
+    inner = FakeNeo4jPlaceGraph()
+    for i in range(5):
+        inner.create_place(_view(i + 1), fly_id="fly_a", props={"label": "place"})
+    cache = CachedPlaceGraph(
+        inner=inner,
+        config=PlaceCacheConfig(
+            enabled=True,
+            dir=str(tmp_path / "cache"),
+            l1_ttl_seconds=10.0,
+            l2_ttl_seconds=86400.0,
+            match_min=0.9,
+            l1_persist_every=999.0,
+        ),
+    )
+    before = len(cache._l2)
+    rows = cache.list_places(fly_id="fly_a", limit=10)
+    assert len(rows) == 5
+    assert len(cache._l2) == before  # no L2 write on list
