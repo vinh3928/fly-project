@@ -173,4 +173,6 @@ A walking fly with six articulated legs, eye cameras, foot contact/taste sensors
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
+— noncommercial use only (personal, research, education, and qualifying
+noncommercial organizations). See [LICENSE](LICENSE).
