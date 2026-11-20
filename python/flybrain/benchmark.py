@@ -31,6 +31,7 @@ FLOAT_ABS_TOL = {
     "exploration_xp": 1e-4,
     "baseline_loss": 1e-4,
     "eval_loss": 1e-4,
+    "train_loss": 1e-4,  # torch can drift ~1e-4 across platforms/versions
     "sugar_consumed": 1e-6,
     "maturity": 1e-6,
 }
