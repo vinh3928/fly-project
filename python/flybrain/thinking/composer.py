@@ -9,7 +9,6 @@ import numpy as np
 
 from flybrain.phase4 import HIGH_LEVEL_ACTION_DIM
 
-
 # Align with Layer-1 ``low_energy`` (energy < 0.55 ⇒ hunger ≥ 0.45) so the mind
 # peak, route-home, and sugar search all flip together — not only near starvation.
 HUNGER_SEEK_MIN = 0.45
@@ -81,7 +80,6 @@ def compose_thought(
     exploration = float(affect.get("exploration", 0.0))
     joy = float(affect.get("joy", 0.0))
     anger = float(affect.get("anger", 0.0))
-    altruism = float(affect.get("altruism", 0.0))
     hunger = float(signals.get("hunger", affect.get("sad", 0.0)))
     energy = float(signals.get("energy", 1.0 - hunger))
     proboscis_contact = float(signals.get("proboscis_contact", 0.0))

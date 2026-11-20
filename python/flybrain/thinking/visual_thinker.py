@@ -19,7 +19,7 @@ import json
 import os
 import re
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import numpy as np
@@ -64,7 +64,7 @@ class VisualThinkerConfig:
     insight_ttl_ticks: int = 40
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> "VisualThinkerConfig":
+    def from_dict(cls, raw: dict[str, Any] | None) -> VisualThinkerConfig:
         data = dict(raw or {})
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in known})

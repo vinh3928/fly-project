@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import numpy as np
 
 from flybrain.memory.place_graph import InMemoryPlaceGraph, observe_place
@@ -609,7 +611,7 @@ def test_resolve_refuses_longer_replan_while_path_active() -> None:
         props={"label": "outside", "world_xyz": [0.05, 0.02, 0.05]},
     )
     g.upsert_adjacent(stray.id, detour[0].id, props={"turn": 0.1})
-    for a, b in zip(detour, detour[1:]):
+    for a, b in zip(detour, detour[1:], strict=False):
         g.upsert_adjacent(a.id, b.id, props={"turn": 0.1})
     g.upsert_adjacent(detour[-1].id, home.id, props={"turn": 0.1})
 
@@ -940,10 +942,10 @@ def test_wall_aware_path_prefers_opening_edge() -> None:
 
 def test_graph_food_prefers_first_experience_over_later_smell() -> None:
     """Hungry routing queries food senses and returns to the earliest food place."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     g = InMemoryPlaceGraph()
-    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
     first = g.create_place(
         _view(1),
         fly_id="fly_a",

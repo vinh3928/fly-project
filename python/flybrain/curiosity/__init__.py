@@ -8,7 +8,12 @@ from flybrain.curiosity.boredom import (
     apply_boredom_to_candidate_value,
     thought_fingerprint,
 )
-from flybrain.curiosity.drive import CuriosityConfig, CuriosityDrive, CuriosityStepResult, curiosity_gate
+from flybrain.curiosity.drive import (
+    CuriosityConfig,
+    CuriosityDrive,
+    CuriosityStepResult,
+    curiosity_gate,
+)
 from flybrain.curiosity.module import CuriosityModule
 from flybrain.curiosity.novelty import NoveltyConfig, NoveltyObservation, NoveltyTracker
 

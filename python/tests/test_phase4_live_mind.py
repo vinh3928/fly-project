@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline, load_mind_config, make_live_env
+from flybrain.pipeline.live_mind import (
+    LiveMindConfig,
+    LiveMindPipeline,
+    load_mind_config,
+    make_live_env,
+)
 from flybrain.thinking.interest import InterestConfig
 from flybrain.thinking.judgement import DevilProposal, JudgementConfig
 

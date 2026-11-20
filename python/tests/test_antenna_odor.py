@@ -8,8 +8,7 @@ import numpy as np
 import pytest
 
 from flybrain.phase4 import DEFAULT_OBS_DIM, SMELL_VEC_DIM
-from flybrain.pipeline.live_mind import antenna_debug_payload
-from flybrain.pipeline.live_mind import format_live_step_log
+from flybrain.pipeline.live_mind import antenna_debug_payload, format_live_step_log
 from flybrain.signals.builder import (
     BITTER_CHANNEL,
     ODOR_CHANNEL,

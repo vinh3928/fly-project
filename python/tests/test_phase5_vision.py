@@ -3,10 +3,10 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from flybrain.env_visual_nav import FakeVisualNavEnv
-from flybrain.phase5 import AGENT_OBS_HAS_TARGET_XYZ, SUCCESS_RADIUS, VISION_SIZE
-from flybrain.unity_env import DEFAULT_OBS_DIM
 from flybrain.encoders import VisionEncoder
+from flybrain.env_visual_nav import FakeVisualNavEnv
+from flybrain.phase5 import AGENT_OBS_HAS_TARGET_XYZ, VISION_SIZE
+from flybrain.unity_env import DEFAULT_OBS_DIM
 from flybrain.vision import (
     NUM_CUES,
     RecurrentVisionHead,
@@ -80,8 +80,6 @@ def test_heuristic_wall_hazard_ignores_textured_grass_like_field() -> None:
 
 
 def test_heuristic_cues_from_bright_target() -> None:
-    rng = np.random.default_rng(2)
-    sample = make_synthetic_sample(rng)
     # Force strong right-bearing sample
     from flybrain.vision.synthetic import render_synthetic_frame
 

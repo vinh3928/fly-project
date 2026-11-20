@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flybrain.thinking.personality import PersonalityState, PersonalityTraits, TRAIT_NAMES
+from flybrain.thinking.personality import TRAIT_NAMES, PersonalityState, PersonalityTraits
 
 
 def test_seed_and_clamp() -> None:

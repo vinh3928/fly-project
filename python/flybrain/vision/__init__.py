@@ -19,7 +19,12 @@ from .recurrent_head import (
     load_vision_head,
     save_vision_head,
 )
-from .synthetic import SyntheticNavSample, make_synthetic_batch, make_synthetic_sample, render_synthetic_frame
+from .synthetic import (
+    SyntheticNavSample,
+    make_synthetic_batch,
+    make_synthetic_sample,
+    render_synthetic_frame,
+)
 
 __all__ = [
     "CUE_NAMES",

@@ -10,8 +10,8 @@ import pytest
 from flybrain.signals.builder import antenna_bearing
 from flybrain.thinking.composer import is_hungry
 from flybrain.thinking.two_layer_future import (
-    CUE_TURN_MAX,
     _CANDIDATES,
+    CUE_TURN_MAX,
     cue_turn,
     layer1_quick_scan,
     steer_candidate,

@@ -96,7 +96,7 @@ class ModalGateConfig:
     first_nonzero_is_change: bool = True
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> "ModalGateConfig":
+    def from_dict(cls, raw: dict[str, Any] | None) -> ModalGateConfig:
         data = dict(raw or {})
         compare = str(data.get("compare", "max_abs"))
         if compare not in ("max_abs", "mean_abs", "l2", "cosine_distance"):
@@ -169,7 +169,7 @@ class ModalChangeGate:
     def from_config(
         cls,
         config: ModalGateConfig | dict[str, Any] | None = None,
-    ) -> "ModalChangeGate":
+    ) -> ModalChangeGate:
         cfg = (
             config
             if isinstance(config, ModalGateConfig)

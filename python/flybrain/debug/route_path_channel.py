@@ -20,7 +20,8 @@ Unity → Python (fly world pose for anchoring places):
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 import numpy as np

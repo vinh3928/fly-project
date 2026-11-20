@@ -12,19 +12,17 @@ from flybrain.phase4 import HIGH_LEVEL_ACTION_DIM
 from flybrain.thinking.composer import is_hungry
 from flybrain.world_model.outcomes import (
     LifeExperience,
-    OutcomeLabel,
     PriorityWeights,
     label_transition,
     priority_value,
     spiritual_growth_score,
 )
+from flybrain.world_model.predictor import NextStateWorldModel
 
 # When hungry / low-energy, raw explore still outscores feed (no sugar underfoot ⇒
 # feed heuristic predicts no energy gain). Nudge so L1 ranking matches forage intent.
 HUNGRY_FEED_BONUS = 0.35
 HUNGRY_EXPLORE_PENALTY = 0.15
-from flybrain.world_model.predictor import NextStateWorldModel
-
 
 # Discrete candidate high-level actions for Layer-1 scan.
 # Forward-heavy so motor goals produce visible walking when mind+motor track them.

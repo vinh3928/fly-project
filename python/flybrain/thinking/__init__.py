@@ -44,15 +44,15 @@ from .retrospective import (
 )
 from .service import ThinkingConfig, ThinkingService
 from .stimulus_interrupt import (
+    STATUS_REFRAME_CUES,
+    STOP_GOAL,
     PassiveSmellGate,
     PassiveSmellSample,
     PatchGridHistoryCache,
     RelativeHistoryBaseline,
-    STATUS_REFRAME_CUES,
     StatusReframeTracker,
     StimulusInterruptConfig,
     StimulusInterruptDecision,
-    STOP_GOAL,
     evaluate_stimulus_interrupt,
     heighten_sensory_for_deep_thought,
 )

@@ -18,20 +18,22 @@ pushing through the wall.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
+from flybrain.debug.route_path_channel import world_bearing_turn
 from flybrain.memory.place_graph import (
     SUGAR_SENSE_KINDS,
     PathHop,
+    PlaceEdge,
     PlaceGraphStore,
     PlaceNode,
     edge_toward,
     path_hops_from_ids,
 )
-from flybrain.debug.route_path_channel import world_bearing_turn
 from flybrain.thinking.composer import is_hungry
 
 ROUTE_TURN_MAX = 1.0
@@ -135,7 +137,7 @@ class RouteHomeConfig:
     world_arrive_m: float = 0.08  # checkpoint radius in XZ (meters)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> "RouteHomeConfig":
+    def from_dict(cls, raw: dict[str, Any] | None) -> RouteHomeConfig:
         data = dict(raw or {})
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in known})

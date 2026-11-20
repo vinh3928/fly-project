@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
-
 from flybrain.env_food_search import FakeFoodSearchEnv
 from flybrain.phase6 import (
     AGENT_OBS_HAS_FOOD_XYZ,

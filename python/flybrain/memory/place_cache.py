@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -24,9 +24,9 @@ from uuid import uuid4
 import numpy as np
 
 from flybrain.memory.place_graph import (
+    PlaceEdge,
     PlaceGraphStore,
     PlaceNode,
-    PlaceEdge,
     _clamp01,
     _cosine_similarity,
     _normalize_walls,
@@ -41,7 +41,7 @@ def _now() -> float:
 
 
 def _utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -58,7 +58,7 @@ class PlaceCacheConfig:
     neo4j_flush_every: float = 5.0
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> "PlaceCacheConfig":
+    def from_dict(cls, raw: dict[str, Any] | None) -> PlaceCacheConfig:
         data = dict(raw or {})
         # write_behind_seconds kept as ignored alias for older configs.
         return cls(
@@ -88,7 +88,7 @@ class _CacheEntry:
         }
 
     @classmethod
-    def from_disk(cls, raw: dict[str, Any]) -> "_CacheEntry":
+    def from_disk(cls, raw: dict[str, Any]) -> _CacheEntry:
         return cls(
             place=PlaceNode.from_dict(raw["place"]),
             touched_at=float(raw.get("touched_at") or _now()),
@@ -369,7 +369,7 @@ class CachedPlaceGraph:
             walls=_normalize_walls({**node.walls, **(walls or {})}),
             props={**dict(node.props), **prop_map},
             created_at=node.created_at,
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
         )
 
     # --- PlaceGraphStore API ---------------------------------------------------
@@ -514,7 +514,7 @@ class CachedPlaceGraph:
             return self._persist_all_layers(updated, flush_neo4j=True, now=now)
 
         place_id = str(uuid4())
-        created = datetime.now(timezone.utc)
+        created = datetime.now(UTC)
         fresh = PlaceNode(
             id=place_id,
             fly_id=fly_id,
@@ -547,8 +547,8 @@ class CachedPlaceGraph:
             view_vec=vec,
             walls=_normalize_walls(walls),
             props=prop_map,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         return self._persist_all_layers(fresh, flush_neo4j=True, now=now)
 
@@ -621,7 +621,7 @@ class CachedPlaceGraph:
         if extra:
             wall.update(extra)
         node.walls[direction] = wall
-        node.updated_at = datetime.now(timezone.utc)
+        node.updated_at = datetime.now(UTC)
         if l1_hot:
             return self._put_l1_only(node, dirty=True, now=now)
         return self._persist_all_layers(node, flush_neo4j=True, now=now)

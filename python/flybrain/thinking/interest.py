@@ -12,7 +12,6 @@ from typing import Any, Literal
 
 import numpy as np
 
-
 InterestStatus = Literal["pending", "investigating", "done", "expired"]
 InterestKind = Literal["wall", "novelty", "toxin", "odor", "energy", "fall", "other"]
 
@@ -40,7 +39,7 @@ class InterestConfig:
     acknowledge_eye_match_max: float = 0.4
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> "InterestConfig":
+    def from_dict(cls, raw: dict[str, Any] | None) -> InterestConfig:
         data = dict(raw or {})
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in known})
@@ -114,7 +113,7 @@ def eye_pair_similarity(
         frame_similarity(left_a, left_b),
         frame_similarity(right_a, right_b),
     ]
-    usable = [s for s, src in zip(scores, (left_a, right_a)) if src is not None]
+    usable = [s for s, src in zip(scores, (left_a, right_a), strict=False) if src is not None]
     if not usable:
         # Fall back to whichever side we have.
         usable = [s for s in scores if s > 0.0] or [0.0]

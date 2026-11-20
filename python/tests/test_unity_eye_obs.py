@@ -40,11 +40,13 @@ def test_unpack_unity_observations_named_eyes() -> None:
         SimpleNamespace(shape=(1, 64, 64), name="LeftEye"),
         SimpleNamespace(shape=(64, 64, 1), name="RightEye"),
     ]
-    v, l, r = unpack_unity_observations([vector, left, right], specs)
+    v, left_eye, right_eye = unpack_unity_observations([vector, left, right], specs)
     assert v.shape == (197,)
-    assert l is not None and l.shape[0] in (1, 3) and l.shape[-2:] == (64, 64)
-    assert r is not None and r.shape[0] in (1, 3) and r.shape[-2:] == (64, 64)
-    assert float(l.mean()) < float(r.mean())
+    assert left_eye is not None and left_eye.shape[0] in (1, 3) and left_eye.shape[-2:] == (64, 64)
+    assert (
+        right_eye is not None and right_eye.shape[0] in (1, 3) and right_eye.shape[-2:] == (64, 64)
+    )
+    assert float(left_eye.mean()) < float(right_eye.mean())
 
 
 def test_unpack_unity_observations_preserves_rgb_eyes() -> None:
@@ -58,11 +60,13 @@ def test_unpack_unity_observations_preserves_rgb_eyes() -> None:
         SimpleNamespace(shape=(64, 64, 3), name="LeftEye"),
         SimpleNamespace(shape=(3, 64, 64), name="RightEye"),
     ]
-    _, l, r = unpack_unity_observations([vector, left, right], specs, prefer_color=True)
-    assert l is not None and l.shape == (3, 64, 64)
-    assert r is not None and r.shape == (3, 64, 64)
-    assert float(l[0].mean()) > 0.8
-    assert float(r[2].mean()) > 0.7
+    _, left_eye, right_eye = unpack_unity_observations(
+        [vector, left, right], specs, prefer_color=True
+    )
+    assert left_eye is not None and left_eye.shape == (3, 64, 64)
+    assert right_eye is not None and right_eye.shape == (3, 64, 64)
+    assert float(left_eye[0].mean()) > 0.8
+    assert float(right_eye[2].mean()) > 0.7
 
 
 def test_heuristic_detects_light_near_wall() -> None:

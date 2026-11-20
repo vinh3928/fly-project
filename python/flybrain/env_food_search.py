@@ -124,8 +124,7 @@ class FakeFoodSearchEnv(FakeFlyEnv):
 
         self._step += 1
         obs = self._write_obs(proboscis_ext=proboscis, sugar_near=sugar_near, bitter_near=bitter_near)
-        prev_dist = float(self._start_sugar_dist)  # for logging; approach vs last step:
-        # reward uses distance change from previous step stored on self
+        # Reward uses distance change from previous step stored on self.
         approach = getattr(self, "_prev_sugar_dist", self._sugar_dist) - self._sugar_dist
         self._prev_sugar_dist = self._sugar_dist
 

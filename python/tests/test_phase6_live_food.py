@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from flybrain.env_food_search import FakeFoodSearchEnv
-from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline
 from flybrain.phase6 import MIN_SUGAR_DISTANCE_REDUCTION
+from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline
 
 
 def test_live_mind_food_search_smoke() -> None:

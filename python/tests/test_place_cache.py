@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +70,7 @@ class FakeNeo4jPlaceGraph:
         created_at: str | None = None,
     ) -> PlaceNode:
         self.save_calls += 1
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         created = now
         if created_at:
             try:
@@ -214,7 +214,6 @@ def test_l1_match_stops_no_neo4j_round_trip(tmp_path: Path) -> None:
     assert inner.nearest_calls == 1
     saves_after_create = inner.save_calls
     nearest_after_create = inner.nearest_calls
-    l2_before = dict(cache._l2)
 
     # L1 hit: bump walls (decay path) — must not touch Neo4j or rewrite L2 neo flush.
     second = cache.upsert_place(

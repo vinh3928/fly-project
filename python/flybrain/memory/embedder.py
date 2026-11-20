@@ -12,8 +12,8 @@ from flybrain.encoders.fusion import MultimodalEncoder
 from flybrain.phase4 import (
     AFFECT_DIM,
     AFFECT_VEC_DIM,
-    EYE_VEC_DIM,
     EMBEDDING_LATENT_DIM,
+    EYE_VEC_DIM,
     SENSORS_VEC_DIM,
     STATUS_VEC_DIM,
     TOTAL_EMBEDDING_DIM,

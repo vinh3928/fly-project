@@ -34,7 +34,7 @@ class PersonalityTraits:
     intelligence: float = 0.50
     wisdom: float = 0.30
 
-    def clamped(self) -> "PersonalityTraits":
+    def clamped(self) -> PersonalityTraits:
         return PersonalityTraits(
             **{name: _clamp01(getattr(self, name)) for name in TRAIT_NAMES}
         )
@@ -43,7 +43,7 @@ class PersonalityTraits:
         return {name: float(getattr(self, name)) for name in TRAIT_NAMES}
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> "PersonalityTraits":
+    def from_dict(cls, raw: dict[str, Any] | None) -> PersonalityTraits:
         data = dict(raw or {})
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: float(v) for k, v in data.items() if k in known}).clamped()
@@ -58,7 +58,7 @@ class PersonalityState:
     _history: list[dict[str, Any]] = field(default_factory=list, repr=False)
 
     @classmethod
-    def from_config(cls, raw: dict[str, Any] | None) -> "PersonalityState":
+    def from_config(cls, raw: dict[str, Any] | None) -> PersonalityState:
         data = dict(raw or {})
         history_limit = int(data.pop("history_limit", 32))
         return cls(traits=PersonalityTraits.from_dict(data), history_limit=history_limit)

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-import sys
-import threading
 
 import numpy as np
 import torch
@@ -14,12 +14,6 @@ import yaml
 
 from flybrain.affect.estimator import AffectEstimator
 from flybrain.curiosity import CuriosityConfig, CuriosityDrive
-from flybrain.thinking.composer import FEEDING_UNTIL_SATED_KEY
-from flybrain.thinking.route_home import RouteHomeConfig, RouteHomeTracker
-from flybrain.thinking.sugar_search import (
-    SugarSearchConfig,
-    SugarSearchTracker,
-)
 from flybrain.curiosity.boredom import (
     BoredomConfig,
     BoredomTracker,
@@ -27,18 +21,9 @@ from flybrain.curiosity.boredom import (
     apply_boredom_escape_goal,
 )
 from flybrain.env import FakeFlyEnv
-from flybrain.pipeline.async_mind import (
-    MIND_JOB_DEEP,
-    MIND_JOB_THINK,
-    AsyncMindScheduler,
-    FairLock,
-    MindJobResult,
-    SerializedAccess,
-)
 from flybrain.memory.embedder import MindEmbedder
 from flybrain.memory.pgvector import ShortTermMemory, open_short_term_memory
 from flybrain.memory.place_graph import PlaceGraphConfig, open_place_graph
-from flybrain.sensors.mapped_feedback import MappedSensorFeedback
 from flybrain.motor import (
     MotorActController,
     MotorLayer,
@@ -49,22 +34,17 @@ from flybrain.motor import (
     orient_goal,
 )
 from flybrain.phase9 import DEFAULT_MIND_INTERVAL
+from flybrain.pipeline.async_mind import (
+    MIND_JOB_DEEP,
+    MIND_JOB_THINK,
+    AsyncMindScheduler,
+    FairLock,
+    MindJobResult,
+    SerializedAccess,
+)
+from flybrain.sensors.mapped_feedback import MappedSensorFeedback, MappedSensorReport
 from flybrain.signals.builder import SignalBuilder
-from flybrain.thinking.service import ThinkingConfig, ThinkingService
-from flybrain.thinking.visual_thinker import VisualThinker, VisualThinkerConfig
-from flybrain.thinking.personality import PersonalityState
-from flybrain.thinking.judgement import (
-    DevilProposal,
-    JudgementConfig,
-    JudgementModule,
-    apply_proposal,
-    blend_goals,
-)
-from flybrain.thinking.interest import (
-    InterestConfig,
-    InterestPointStore,
-    apply_investigation_goal,
-)
+from flybrain.thinking.composer import FEEDING_UNTIL_SATED_KEY
 from flybrain.thinking.conditioning import (
     ConditioningConfig,
     HazardConditioning,
@@ -73,17 +53,43 @@ from flybrain.thinking.conditioning import (
     rewrite_present_after_judgement,
 )
 from flybrain.thinking.devils_advocate import propose_critique
+from flybrain.thinking.interest import (
+    InterestConfig,
+    InterestPointStore,
+    apply_investigation_goal,
+)
+from flybrain.thinking.judgement import (
+    DevilProposal,
+    JudgementConfig,
+    JudgementModule,
+    apply_proposal,
+    blend_goals,
+)
+from flybrain.thinking.personality import PersonalityState
 from flybrain.thinking.retrospective import RetrospectiveConfig
+from flybrain.thinking.route_home import RouteHomeConfig, RouteHomeTracker
+from flybrain.thinking.service import ThinkingConfig, ThinkingService
 from flybrain.thinking.stimulus_interrupt import (
-    STOP_GOAL,
     STATUS_REFRAME_CUES,
+    STOP_GOAL,
     PassiveSmellGate,
     PatchGridHistoryCache,
     RelativeHistoryBaseline,
-    StimulusInterruptConfig,
     StatusReframeTracker,
+    StimulusInterruptConfig,
     evaluate_stimulus_interrupt,
     heighten_sensory_for_deep_thought,
+)
+from flybrain.thinking.sugar_search import (
+    SugarSearchConfig,
+    SugarSearchTracker,
+)
+from flybrain.thinking.visual_thinker import VisualThinker, VisualThinkerConfig
+from flybrain.vision.novelty import (
+    VisualNoveltyConfig,
+    VisualNoveltyTracker,
+    apply_visual_explore_goal,
+    stereo_patch_embedding,
 )
 from flybrain.vision.recurrent_head import (
     IncompatibleVisionCheckpoint,
@@ -91,12 +97,6 @@ from flybrain.vision.recurrent_head import (
     VisionNavCues,
     heuristic_cues_from_frames,
     load_vision_head,
-)
-from flybrain.vision.novelty import (
-    VisualNoveltyConfig,
-    VisualNoveltyTracker,
-    apply_visual_explore_goal,
-    stereo_patch_embedding,
 )
 from flybrain.world_model.outcomes import LifeExperience
 from flybrain.world_model.predictor import NextStateWorldModel

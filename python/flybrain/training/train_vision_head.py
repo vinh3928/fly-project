@@ -15,7 +15,12 @@ import numpy as np
 import torch
 from torch import nn
 
-from flybrain.vision.recurrent_head import CUE_NAMES, NUM_CUES, RecurrentVisionHead, save_vision_head
+from flybrain.vision.recurrent_head import (
+    CUE_NAMES,
+    NUM_CUES,
+    RecurrentVisionHead,
+    save_vision_head,
+)
 from flybrain.vision.synthetic import make_synthetic_batch
 from flybrain.vision.unity_dataset import load_unity_vision_dataset
 

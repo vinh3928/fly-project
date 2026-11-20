@@ -23,7 +23,7 @@ class ConditioningConfig:
     judgement_confirmations: int = 2
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> "ConditioningConfig":
+    def from_dict(cls, raw: dict[str, Any] | None) -> ConditioningConfig:
         data = dict(raw or {})
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in known})

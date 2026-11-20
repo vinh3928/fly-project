@@ -9,7 +9,12 @@ import numpy as np
 
 from flybrain.memory.pgvector import ShortTermMemory, StmRecord, ThoughtRecord
 from flybrain.thinking.composer import ThoughtResult, compose_thought
-from flybrain.thinking.devils_advocate import LlmClient, critique_draft, make_llm_client, propose_critique
+from flybrain.thinking.devils_advocate import (
+    LlmClient,
+    critique_draft,
+    make_llm_client,
+    propose_critique,
+)
 from flybrain.thinking.reflection import build_reflection
 from flybrain.thinking.retrospective import (
     OutcomeMemory,

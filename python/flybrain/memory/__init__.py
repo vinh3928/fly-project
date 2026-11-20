@@ -9,6 +9,7 @@ from .pgvector import (
     ThoughtRecord,
     open_short_term_memory,
 )
+from .place_cache import CachedPlaceGraph, PlaceCacheConfig, PlaceCacheStats
 from .place_graph import (
     WALL_DIRS,
     InMemoryPlaceGraph,
@@ -25,7 +26,6 @@ from .place_graph import (
     open_place_graph,
     place_similarity,
 )
-from .place_cache import CachedPlaceGraph, PlaceCacheConfig, PlaceCacheStats
 
 __all__ = [
     "WALL_DIRS",

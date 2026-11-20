@@ -174,9 +174,9 @@ def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNav
             return x[..., 0] if x.shape[-1] == 1 else x[..., :3].mean(axis=-1)
         return np.asarray(x, dtype=np.float32).reshape(x.shape[-2], x.shape[-1])
 
-    l = _luma(left)
-    r = _luma(right)
-    frame = 0.5 * (l + r)
+    left_luma = _luma(left)
+    right_luma = _luma(right)
+    frame = 0.5 * (left_luma + right_luma)
     h, w = frame.shape
     # Bright mass centroid → bearing
     bright = np.clip(frame - 0.6, 0.0, 1.0)
@@ -202,7 +202,7 @@ def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNav
     light_edge = max(_uniform_bright(left_bar, left_std), _uniform_bright(right_bar, right_std))
     # Frontal fill: low stereo difference + low spatial variance ⇒ near wall.
     # Outdoor meadow has high spatial variance; keep this for near blank walls only.
-    stereo = float(np.mean(np.abs(l - r)))
+    stereo = float(np.mean(np.abs(left_luma - right_luma)))
     global_std = float(frame.std())
     frontal = 0.0
     if stereo < 0.045 and global_std < 0.08:

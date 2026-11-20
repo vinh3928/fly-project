@@ -10,10 +10,11 @@ stimulus instead (reframe).
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from concurrent.futures import wait as wait_futures
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 MIND_JOB_THINK = "think"
 MIND_JOB_DEEP = "deep"

@@ -5,8 +5,8 @@ from pathlib import Path
 import yaml
 
 from flybrain.env_visual_nav import FakeVisualNavEnv
-from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline
 from flybrain.phase5 import MAX_WALL_COLLISIONS_PER_EPISODE, MIN_DISTANCE_REDUCTION
+from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline
 from flybrain.training.train_vision_head import train_vision_head
 
 
@@ -35,7 +35,7 @@ def test_live_mind_visual_nav_exit_metrics() -> None:
     start = float(reset_info["distance_to_target"])
     last = {}
     try:
-        for step in range(80):
+        for _step in range(80):
             mind_action, info = pipeline.process_observation(obs)
             vision_action = env.vision_policy_action()
             # Blend: vision dominates turn/forward for Phase 5 exit proof.

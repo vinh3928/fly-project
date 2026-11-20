@@ -15,7 +15,6 @@ import numpy as np
 
 from flybrain.thinking.personality import PersonalityTraits
 
-
 Decision = Literal["accept", "reject", "ignore", "reconsider", "acknowledge"]
 
 _RISK_SEVERITY = {
@@ -87,7 +86,7 @@ class JudgementConfig:
     acknowledge_eye_match_max: float = 0.4
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any] | None) -> "JudgementConfig":
+    def from_dict(cls, raw: dict[str, Any] | None) -> JudgementConfig:
         data = dict(raw or {})
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in known})
