@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Self-supervised representation learning and homeostatic RL for the fly embodied simulation"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "PolyForm-Noncommercial-1.0.0" }
+license = { text = "PolyForm-Noncommercial-1.0.0 WITH Patent-Covenant-Addendum" }
 authors = [{ name = "Fly Embodied-Learning Simulation" }]
 dependencies = [
   "numpy>=1.26",

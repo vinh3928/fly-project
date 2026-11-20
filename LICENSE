@@ -1,8 +1,50 @@
+This software is source-available under the PolyForm Noncommercial License
+1.0.0 (reproduced below), AS MODIFIED by the Patent Covenant Addendum that
+follows it. In any conflict between the two, the Addendum controls.
+
+Required Notice: Copyright (c) 2026 Fly Embodied-Learning Simulation contributors
+
+================================================================================
+Patent Covenant Addendum
+================================================================================
+
+This Addendum adds terms to the PolyForm Noncommercial License below. Where it
+conflicts with that license, this Addendum controls.
+
+1. No patenting from this software. As a condition of receiving any license,
+   you and your company agree not to seek, file, prosecute, maintain, or obtain
+   any patent, patent application, or similar exclusive right that claims any
+   invention, method, system, algorithm, architecture, or design that is
+   disclosed by, embodied in, derived from, or based on the software (including
+   ideas, processes, and techniques you learn from reading, running, or
+   modifying it).
+
+2. Covenant not to assert. You and your company agree not to assert, enforce, or
+   threaten any such patent claim against the licensor, any contributor to the
+   software, or any recipient of the software for use, modification, or
+   distribution permitted under these terms.
+
+3. Existing rights. If you or your company already own a patent that would be
+   breached by sections 1–2, you must not use the software under these terms
+   unless you first grant the licensor and all recipients a perpetual,
+   royalty-free, irrevocable license to that patent for any use of the software
+   and works based on it.
+
+4. Immediate termination. Any breach of this Addendum ends all of your licenses
+   under these terms immediately, without the cure period in the Violations
+   section of the PolyForm Noncommercial License.
+
+5. Reservation. All patent rights in the software not expressly granted remain
+   with the licensor. Nothing in these terms requires the licensor to file or
+   maintain any patents.
+
+================================================================================
+PolyForm Noncommercial License 1.0.0
+================================================================================
+
 # PolyForm Noncommercial License 1.0.0
 
 <https://polyformproject.org/licenses/noncommercial/1.0.0>
-
-Required Notice: Copyright (c) 2026 Fly Embodied-Learning Simulation contributors
 
 ## Acceptance
 
@@ -45,11 +87,9 @@ The licensor grants you an additional copyright license to
 make changes or new works based on the software for any
 permitted purpose.
 
-## Patent License
+## No Patent License or Patent Filings
 
-The licensor grants you a patent license for the software that
-covers patent claims the licensor can license, or becomes able
-to license, that you would infringe by using the software.
+The licensor does not grant you any license or rights under any patent claims. You may not apply for, obtain, or assert any patent or other intellectual property rights covering the software, its underlying methods or ideas, or any modifications or derivative works based on the software. Unless already filed by date November 19th 2026.
 
 ## Noncommercial Purposes
 
@@ -104,10 +144,10 @@ end immediately.
 
 ## No Liability
 
-***As far as the law allows, the software comes as is, without
+**_As far as the law allows, the software comes as is, without
 any warranty or condition, and the licensor will not be liable
 to you for any damages arising out of these terms or the use
-or nature of the software, under any kind of legal claim.***
+or nature of the software, under any kind of legal claim._**
 
 ## Definitions
 
