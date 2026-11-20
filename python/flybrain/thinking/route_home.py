@@ -442,9 +442,7 @@ class RouteHomeTracker:
 
         max_deg = max(min_deg, float(self.config.max_turn_degrees))
         deg_per = max(1.0, float(self.config.deg_per_unit_turn))
-        floor = float(
-            np.clip(float(self.config.commit_turn), EDGE_TURN_MIN, ROUTE_TURN_MAX)
-        )
+        floor = float(np.clip(float(self.config.commit_turn), EDGE_TURN_MIN, ROUTE_TURN_MAX))
 
         if self._commit_sign != 0.0:
             progressed = (
@@ -551,7 +549,9 @@ class RouteHomeTracker:
             return 0.0
         return float(row.get("value") or 0.0)
 
-    def _opening_on_place(self, place: PlaceNode | None, signals: dict[str, Any] | None = None) -> float:
+    def _opening_on_place(
+        self, place: PlaceNode | None, signals: dict[str, Any] | None = None
+    ) -> float:
         if signals is not None:
             live = signals.get("opening_strength")
             if live is not None:
@@ -708,11 +708,7 @@ class RouteHomeTracker:
                 self._chamber_anchor_id = self._last_place_id
 
         # Run started already outside: adopt a reachable interior place from the graph.
-        if (
-            label == "outside"
-            and self._chamber_anchor_id is None
-            and store is not None
-        ):
+        if label == "outside" and self._chamber_anchor_id is None and store is not None:
             self._chamber_anchor_id = self._find_chamber_in_graph(store, place_id)
 
         self._last_place_id = place_id
@@ -772,9 +768,7 @@ class RouteHomeTracker:
             return False
         return len(self._path_cache[0]) >= 1
 
-    def _reachable(
-        self, store: PlaceGraphStore, src_id: int | str, dst_id: int | str
-    ) -> bool:
+    def _reachable(self, store: PlaceGraphStore, src_id: int | str, dst_id: int | str) -> bool:
         """Cheap reachability via id-only shortest_path (no full edge dump)."""
         if str(src_id) == str(dst_id):
             return True
@@ -961,11 +955,7 @@ class RouteHomeTracker:
                 detailed = snapped
         if detailed is None:
             replanned = self._path_with_edges(store, current_id, home_id)
-            if (
-                replanned is not None
-                and cached is not None
-                and len(replanned[0]) > len(cached[0])
-            ):
+            if replanned is not None and cached is not None and len(replanned[0]) > len(cached[0]):
                 path, hops = cached
                 snapped = self._snap_path_to_nearest_checkpoint(store, path, hops, signals)
                 detailed = snapped if snapped is not None else (list(path), list(hops))
@@ -1105,9 +1095,7 @@ class RouteHomeTracker:
             self._clear_active_route()
 
         # 1) Session outdoor/odor_plume trail peak (left behind) before distant puddles.
-        plume_id, plume_reason = self._trail_peak_home(
-            store, current_id, plume_only=True
-        )
+        plume_id, plume_reason = self._trail_peak_home(store, current_id, plume_only=True)
         if plume_id is not None:
             return plume_id, plume_reason, "sugar_smell", float(self._peak_smell)
 
@@ -1134,9 +1122,7 @@ class RouteHomeTracker:
             return smell_id, smell_reason, smell_kind, smell_value
 
         # 3) Enclosed session smell trail (after real food homes).
-        trail_id, trail_reason = self._trail_peak_home(
-            store, current_id, plume_only=False
-        )
+        trail_id, trail_reason = self._trail_peak_home(store, current_id, plume_only=False)
         if trail_id is not None:
             return trail_id, trail_reason, "sugar_smell", float(self._peak_smell)
 
@@ -1145,9 +1131,7 @@ class RouteHomeTracker:
                 return self._home_place_id, "bookmarked_home", "", 0.0
             # New outdoor place ids often aren't ADJACENT-linked yet; keep steering
             # along the remembered checkpoint path instead of dropping into scan.
-            if bool(self.config.world_steer) and self._has_checkpoint_route(
-                self._home_place_id
-            ):
+            if bool(self.config.world_steer) and self._has_checkpoint_route(self._home_place_id):
                 home_node = store.get(self._home_place_id)
                 return (
                     self._home_place_id,
@@ -1156,7 +1140,9 @@ class RouteHomeTracker:
                     float(self._sugar_on_place(home_node)),
                 )
         if self._chamber_anchor_id is not None:
-            if not self._is_valid_home_node(store, self._chamber_anchor_id, require_food_label=False):
+            if not self._is_valid_home_node(
+                store, self._chamber_anchor_id, require_food_label=False
+            ):
                 self._chamber_anchor_id = None
             elif self._reachable(store, current_id, self._chamber_anchor_id):
                 return self._chamber_anchor_id, "chamber_anchor", "", 0.0
@@ -1167,9 +1153,7 @@ class RouteHomeTracker:
         return None, "", "", 0.0
 
     def _scan_step_degrees(self) -> float:
-        return float(
-            np.clip(float(self.config.scan_step_degrees), 10.0, 20.0)
-        )
+        return float(np.clip(float(self.config.scan_step_degrees), 10.0, 20.0))
 
     def _landmark_visible(self, signals: dict[str, Any]) -> bool:
         """True when a landmark cue appears during a scan (stop and re-route next tick)."""
@@ -1194,7 +1178,9 @@ class RouteHomeTracker:
         if hop is None:
             return True
         props = dict(hop.props or {})
-        has_turn = props.get("turn") is not None and abs(float(props.get("turn") or 0.0)) >= EDGE_TURN_MIN
+        has_turn = (
+            props.get("turn") is not None and abs(float(props.get("turn") or 0.0)) >= EDGE_TURN_MIN
+        )
         opening = float(signals.get("opening_strength", 0.0) or 0.0)
         edge_open = float(props.get("opening_strength") or 0.0)
         has_open = max(opening, edge_open) >= float(self.config.entrance_opening_min)
@@ -1244,9 +1230,7 @@ class RouteHomeTracker:
         # Continuous one-way spin; wrap after a full circle and keep scanning.
         self._scan_side = 1.0
         self._scan_yaw_degrees = (float(self._scan_yaw_degrees) + step) % span
-        turn = float(
-            np.clip(float(self.config.scan_turn), 0.0, ROUTE_TURN_MAX)
-        )
+        turn = float(np.clip(float(self.config.scan_turn), 0.0, ROUTE_TURN_MAX))
         self._prev_scan_opening = opening
         self._state = RouteHomeState(
             mode="scan",

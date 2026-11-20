@@ -147,7 +147,9 @@ class BoredomTracker:
         )
         return self._last
 
-    def observe_thought(self, *, plan_name: str | None, refined_thought: str | None) -> BoredomState:
+    def observe_thought(
+        self, *, plan_name: str | None, refined_thought: str | None
+    ) -> BoredomState:
         """Call after a mind tick with the new thought/plan fingerprint."""
         if not self.config.enabled:
             return self._recompute()
@@ -212,9 +214,7 @@ class BoredomTracker:
         if self._escape_remaining > 0:
             self._escape_remaining -= 1
         elif (
-            still
-            and fwd >= float(cfg.blocked_forward_min)
-            and wall >= float(cfg.blocked_wall_min)
+            still and fwd >= float(cfg.blocked_forward_min) and wall >= float(cfg.blocked_wall_min)
         ):
             self._blocked_streak += 1
             if self._blocked_streak >= int(cfg.blocked_horizon_steps):

@@ -34,7 +34,9 @@ class FakeVisualNavEnv(FakeFlyEnv):
         self._pos = np.zeros(2, dtype=np.float32)
         self._yaw = 0.0
         self._target = np.array([0.3, 0.2], dtype=np.float32)
-        self._left_eye = np.zeros((1, self.nav_config.vision_size, self.nav_config.vision_size), np.float32)
+        self._left_eye = np.zeros(
+            (1, self.nav_config.vision_size, self.nav_config.vision_size), np.float32
+        )
         self._right_eye = np.zeros_like(self._left_eye)
         self._wall_hits = 0
         self._start_dist = 0.0
@@ -99,9 +101,9 @@ class FakeVisualNavEnv(FakeFlyEnv):
         # Keep a stable vector obs without draining energy (nav-focused episodes).
         self._step += 1
         self._energy = 1.0
-        self._obs = np.clip(self._obs + self._rng.normal(0.0, 0.002, size=self._obs.shape), -1.0, 1.0).astype(
-            np.float32
-        )
+        self._obs = np.clip(
+            self._obs + self._rng.normal(0.0, 0.002, size=self._obs.shape), -1.0, 1.0
+        ).astype(np.float32)
         self._obs[0] = self._energy
         obs = self._obs.copy()
 
@@ -137,7 +139,9 @@ class FakeVisualNavEnv(FakeFlyEnv):
 
         cues = heuristic_cues_from_frames(self._left_eye, self._right_eye)
         # Prefer turning toward bright mass; move forward when confident and clear.
-        forward = float(np.clip(0.55 + 0.4 * cues.target_confidence - 0.9 * cues.wall_hazard, -0.2, 1.0))
+        forward = float(
+            np.clip(0.55 + 0.4 * cues.target_confidence - 0.9 * cues.wall_hazard, -0.2, 1.0)
+        )
         turn = float(np.clip(cues.target_bearing * max(0.35, cues.target_confidence), -1.0, 1.0))
         return np.asarray([forward, turn, 0.5, 0.5, 0.0], dtype=np.float32)
 
@@ -146,7 +150,9 @@ class FakeVisualNavEnv(FakeFlyEnv):
         dist = float(np.linalg.norm(rel) + 1e-6)
         world_angle = float(np.arctan2(rel[0], rel[1]))
         bearing_rad = world_angle - self._yaw
-        bearing = float(np.clip(np.arctan2(np.sin(bearing_rad), np.cos(bearing_rad)) / np.pi, -1.0, 1.0))
+        bearing = float(
+            np.clip(np.arctan2(np.sin(bearing_rad), np.cos(bearing_rad)) / np.pi, -1.0, 1.0)
+        )
         self._bearing = bearing
         half = self.nav_config.arena_half_extent
         forward = np.array([np.sin(self._yaw), np.cos(self._yaw)], dtype=np.float32)

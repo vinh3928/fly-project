@@ -238,15 +238,9 @@ def test_send_place_graph_throttles_unchanged_snapshots() -> None:
         props={"label": "place", "world_xyz": [1.0, 0.02, 2.0]},
     ).place
     ch.record_place_pose(node.id, np.asarray([1.0, 0.02, 2.0], dtype=np.float32))
-    first = ch.send_place_graph(
-        g, current_place_id=node.id, home_id=node.id, step=1, force=True
-    )
+    first = ch.send_place_graph(g, current_place_id=node.id, home_id=node.id, step=1, force=True)
     assert first is not None
-    skipped = ch.send_place_graph(
-        g, current_place_id=node.id, home_id=node.id, step=2
-    )
+    skipped = ch.send_place_graph(g, current_place_id=node.id, home_id=node.id, step=2)
     assert skipped is None
-    forced_tick = ch.send_place_graph(
-        g, current_place_id=node.id, home_id=node.id, step=8
-    )
+    forced_tick = ch.send_place_graph(g, current_place_id=node.id, home_id=node.id, step=8)
     assert forced_tick is not None

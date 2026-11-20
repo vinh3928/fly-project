@@ -72,10 +72,17 @@ class AffectEstimator:
         )
         disgust = _clamp01(bitter * 1.0)
         energy_threat = _clamp01((1.0 - energy) * self.weights["energy_to_survival"])
-        survival_risk = _clamp01(0.5 * energy_threat + 0.3 * damage + 0.2 * fear + 0.15 * wall_hazard)
+        survival_risk = _clamp01(
+            0.5 * energy_threat + 0.3 * damage + 0.2 * fear + 0.15 * wall_hazard
+        )
         pain = _clamp01(damage)
         comfort = _clamp01(
-            0.5 * joy + 0.3 * contact + 0.35 * energy - 0.4 * bitter - 0.3 * wall_hazard - 0.2 * hunger
+            0.5 * joy
+            + 0.3 * contact
+            + 0.35 * energy
+            - 0.4 * bitter
+            - 0.3 * wall_hazard
+            - 0.2 * hunger
         )
         trust = _clamp01(0.4 * joy + 0.3 * contact - 0.5 * bitter)
         anticipation = _clamp01(

@@ -78,9 +78,7 @@ def test_place_similarity_separates_nonneg_patch_views() -> None:
     """Raw cosine on nonneg patches is ~0.99; centered cosine must discriminate."""
     a = _patch_like(1)
     b = _patch_like(2)
-    raw_dot = float(
-        np.dot(a, b) / ((np.linalg.norm(a) + 1e-8) * (np.linalg.norm(b) + 1e-8))
-    )
+    raw_dot = float(np.dot(a, b) / ((np.linalg.norm(a) + 1e-8) * (np.linalg.norm(b) + 1e-8)))
     assert raw_dot > 0.6  # raw cosine is uninformative in this regime
     assert place_similarity(a, b) < 0.5
     assert place_similarity(a, a) > 0.999
@@ -159,9 +157,7 @@ def test_decay_mapped_wall_hazard_only_when_mapped() -> None:
     raw = 0.8
     assert decay_mapped_wall_hazard(raw, mapped=False, familiarity=1.0) == raw
     expected = raw * max(0.15, 1.0 - 0.85 * 0.5)
-    decayed = decay_mapped_wall_hazard(
-        raw, mapped=True, familiarity=0.5, strength=0.85, floor=0.15
-    )
+    decayed = decay_mapped_wall_hazard(raw, mapped=True, familiarity=0.5, strength=0.85, floor=0.15)
     assert decayed < raw
     assert abs(decayed - expected) < 1e-6
 
@@ -277,13 +273,9 @@ def test_should_leave_same_place_on_novelty_and_landmarks() -> None:
     assert leave is True and why == "novelty"
     leave, why = should_leave_same_place(new_stimulus=True)
     assert leave is True and why == "new_stimulus"
-    leave, why = should_leave_same_place(
-        opening=0.9, prev_opening=0.5, opening_delta_min=0.15
-    )
+    leave, why = should_leave_same_place(opening=0.9, prev_opening=0.5, opening_delta_min=0.15)
     assert leave is True and why == "opening_delta"
-    leave, why = should_leave_same_place(
-        wall=0.8, prev_wall=0.1, wall_delta_min=0.15
-    )
+    leave, why = should_leave_same_place(wall=0.8, prev_wall=0.1, wall_delta_min=0.15)
     assert leave is True and why == "wall_delta"
     leave, why = should_leave_same_place(visual_novelty=0.1, opening=0.5, prev_opening=0.5)
     assert leave is False and why == ""

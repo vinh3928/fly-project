@@ -53,7 +53,11 @@ class UnityVisionDataset:
                 for name in MIRRORED_CUES:
                     targets[flip, CUE_NAMES.index(name)] *= -1.0
             if brightness_jitter > 0.0:
-                gain = rng.uniform(1.0 - brightness_jitter, 1.0 + brightness_jitter, size=(len(indices), 1, 1, 1, 1))
+                gain = rng.uniform(
+                    1.0 - brightness_jitter,
+                    1.0 + brightness_jitter,
+                    size=(len(indices), 1, 1, 1, 1),
+                )
                 frames = np.clip(frames * gain.astype(np.float32), 0.0, 1.0)
         eyes = np.ascontiguousarray(np.moveaxis(frames, -1, 2))  # (B, 2, 3, H, W)
         return eyes[:, 0], eyes[:, 1], targets
@@ -67,7 +71,9 @@ def load_unity_vision_dataset(directory: str | Path) -> UnityVisionDataset:
     raw = np.fromfile(root / FRAMES_FILE, dtype=np.uint8)
     expected = count * 2 * height * width * channels
     if raw.size != expected:
-        raise ValueError(f"{FRAMES_FILE}: {raw.size} bytes, expected {expected} for {count} samples")
+        raise ValueError(
+            f"{FRAMES_FILE}: {raw.size} bytes, expected {expected} for {count} samples"
+        )
     frames = raw.reshape(count, 2, height, width, channels)
 
     labels = np.zeros((count, NUM_CUES), dtype=np.float32)

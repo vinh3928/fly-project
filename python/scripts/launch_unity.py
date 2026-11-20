@@ -34,7 +34,9 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Path to FlyChamber player (.app / .exe / .x86_64). Default: builds/FlyChamber.*",
     )
-    parser.add_argument("--port", type=int, default=None, help="Default 5004 for --editor, else 5005")
+    parser.add_argument(
+        "--port", type=int, default=None, help="Default 5004 for --editor, else 5005"
+    )
     parser.add_argument("--graphics", action="store_true", help="Show the player window")
     args = parser.parse_args(argv)
 

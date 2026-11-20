@@ -120,10 +120,14 @@ class FakeFoodSearchEnv(FakeFlyEnv):
         if proboscis > 0.5 and bitter_near:
             self._bitter_contacts += 1
             self._toxin = float(np.clip(self._toxin + self.food_config.bitter_toxin_rate, 0.0, 1.0))
-            self._damage = float(np.clip(self._damage + self.food_config.bitter_toxin_rate * 0.5, 0.0, 1.0))
+            self._damage = float(
+                np.clip(self._damage + self.food_config.bitter_toxin_rate * 0.5, 0.0, 1.0)
+            )
 
         self._step += 1
-        obs = self._write_obs(proboscis_ext=proboscis, sugar_near=sugar_near, bitter_near=bitter_near)
+        obs = self._write_obs(
+            proboscis_ext=proboscis, sugar_near=sugar_near, bitter_near=bitter_near
+        )
         # Reward uses distance change from previous step stored on self.
         approach = getattr(self, "_prev_sugar_dist", self._sugar_dist) - self._sugar_dist
         self._prev_sugar_dist = self._sugar_dist
@@ -191,7 +195,11 @@ class FakeFoodSearchEnv(FakeFlyEnv):
             if bitter_near and self._bitter_dist < self._sugar_dist:
                 turn = float(np.clip(-np.sign(bitter_bearing + 1e-6) * 0.9, -1.0, 1.0))
                 forward = 0.35
-            proboscis = 1.0 if sugar_near else (0.2 if self._sugar_dist < self.food_config.patch_radius * 1.5 else 0.0)
+            proboscis = (
+                1.0
+                if sugar_near
+                else (0.2 if self._sugar_dist < self.food_config.patch_radius * 1.5 else 0.0)
+            )
 
         return np.asarray([forward, turn, 0.5, 0.55, proboscis], dtype=np.float32)
 
@@ -202,18 +210,20 @@ class FakeFoodSearchEnv(FakeFlyEnv):
             "bitter_bearing": self._bearing_to(self._bitter),
             "hunger": float(self._hunger),
             "energy": float(self._energy),
-            "proboscis_contact": 1.0
-            if (
-                min(self._sugar_dist, self._bitter_dist) <= self.food_config.patch_radius
-            )
-            else 0.0,
+            "proboscis_contact": (
+                1.0
+                if (min(self._sugar_dist, self._bitter_dist) <= self.food_config.patch_radius)
+                else 0.0
+            ),
         }
 
     def _bearing_to(self, target: np.ndarray) -> float:
         rel = target - self._pos
         world_angle = float(np.arctan2(rel[0], rel[1]))
         bearing_rad = world_angle - self._yaw
-        return float(np.clip(np.arctan2(np.sin(bearing_rad), np.cos(bearing_rad)) / np.pi, -1.0, 1.0))
+        return float(
+            np.clip(np.arctan2(np.sin(bearing_rad), np.cos(bearing_rad)) / np.pi, -1.0, 1.0)
+        )
 
     def _refresh_distances(self) -> None:
         self._sugar_dist = float(np.linalg.norm(self._sugar - self._pos))
@@ -228,8 +238,12 @@ class FakeFoodSearchEnv(FakeFlyEnv):
     ) -> np.ndarray:
         obs = np.zeros(DEFAULT_OBS_DIM, dtype=np.float32)
         # Diffuse chem by distance (taste without giving XYZ)
-        sugar_strength = float(np.clip(1.0 - self._sugar_dist / (self.food_config.arena_half_extent * 1.6), 0.0, 1.0))
-        bitter_strength = float(np.clip(1.0 - self._bitter_dist / (self.food_config.arena_half_extent * 1.6), 0.0, 1.0))
+        sugar_strength = float(
+            np.clip(1.0 - self._sugar_dist / (self.food_config.arena_half_extent * 1.6), 0.0, 1.0)
+        )
+        bitter_strength = float(
+            np.clip(1.0 - self._bitter_dist / (self.food_config.arena_half_extent * 1.6), 0.0, 1.0)
+        )
         if sugar_near:
             sugar_strength = max(sugar_strength, 0.85)
         if bitter_near:

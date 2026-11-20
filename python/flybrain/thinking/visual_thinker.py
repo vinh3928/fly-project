@@ -309,9 +309,7 @@ class VisualThinker:
                 system=_SYSTEM_PROMPT, prompt=prompt, images=[job.left, job.right]
             )
         except Exception as exc:  # noqa: BLE001 - degrade gracefully off the hot path
-            return VisualInsight(
-                ran=True, reason=f"error:{type(exc).__name__}", tick=job.tick
-            )
+            return VisualInsight(ran=True, reason=f"error:{type(exc).__name__}", tick=job.tick)
         return _parse_insight(text, fallback_bearing=job.bearing, tick=job.tick)
 
     def maybe_think(
@@ -366,9 +364,7 @@ class VisualThinker:
             return self._last_insight
         return None
 
-    def bias_goal(
-        self, goal: np.ndarray, *, tick: int, wall_hazard: float = 0.0
-    ) -> np.ndarray:
+    def bias_goal(self, goal: np.ndarray, *, tick: int, wall_hazard: float = 0.0) -> np.ndarray:
         """Apply the current thinking state to the motor goal.
 
         While inspecting: damp forward motion and orient toward the stimulus.

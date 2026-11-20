@@ -26,7 +26,13 @@ from flybrain.vision.unity_dataset import load_unity_vision_dataset
 
 PYTHON_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = PYTHON_ROOT / "configs" / "visual_nav.yaml"
-_SYNTHETIC_KEYS = ("target_bearing", "target_confidence", "wall_hazard", "forward_bias", "turn_bias")
+_SYNTHETIC_KEYS = (
+    "target_bearing",
+    "target_confidence",
+    "wall_hazard",
+    "forward_bias",
+    "turn_bias",
+)
 
 
 def resolve_path(path: str | Path) -> Path:
@@ -82,16 +88,20 @@ def _masked_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 
 
 @torch.no_grad()
-def evaluate_vision_head(model: RecurrentVisionHead, dataset, indices: np.ndarray, *, device: str = "cpu") -> dict[str, float]:
+def evaluate_vision_head(
+    model: RecurrentVisionHead, dataset, indices: np.ndarray, *, device: str = "cpu"
+) -> dict[str, float]:
     """Mean absolute error per cue (opening bearing only on samples that see out)."""
     model.eval()
     dev = torch.device(device)
     preds, targets = [], []
     for start in range(0, len(indices), 256):
-        idx = indices[start:start + 256]
+        idx = indices[start : start + 256]
         left, right, target = dataset.batch(idx)
         model.reset_state(batch_size=len(idx), device=dev)
-        pred, _ = model(torch.as_tensor(left, device=dev), torch.as_tensor(right, device=dev), model._hidden)
+        pred, _ = model(
+            torch.as_tensor(left, device=dev), torch.as_tensor(right, device=dev), model._hidden
+        )
         preds.append(pred.cpu().numpy())
         targets.append(target)
     pred = np.concatenate(preds)
@@ -137,7 +147,7 @@ def train_vision_head_unity(
         shuffled = rng.permutation(train_idx)
         epoch_losses: list[float] = []
         for start in range(0, len(shuffled), batch_size):
-            idx = shuffled[start:start + batch_size]
+            idx = shuffled[start : start + batch_size]
             left, right, target = dataset.batch(idx, rng=rng)
             model.reset_state(batch_size=len(idx), device=dev)
             pred, _ = model(
@@ -155,9 +165,18 @@ def train_vision_head_unity(
                 report.update(evaluate_vision_head(model, dataset, val_idx, device=device))
             on_epoch(epoch + 1, report)
 
-    metrics: dict[str, float] = {"loss": last_loss, "epochs": float(epochs), "samples": float(len(dataset))}
+    metrics: dict[str, float] = {
+        "loss": last_loss,
+        "epochs": float(epochs),
+        "samples": float(len(dataset)),
+    }
     if n_val > 0:
-        metrics.update({f"val_{k}": v for k, v in evaluate_vision_head(model, dataset, val_idx, device=device).items()})
+        metrics.update(
+            {
+                f"val_{k}": v
+                for k, v in evaluate_vision_head(model, dataset, val_idx, device=device).items()
+            }
+        )
     if checkpoint_path is not None:
         save_vision_head(model, checkpoint_path, **metrics)
     return metrics
@@ -191,7 +210,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.unity is not None:
         unity_cfg = cfg.get("unity_train", {})
-        dataset_dir = resolve_path(args.unity or unity_cfg.get("dataset_dir", "../data/vision_unity"))
+        dataset_dir = resolve_path(
+            args.unity or unity_cfg.get("dataset_dir", "../data/vision_unity")
+        )
         epochs = args.epochs if args.epochs is not None else int(unity_cfg.get("epochs", 15))
         started = time.perf_counter()
         print(f"vision_head_unity_train dataset={dataset_dir} epochs={epochs}", flush=True)

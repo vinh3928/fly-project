@@ -136,7 +136,9 @@ def compose_thought(
     height = float(clamps["height_default"])
     frequency = float(clamps["frequency_default"]) + 0.2 * exploration
     if hungry and sugar > bitter:
-        proboscis = float(np.clip(0.35 + 0.7 * sugar + 0.4 * proboscis_contact - 0.8 * bitter, 0.0, 1.0))
+        proboscis = float(
+            np.clip(0.35 + 0.7 * sugar + 0.4 * proboscis_contact - 0.8 * bitter, 0.0, 1.0)
+        )
     else:
         proboscis = float(np.clip(sugar * 0.3 - bitter * 0.8, 0.0, 1.0))
 
@@ -147,7 +149,9 @@ def compose_thought(
     # Phase 7: blend Layer-1/2 chosen action into composer intent.
     if future_action_bias is not None:
         bias = np.asarray(future_action_bias, dtype=np.float32).reshape(-1)
-        blend = float(np.clip(future_confidence if future_confidence is not None else 0.65, 0.0, 0.95))
+        blend = float(
+            np.clip(future_confidence if future_confidence is not None else 0.65, 0.0, 0.95)
+        )
         if bias.shape[0] >= 5:
             forward = (1.0 - blend) * forward + blend * float(bias[0])
             turn = (1.0 - blend) * turn + blend * float(bias[1])
@@ -165,9 +169,13 @@ def compose_thought(
     # Phase 8: curiosity / novelty bias when homeostasis allows (signaled upstream).
     curiosity_drive = float(signals.get("curiosity_drive", signals.get("explore_bias", 0.0)))
     if curiosity_drive > 0.05 and not hungry and survival < 0.55:
-        forward = float(np.clip(forward + 0.35 * curiosity_drive, -clamps["forward_max"], clamps["forward_max"]))
+        forward = float(
+            np.clip(forward + 0.35 * curiosity_drive, -clamps["forward_max"], clamps["forward_max"])
+        )
         if abs(turn) < 0.2:
-            turn = float(np.clip(turn + 0.2 * curiosity_drive, -clamps["turn_max"], clamps["turn_max"]))
+            turn = float(
+                np.clip(turn + 0.2 * curiosity_drive, -clamps["turn_max"], clamps["turn_max"])
+            )
         frequency = float(np.clip(frequency + 0.15 * curiosity_drive, 0.0, 1.0))
 
     action = np.asarray([forward, turn, height, frequency, proboscis], dtype=np.float32)

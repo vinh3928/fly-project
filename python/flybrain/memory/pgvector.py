@@ -59,6 +59,7 @@ def _json_default(obj: Any) -> Any:
 def _json_dumps(payload: Any) -> str:
     return json.dumps(payload, default=_json_default)
 
+
 _MODALITY_DIM = {
     "embedding": TOTAL_EMBEDDING_DIM,
     "left_eye": EYE_VEC_DIM,
@@ -108,11 +109,21 @@ class StmRecord:
     embedding: np.ndarray
     signals: dict[str, Any]
     affect: dict[str, Any]
-    left_eye_vec: np.ndarray = field(default_factory=lambda: np.zeros(EYE_VEC_DIM, dtype=np.float32))
-    right_eye_vec: np.ndarray = field(default_factory=lambda: np.zeros(EYE_VEC_DIM, dtype=np.float32))
-    sensors_vec: np.ndarray = field(default_factory=lambda: np.zeros(SENSORS_VEC_DIM, dtype=np.float32))
-    status_vec: np.ndarray = field(default_factory=lambda: np.zeros(STATUS_VEC_DIM, dtype=np.float32))
-    affect_vec: np.ndarray = field(default_factory=lambda: np.zeros(AFFECT_VEC_DIM, dtype=np.float32))
+    left_eye_vec: np.ndarray = field(
+        default_factory=lambda: np.zeros(EYE_VEC_DIM, dtype=np.float32)
+    )
+    right_eye_vec: np.ndarray = field(
+        default_factory=lambda: np.zeros(EYE_VEC_DIM, dtype=np.float32)
+    )
+    sensors_vec: np.ndarray = field(
+        default_factory=lambda: np.zeros(SENSORS_VEC_DIM, dtype=np.float32)
+    )
+    status_vec: np.ndarray = field(
+        default_factory=lambda: np.zeros(STATUS_VEC_DIM, dtype=np.float32)
+    )
+    affect_vec: np.ndarray = field(
+        default_factory=lambda: np.zeros(AFFECT_VEC_DIM, dtype=np.float32)
+    )
     patch_vec: np.ndarray = field(default_factory=lambda: np.zeros(PATCH_VEC_DIM, dtype=np.float32))
     smell_vec: np.ndarray = field(default_factory=lambda: np.zeros(SMELL_VEC_DIM, dtype=np.float32))
     joint_vec: np.ndarray = field(
@@ -305,9 +316,7 @@ class PgVectorShortTermMemory:
             import psycopg
             from pgvector.psycopg import register_vector
         except ImportError as exc:  # pragma: no cover
-            raise ImportError(
-                "Install mind extras: pip install -e '.[mind]'"
-            ) from exc
+            raise ImportError("Install mind extras: pip install -e '.[mind]'") from exc
 
         self.dim = dim
         self.schema = schema
@@ -320,8 +329,7 @@ class PgVectorShortTermMemory:
         with self._conn.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {self.schema}")
-            cur.execute(
-                f"""
+            cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._table} (
                     id BIGSERIAL PRIMARY KEY,
                     episode_id TEXT NOT NULL DEFAULT 'live',
@@ -341,27 +349,20 @@ class PgVectorShortTermMemory:
                     affect JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
-                """
-            )
+                """)
             # Migrate older tables that predate patch_vec / smell_vec / joint_vec.
-            cur.execute(
-                f"""
+            cur.execute(f"""
                 ALTER TABLE {self._table}
                 ADD COLUMN IF NOT EXISTS patch_vec vector({PATCH_VEC_DIM})
-                """
-            )
-            cur.execute(
-                f"""
+                """)
+            cur.execute(f"""
                 ALTER TABLE {self._table}
                 ADD COLUMN IF NOT EXISTS smell_vec vector({SMELL_VEC_DIM})
-                """
-            )
-            cur.execute(
-                f"""
+                """)
+            cur.execute(f"""
                 ALTER TABLE {self._table}
                 ADD COLUMN IF NOT EXISTS joint_vec vector({INTERRUPT_JOINT_VEC_DIM})
-                """
-            )
+                """)
             # Cosine indexes for fused recall + eye revisit + interrupt modalities.
             for col in (
                 "embedding",
@@ -372,8 +373,7 @@ class PgVectorShortTermMemory:
                 "joint_vec",
             ):
                 idx = f"stm_{col}_hnsw"
-                cur.execute(
-                    f"""
+                cur.execute(f"""
                     DO $$ BEGIN
                         CREATE INDEX IF NOT EXISTS {idx}
                         ON {self._table}
@@ -381,10 +381,8 @@ class PgVectorShortTermMemory:
                     EXCEPTION WHEN OTHERS THEN
                         NULL;  -- older pgvector without hnsw: skip
                     END $$;
-                    """
-                )
-            cur.execute(
-                f"""
+                    """)
+            cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.schema}.thoughts (
                     id BIGSERIAL PRIMARY KEY,
                     stm_id BIGINT,
@@ -394,8 +392,7 @@ class PgVectorShortTermMemory:
                     intent JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
-                """
-            )
+                """)
         self._conn.commit()
 
     def insert_embedding(

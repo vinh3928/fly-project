@@ -821,9 +821,7 @@ class InMemoryPlaceGraph:
         limit: int = 32,
     ) -> list[FoodPlaceHit]:
         rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
-        return find_food_places_in_nodes(
-            rows, min_value=min_value, limit=limit, kinds=kinds
-        )
+        return find_food_places_in_nodes(rows, min_value=min_value, limit=limit, kinds=kinds)
 
     def shortest_path(
         self,
@@ -845,9 +843,7 @@ class InMemoryPlaceGraph:
         undirected: bool = True,
         max_hops: int = 64,
     ) -> tuple[list[int | str], list[PathHop]] | None:
-        path = self.shortest_path(
-            src_id, dst_id, undirected=undirected, max_hops=max_hops
-        )
+        path = self.shortest_path(src_id, dst_id, undirected=undirected, max_hops=max_hops)
         if path is None:
             return None
         return path, path_hops_from_ids(self.edges(), path)
@@ -897,8 +893,7 @@ class PgPlaceGraph:
                 """,
                 (walls_default,),
             )
-            cur.execute(
-                f"""
+            cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.schema}.place_edges (
                     id BIGSERIAL PRIMARY KEY,
                     src_id BIGINT NOT NULL REFERENCES {self.schema}.place_nodes(id) ON DELETE CASCADE,
@@ -907,8 +902,7 @@ class PgPlaceGraph:
                     props JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
-                """
-            )
+                """)
         self._conn.commit()
 
     def _pad_vec(self, view_vec: np.ndarray) -> np.ndarray:
@@ -1222,9 +1216,7 @@ class PgPlaceGraph:
     def edges(self) -> list[PlaceEdge]:
         assert self._conn is not None
         with self._conn.cursor() as cur:
-            cur.execute(
-                f"SELECT id, src_id, dst_id, kind, props FROM {self.schema}.place_edges"
-            )
+            cur.execute(f"SELECT id, src_id, dst_id, kind, props FROM {self.schema}.place_edges")
             rows = cur.fetchall()
         out: list[PlaceEdge] = []
         for r in rows:
@@ -1270,9 +1262,7 @@ class PgPlaceGraph:
         limit: int = 32,
     ) -> list[FoodPlaceHit]:
         rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
-        return find_food_places_in_nodes(
-            rows, min_value=min_value, limit=limit, kinds=kinds
-        )
+        return find_food_places_in_nodes(rows, min_value=min_value, limit=limit, kinds=kinds)
 
     def shortest_path(
         self,
@@ -1294,9 +1284,7 @@ class PgPlaceGraph:
         undirected: bool = True,
         max_hops: int = 64,
     ) -> tuple[list[int | str], list[PathHop]] | None:
-        path = self.shortest_path(
-            src_id, dst_id, undirected=undirected, max_hops=max_hops
-        )
+        path = self.shortest_path(src_id, dst_id, undirected=undirected, max_hops=max_hops)
         if path is None:
             return None
         return path, path_hops_from_ids(self.edges(), path)
@@ -1355,34 +1343,26 @@ class Neo4jPlaceGraph:
         return list(records)
 
     def _ensure_schema(self) -> None:
-        self._query(
-            f"""
+        self._query(f"""
             CREATE CONSTRAINT {self.PLACE_ID_CONSTRAINT} IF NOT EXISTS
             FOR (p:Place) REQUIRE p.place_id IS UNIQUE
-            """
-        )
-        self._query(
-            f"""
+            """)
+        self._query(f"""
             CREATE CONSTRAINT {self.WALL_ID_CONSTRAINT} IF NOT EXISTS
             FOR (w:Wall) REQUIRE w.wall_id IS UNIQUE
-            """
-        )
-        self._query(
-            """
+            """)
+        self._query("""
             CREATE INDEX place_fly_updated IF NOT EXISTS
             FOR (p:Place) ON (p.fly_id, p.updated_at)
-            """
-        )
-        self._query(
-            f"""
+            """)
+        self._query(f"""
             CREATE VECTOR INDEX {self.VECTOR_INDEX} IF NOT EXISTS
             FOR (p:Place) ON (p.view_vec)
             OPTIONS {{indexConfig: {{
                 `vector.dimensions`: {int(self.view_dim)},
                 `vector.similarity_function`: 'cosine'
             }}}}
-            """
-        )
+            """)
         self._query(
             "CALL db.awaitIndex($index_name, $timeout_seconds)",
             {"index_name": self.VECTOR_INDEX, "timeout_seconds": 30},
@@ -1803,16 +1783,14 @@ class Neo4jPlaceGraph:
         return bool(rows)
 
     def edges(self) -> list[PlaceEdge]:
-        rows = self._query(
-            """
+        rows = self._query("""
             MATCH (src:Place)-[edge:ADJACENT]->(dst:Place)
             RETURN elementId(edge) AS edge_id,
                    src.place_id AS src_id,
                    dst.place_id AS dst_id,
                    edge.kind AS kind,
                    edge.props_json AS props_json
-            """
-        )
+            """)
         out: list[PlaceEdge] = []
         for row in rows:
             props_raw = row.get("props_json") or "{}"
@@ -2058,9 +2036,7 @@ class Neo4jPlaceGraph:
                 except (TypeError, ValueError, json.JSONDecodeError):
                     props = {}
                 reversed_hop = str(matched.get("src_id")) == str(dst)
-            path_hops.append(
-                PathHop(src_id=src, dst_id=dst, props=props, reversed=reversed_hop)
-            )
+            path_hops.append(PathHop(src_id=src, dst_id=dst, props=props, reversed=reversed_hop))
         return ids, path_hops
 
 
@@ -2068,9 +2044,7 @@ def mean_wall_familiarity(walls: dict[str, Any] | None) -> float:
     """Average familiarity across the four chamber walls."""
     if not isinstance(walls, dict) or not walls:
         return 0.0
-    vals = [
-        _clamp01(float((walls.get(d) or {}).get("familiarity") or 0.0)) for d in WALL_DIRS
-    ]
+    vals = [_clamp01(float((walls.get(d) or {}).get("familiarity") or 0.0)) for d in WALL_DIRS]
     return float(sum(vals) / max(1, len(vals)))
 
 

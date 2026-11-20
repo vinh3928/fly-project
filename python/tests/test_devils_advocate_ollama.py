@@ -48,9 +48,7 @@ def test_ollama_config_builds_openai_compatible_client() -> None:
 
 
 def test_background_flag_wraps_client() -> None:
-    client = make_llm_client(
-        mock=False, api_key="ollama", model="qwen2.5vl:7b", background=True
-    )
+    client = make_llm_client(mock=False, api_key="ollama", model="qwen2.5vl:7b", background=True)
     assert isinstance(client, BackgroundLlmClient)
     client.close()
 

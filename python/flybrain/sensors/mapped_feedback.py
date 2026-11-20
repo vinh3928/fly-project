@@ -332,10 +332,7 @@ class MappedSensorFeedback:
                 # Unchanged smell/sensors on a revisit → stay on L1 (skip durable write).
                 senses_stable = senses_l1 and (smell_vec is None or smell_l1)
                 should_write = bool(
-                    is_new
-                    or sense_sample.changed
-                    or smell_sample.changed
-                    or not senses_stable
+                    is_new or sense_sample.changed or smell_sample.changed or not senses_stable
                 )
                 if should_write:
                     items = _bump_detected_items(

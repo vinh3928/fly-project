@@ -224,7 +224,9 @@ class TendencyDrive:
         delta = lr * score * best_w
         if best_drive == "curiosity":
             self.offset_curiosity = float(
-                np.clip(self.offset_curiosity + delta, -self.config.max_offset, self.config.max_offset)
+                np.clip(
+                    self.offset_curiosity + delta, -self.config.max_offset, self.config.max_offset
+                )
             )
         elif best_drive == "sex":
             self.offset_sex = float(

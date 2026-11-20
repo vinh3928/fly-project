@@ -67,9 +67,7 @@ class LlmClient(Protocol):
     def complete(self, system: str, user: str) -> str: ...
 
 
-def _call(
-    client: LlmClient, system: str, user: str, response_format: dict[str, Any] | None
-) -> str:
+def _call(client: LlmClient, system: str, user: str, response_format: dict[str, Any] | None) -> str:
     """Call a client, passing response_format only to clients that accept it."""
     if response_format is None:
         return client.complete(system, user)
@@ -87,15 +85,21 @@ class HeuristicDevilClient:
         lowered = user.lower()
         critiques: list[str] = []
         if "survival" in lowered or "energy" in lowered:
-            critiques.append("Counter: survival risk may be overestimated; freezing wastes foraging time.")
+            critiques.append(
+                "Counter: survival risk may be overestimated; freezing wastes foraging time."
+            )
         if "sugar" in lowered or "joy" in lowered:
-            critiques.append("Counter: sugar approach could ignore bitter nearby; sample before committing.")
+            critiques.append(
+                "Counter: sugar approach could ignore bitter nearby; sample before committing."
+            )
         if "forward" in lowered or "explore" in lowered:
             critiques.append("Counter: forward drive without upright stability risks falling.")
         if "altruism" in lowered:
             critiques.append("Counter: altruism is premature for a solitary foraging fly.")
         if not critiques:
-            critiques.append("Counter: the draft lacks a concrete risk check against toxins and falls.")
+            critiques.append(
+                "Counter: the draft lacks a concrete risk check against toxins and falls."
+            )
         return " ".join(critiques)
 
 
@@ -112,9 +116,9 @@ class OpenAiCompatibleClient:
         keep_alive: str | None = "10m",
     ) -> None:
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.base_url = (base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip(
-            "/"
-        )
+        self.base_url = (
+            base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        ).rstrip("/")
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         self.timeout_seconds = timeout_seconds
         self.max_tokens = int(max_tokens)
@@ -210,9 +214,7 @@ class BackgroundLlmClient:
             self._last = str(_call(self.inner, system, user, response_format))
             self.refreshes += 1
         elif self._future is None:
-            self._future = self._executor.submit(
-                _call, self.inner, system, user, response_format
-            )
+            self._future = self._executor.submit(_call, self.inner, system, user, response_format)
             self.refreshes += 1
         return self._last or self.fallback.complete(system, user)
 
@@ -410,7 +412,9 @@ def heuristic_proposal(
         reason = f"interrupt {tag}: {reason}"[:80]
     conf = 0.55
     if risk != "none" or deep:
-        conf = 0.65 + 0.2 * min(1.0, max(wall, bitter, odor / 10.0 if odor > 1.0 else odor, survival))
+        conf = 0.65 + 0.2 * min(
+            1.0, max(wall, bitter, odor / 10.0 if odor > 1.0 else odor, survival)
+        )
     return DevilProposal(
         risk=risk,
         forward_scale=float(np.clip(forward_scale, 0.0, 1.0)),
@@ -527,7 +531,9 @@ def critique_draft(
     """Backward-compatible text critique; prefers structured proposal reason."""
     proposal = propose_critique(client, draft=draft, affect=affect, signals=signals)
     if proposal.reason:
-        return f"Counter: {proposal.reason} (risk={proposal.risk}, fwd×{proposal.forward_scale:.2f})."
+        return (
+            f"Counter: {proposal.reason} (risk={proposal.risk}, fwd×{proposal.forward_scale:.2f})."
+        )
     system = (
         "You are a devil's advocate for an embodied fly. "
         "In 1-2 short sentences, counter the draft for wall collision, toxins, "
@@ -544,9 +550,7 @@ def critique_draft(
     return client.complete(system, user)
 
 
-def make_llm_client(
-    *, mock: bool = True, background: bool = False, **kwargs: Any
-) -> LlmClient:
+def make_llm_client(*, mock: bool = True, background: bool = False, **kwargs: Any) -> LlmClient:
     if mock or not (kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY")):
         return HeuristicDevilClient()
     # Drop non-client kwargs that LiveMindConfig may forward.

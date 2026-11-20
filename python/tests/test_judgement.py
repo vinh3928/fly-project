@@ -63,7 +63,9 @@ def test_weak_proposal_ignored_by_wisdom() -> None:
 def test_reconsider_budget_forces_ignore() -> None:
     judge = JudgementModule(JudgementConfig(enabled=True, reconsider_budget=1))
     # Inconsistent: high forward into wall with risk=none → intelligence wants reconsider.
-    traits = PersonalityTraits(intelligence=0.95, curiosity_to_test=0.8, wisdom=0.1, risk_appetite=0.5)
+    traits = PersonalityTraits(
+        intelligence=0.95, curiosity_to_test=0.8, wisdom=0.1, risk_appetite=0.5
+    )
     bad = DevilProposal(
         risk="none", forward_scale=0.95, turn_delta=0.0, confidence=0.3, reason="go", ran=True
     )

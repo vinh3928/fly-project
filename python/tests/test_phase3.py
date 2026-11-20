@@ -73,7 +73,9 @@ def _write_minimal_episode(root: Path) -> None:
         CONTACTS_FILE,
         ODOR_FILE,
     ):
-        (root / name).write_text(COMMON_CSV_HEADER + "\nphase3_py,1,0,0.000000,7,fly_0\n", encoding="utf-8")
+        (root / name).write_text(
+            COMMON_CSV_HEADER + "\nphase3_py,1,0,0.000000,7,fly_0\n", encoding="utf-8"
+        )
 
     (root / EVENTS_FILE).write_text(
         '{"experiment_id":"phase3_py","episode_id":1,"step":0,"timestamp":0.000000,"event":"episode_started"}\n'

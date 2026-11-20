@@ -68,7 +68,11 @@ def test_present_peaks_include_odor() -> None:
         {"odor": 3.72, "bitter": 0.0, "sugar": 0.0, "energy": 1.0},
         {"survival_risk": 0.2},
         maturity=0.1,
-        judgement={"decision": "acknowledge", "reason": "scores_acknowledge", "proposal": {"risk": "odor"}},
+        judgement={
+            "decision": "acknowledge",
+            "reason": "scores_acknowledge",
+            "proposal": {"risk": "odor"},
+        },
         conditioning_summary="CONDITIONING: odor×3 strength=0.80 (conditioned)",
     )
     assert "odor=3.72" in line

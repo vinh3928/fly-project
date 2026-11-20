@@ -348,13 +348,10 @@ class VisualNoveltyTracker:
                     )
                     change = float(np.clip(delta / 0.15, 0.0, 1.0))
 
-            interest = (
-                float(cfg.novelty_weight) * bonus
-                + float(cfg.change_weight) * change * float(cfg.first_visit_bonus)
-            )
-            novelty = _clamp01(
-                0.55 * interest + 0.35 * bonus + (0.25 if new_here else 0.0)
-            )
+            interest = float(cfg.novelty_weight) * bonus + float(
+                cfg.change_weight
+            ) * change * float(cfg.first_visit_bonus)
+            novelty = _clamp01(0.55 * interest + 0.35 * bonus + (0.25 if new_here else 0.0))
             confidence = _clamp01(interest)
 
             hab_key = (eye, 0, facet)
@@ -429,7 +426,8 @@ def apply_visual_explore_goal(
     strength = _clamp01(nov * (0.5 + 0.5 * conf))
     g[1] = float(
         np.clip(
-            (1.0 - 0.65 * strength) * float(g[1]) + 0.65 * strength * bearing * float(cfg.turn_gain),
+            (1.0 - 0.65 * strength) * float(g[1])
+            + 0.65 * strength * bearing * float(cfg.turn_gain),
             -1.0,
             1.0,
         )

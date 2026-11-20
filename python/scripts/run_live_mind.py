@@ -73,7 +73,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Pace fake envs to decision_hz wall-clock (Unity already runs in sim time)",
     )
     parser.add_argument("--config", type=str, default=None, help="Path to mind.yaml")
-    parser.add_argument("--visual-nav-config", type=str, default=None, help="Path to visual_nav.yaml")
+    parser.add_argument(
+        "--visual-nav-config", type=str, default=None, help="Path to visual_nav.yaml"
+    )
     parser.add_argument("--pgvector", action="store_true", help="Force pgvector backend")
     parser.add_argument(
         "--no-curiosity",
@@ -307,7 +309,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     print("unity_env_ready", flush=True)
     if args.editor:
-        has_eyes = bool(getattr(env, "left_eye", None) is not None and getattr(env, "right_eye", None) is not None)
+        has_eyes = bool(
+            getattr(env, "left_eye", None) is not None
+            and getattr(env, "right_eye", None) is not None
+        )
         print(f"unity_connected has_eyes={has_eyes}", flush=True)
 
     pipeline = LiveMindPipeline(env, config=cfg)
@@ -330,9 +335,11 @@ def main(argv: list[str] | None = None) -> int:
                     "nnz": int((abs(raw_obs) > 1e-8).sum()),
                     "energy_at_176": energy_raw,
                     "head5": [float(x) for x in raw_obs[:5]],
-                    "internal8": [float(x) for x in raw_obs[INTERNAL_OFFSET : INTERNAL_OFFSET + 8]]
-                    if raw_obs.size >= INTERNAL_OFFSET + 8
-                    else [],
+                    "internal8": (
+                        [float(x) for x in raw_obs[INTERNAL_OFFSET : INTERNAL_OFFSET + 8]]
+                        if raw_obs.size >= INTERNAL_OFFSET + 8
+                        else []
+                    ),
                 },
                 flush=True,
             )

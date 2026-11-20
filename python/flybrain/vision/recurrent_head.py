@@ -164,6 +164,7 @@ def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNav
     ``wall_hazard`` so live Chamber play can avoid obstacles without a trained head.
     Accepts grayscale (H,W)/(1,H,W) or RGB (3,H,W)/(H,W,3); wall cues use luminance.
     """
+
     def _luma(eye: np.ndarray) -> np.ndarray:
         x = np.asarray(eye, dtype=np.float32)
         if x.ndim == 2:
@@ -192,6 +193,7 @@ def heuristic_cues_from_frames(left: np.ndarray, right: np.ndarray) -> VisionNav
     # Classic synthetic cue: dark edge columns (darker bar ⇒ stronger hazard).
     # 0.28 (was 0.35) so only quite dark edges score high — textured grass edges less so.
     dark_edge = float(np.clip(1.0 - min(left_bar, right_bar) / 0.28, 0.0, 1.0))
+
     # Unity chamber walls are often light + low-texture when close.
     def _uniform_bright(mean: float, std: float) -> float:
         if mean < 0.45:

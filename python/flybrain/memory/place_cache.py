@@ -326,9 +326,7 @@ class CachedPlaceGraph:
     def _flush_neo4j(self, place: PlaceNode) -> PlaceNode:
         save = getattr(self.inner, "_save_place", None)
         if not callable(save):
-            raise RuntimeError(
-                "CachedPlaceGraph requires an inner store with _save_place (Neo4j)"
-            )
+            raise RuntimeError("CachedPlaceGraph requires an inner store with _save_place (Neo4j)")
         created = place.created_at
         created_s = created.isoformat() if hasattr(created, "isoformat") else str(created)
         return save(
@@ -573,9 +571,7 @@ class CachedPlaceGraph:
         node = ent.place if l1_hot else self.get(place_id)
         if node is None:
             return None
-        updated = self._merge_place(
-            node, fly_id=node.fly_id, walls=walls, prop_map=prop_map
-        )
+        updated = self._merge_place(node, fly_id=node.fly_id, walls=walls, prop_map=prop_map)
         if l1_hot:
             self.stats.l1_hits += 1
             return self._put_l1_only(updated, dirty=True, now=now)
@@ -700,15 +696,11 @@ class CachedPlaceGraph:
         inner_fn = getattr(self.inner, "find_food_places", None)
         if callable(inner_fn):
             self.stats.neo4j_reads += 1
-            return inner_fn(
-                fly_id=fly_id, min_value=min_value, kinds=kinds, limit=limit
-            )
+            return inner_fn(fly_id=fly_id, min_value=min_value, kinds=kinds, limit=limit)
         from flybrain.memory.place_graph import find_food_places_in_nodes
 
         rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
-        return find_food_places_in_nodes(
-            rows, min_value=min_value, limit=limit, kinds=kinds
-        )
+        return find_food_places_in_nodes(rows, min_value=min_value, limit=limit, kinds=kinds)
 
     def shortest_path(
         self,
@@ -721,9 +713,7 @@ class CachedPlaceGraph:
         # Prefer cheap id-only Cypher / BFS; avoid building PathHop when unused.
         inner_path = getattr(self.inner, "shortest_path", None)
         if callable(inner_path):
-            return inner_path(
-                src_id, dst_id, undirected=undirected, max_hops=max_hops
-            )
+            return inner_path(src_id, dst_id, undirected=undirected, max_hops=max_hops)
         detailed = self.shortest_path_with_edges(
             src_id, dst_id, undirected=undirected, max_hops=max_hops
         )
@@ -740,15 +730,11 @@ class CachedPlaceGraph:
         # Prefer inner Neo4j Cypher (nodes + ADJACENT edge props) when available.
         inner_detailed = getattr(self.inner, "shortest_path_with_edges", None)
         if callable(inner_detailed):
-            return inner_detailed(
-                src_id, dst_id, undirected=undirected, max_hops=max_hops
-            )
+            return inner_detailed(src_id, dst_id, undirected=undirected, max_hops=max_hops)
         from flybrain.memory.place_graph import path_hops_from_ids, shortest_path_bfs
 
         edges = self.edges()  # load once
-        path = shortest_path_bfs(
-            edges, src_id, dst_id, undirected=undirected, max_hops=max_hops
-        )
+        path = shortest_path_bfs(edges, src_id, dst_id, undirected=undirected, max_hops=max_hops)
         if path is None:
             return None
         return path, path_hops_from_ids(edges, path)

@@ -98,11 +98,13 @@ class CuriosityDrive:
         tracker: NoveltyTracker | None = None,
     ) -> None:
         self.config = config or CuriosityConfig()
-        novelty_cfg = NoveltyConfig(**{
-            k: v
-            for k, v in (self.config.novelty or {}).items()
-            if k in NoveltyConfig.__dataclass_fields__
-        })
+        novelty_cfg = NoveltyConfig(
+            **{
+                k: v
+                for k, v in (self.config.novelty or {}).items()
+                if k in NoveltyConfig.__dataclass_fields__
+            }
+        )
         self.tracker = tracker or NoveltyTracker(novelty_cfg)
         self.module = module or CuriosityModule(
             latent_dim=self.config.latent_dim,

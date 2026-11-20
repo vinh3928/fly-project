@@ -208,14 +208,18 @@ class SugarSearchTracker:
                 forward = max(forward, float(cfg.align_go_forward))
         else:
             self._pivot_streak = 0
-        near = float(np.clip((smell - cfg.probe_smell) / max(1.0 - cfg.probe_smell, 1e-6), 0.0, 1.0))
+        near = float(
+            np.clip((smell - cfg.probe_smell) / max(1.0 - cfg.probe_smell, 1e-6), 0.0, 1.0)
+        )
         if smell >= cfg.probe_smell:
             forward *= 1.0 - cfg.arrive_slow * near
             # Keep a crawl floor after align-budget so arrive_slow cannot re-zero it.
             if self._pivot_streak > max(0, int(cfg.pivot_max_ticks)):
                 floor = float(cfg.align_go_forward) * (1.0 - 0.5 * cfg.arrive_slow * near)
                 forward = max(forward, floor)
-            return SugarOrient(forward=forward, turn=turn, proboscis=cfg.probe_extension, mode="probe")
+            return SugarOrient(
+                forward=forward, turn=turn, proboscis=cfg.probe_extension, mode="probe"
+            )
         return SugarOrient(forward=forward, turn=turn, proboscis=0.0, mode="orient")
 
     def _observe(self, signals: dict[str, Any]) -> SugarSearchState:
@@ -243,9 +247,7 @@ class SugarSearchTracker:
             )
         if change <= -cfg.sharp_drop:
             self._streak = 0
-            return SugarSearchState(
-                mode="reverse", turn=side * cfg.reverse_turn, change=change
-            )
+            return SugarSearchState(mode="reverse", turn=side * cfg.reverse_turn, change=change)
         self._streak += 1
         magnitude = min(cfg.max_turn, cfg.base_turn + cfg.turn_step * (self._streak - 1))
         return SugarSearchState(

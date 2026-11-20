@@ -604,7 +604,9 @@ def test_resolve_refuses_longer_replan_while_path_active() -> None:
     assert first.hops_left == 2
 
     # Long detour graph from a fresh place id near start — replan would be longer.
-    detour = [g.create_place(_view(10 + i), fly_id="fly_a", props={"label": "outside"}) for i in range(5)]
+    detour = [
+        g.create_place(_view(10 + i), fly_id="fly_a", props={"label": "outside"}) for i in range(5)
+    ]
     stray = g.create_place(
         _view(99),
         fly_id="fly_a",
@@ -785,7 +787,12 @@ def test_smell_trail_becomes_home_when_hungry() -> None:
     tracker.observe(
         store=g,
         place=mid,
-        signals={"place_label": "place", "energy": 1.0, "sugar_smell": 0.05, "opening_strength": 0.2},
+        signals={
+            "place_label": "place",
+            "energy": 1.0,
+            "sugar_smell": 0.05,
+            "opening_strength": 0.2,
+        },
     )
     tracker.observe(
         store=g,
@@ -826,12 +833,22 @@ def test_rising_smell_blends_antenna_while_routing() -> None:
     tracker.observe(
         store=g,
         place=home,
-        signals={"place_label": "place", "energy": 1.0, "sugar_smell": 0.5, "opening_strength": 0.05},
+        signals={
+            "place_label": "place",
+            "energy": 1.0,
+            "sugar_smell": 0.5,
+            "opening_strength": 0.05,
+        },
     )
     tracker.observe(
         store=g,
         place=mid,
-        signals={"place_label": "place", "energy": 1.0, "sugar_smell": 0.1, "opening_strength": 0.1},
+        signals={
+            "place_label": "place",
+            "energy": 1.0,
+            "sugar_smell": 0.1,
+            "opening_strength": 0.1,
+        },
     )
     # First hungry tick seeds last smell (still multi-hop so stay in route).
     tracker.observe(
@@ -876,7 +893,12 @@ def test_wall_outside_steers_toward_opening_entrance() -> None:
     tracker.observe(
         store=g,
         place=chamber,
-        signals={"place_label": "place", "energy": 1.0, "sugar_smell": 0.4, "opening_strength": 0.1},
+        signals={
+            "place_label": "place",
+            "energy": 1.0,
+            "sugar_smell": 0.4,
+            "opening_strength": 0.1,
+        },
     )
     state = tracker.observe(
         store=g,
@@ -893,7 +915,9 @@ def test_wall_outside_steers_toward_opening_entrance() -> None:
     )
     assert state.mode == "route"
     assert state.turn is not None
-    assert state.turn < -0.4  # opening bearing, not reversed edge +0.8→-0.8 alone wait -0.8 is similar
+    assert (
+        state.turn < -0.4
+    )  # opening bearing, not reversed edge +0.8→-0.8 alone wait -0.8 is similar
     # Explicitly: must follow opening (-0.9 * 0.75 = -0.675), not ignore it.
     assert abs(state.turn - (-0.75 * 0.9)) < 0.05
     assert state.commit_degrees_left < 180.0  # first tick consumed some yaw budget

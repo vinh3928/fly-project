@@ -167,9 +167,7 @@ class JudgementModule:
             novelty = max(novelty, 0.55)
         # Salient devil risks count as something worth remembering even if viz habituated.
         if proposal.risk in ("wall", "toxin", "odor", "fall"):
-            novelty = max(
-                novelty, 0.35 * float(_RISK_SEVERITY.get(str(proposal.risk), 0.4)) + 0.2
-            )
+            novelty = max(novelty, 0.35 * float(_RISK_SEVERITY.get(str(proposal.risk), 0.4)) + 0.2)
 
         severity = float(_RISK_SEVERITY.get(str(proposal.risk), 0.4))
         conf = _clamp(proposal.confidence, 0.0, 1.0)
@@ -214,9 +212,7 @@ class JudgementModule:
             "odor",
             "fall",
         ):
-            if load >= float(cfg.acknowledge_load_min) and (
-                reject >= accept or wisdom >= 0.45
-            ):
+            if load >= float(cfg.acknowledge_load_min) and (reject >= accept or wisdom >= 0.45):
                 defer = max(load, wisdom)
                 acknowledge = (
                     0.4 * curiosity
@@ -288,8 +284,7 @@ class JudgementModule:
         blend = 0.0
         if decision == "accept":
             blend = _clamp(
-                float(cfg.base_blend_weight)
-                + 0.5 * conf * (0.5 + 0.5 * curiosity),
+                float(cfg.base_blend_weight) + 0.5 * conf * (0.5 + 0.5 * curiosity),
                 0.0,
                 float(cfg.max_blend_weight),
             )
@@ -316,9 +311,7 @@ def apply_proposal(goal: np.ndarray, proposal: DevilProposal) -> np.ndarray:
     return g
 
 
-def blend_goals(
-    l1_goal: np.ndarray, proposed: np.ndarray, weight: float
-) -> np.ndarray:
+def blend_goals(l1_goal: np.ndarray, proposed: np.ndarray, weight: float) -> np.ndarray:
     w = _clamp(weight, 0.0, 1.0)
     a = np.asarray(l1_goal, dtype=np.float32).reshape(-1)
     b = np.asarray(proposed, dtype=np.float32).reshape(-1)

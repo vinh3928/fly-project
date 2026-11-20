@@ -95,9 +95,7 @@ class FakeExplorationEnv(FakeFlyEnv):
         self._yaw = float(self._rng.uniform(-np.pi, np.pi))
         angle = float(self._rng.uniform(0, 2 * np.pi))
         radius = self.explore_config.arena_half_extent * 0.85
-        self._sugar = np.asarray(
-            [radius * np.sin(angle), radius * np.cos(angle)], dtype=np.float32
-        )
+        self._sugar = np.asarray([radius * np.sin(angle), radius * np.cos(angle)], dtype=np.float32)
         self._landmarks = []
         for _ in range(self.explore_config.landmark_count):
             self._landmarks.append(

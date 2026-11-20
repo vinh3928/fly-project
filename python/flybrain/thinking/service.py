@@ -65,9 +65,7 @@ class ThinkingService:
         self.experience = experience or LifeExperience.from_config(self.config.priorities)
         self.outcome_memory = outcome_memory or OutcomeMemory()
         self.world_model = world_model
-        self.tendency = tendency or TendencyDrive(
-            TendencyConfig.from_dict(self.config.tendency)
-        )
+        self.tendency = tendency or TendencyDrive(TendencyConfig.from_dict(self.config.tendency))
         self.retrospective_config = RetrospectiveConfig(
             **{
                 k: v
@@ -126,9 +124,7 @@ class ThinkingService:
         cond = stm.signals.get("conditioning_summary")
         if cond:
             draft += f" | {cond}"
-        proposal = propose_critique(
-            self.llm, draft=draft, affect=stm.affect, signals=stm.signals
-        )
+        proposal = propose_critique(self.llm, draft=draft, affect=stm.affect, signals=stm.signals)
         critique = (
             f"Counter: {proposal.reason} (risk={proposal.risk}, "
             f"fwd×{proposal.forward_scale:.2f}, turnΔ={proposal.turn_delta:+.2f})."

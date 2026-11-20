@@ -97,7 +97,9 @@ def hex_triangle_masks(height: int, width: int) -> tuple[np.ndarray, ...]:
     return tuple(masks)
 
 
-def facet_centroid_bearing(facet: int, *, eye: str = "left", eye_bearing_offset: float = 0.2) -> float:
+def facet_centroid_bearing(
+    facet: int, *, eye: str = "left", eye_bearing_offset: float = 0.2
+) -> float:
     """Azimuth in [-1, 1] from triangular facet centroid (pointy-top layout)."""
     i = int(facet) % HEX_FACET_COUNT
     # Centroid angle of facet i (y-up): midway between vertex i and i+1.

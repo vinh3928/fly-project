@@ -382,9 +382,7 @@ def build_interrupt_joint_vec(
         padded[:n] = s[:n]
         s = _l2_normalize(padded)
     sens = _l2_normalize(
-        np.asarray(
-            sensors if sensors is not None else np.zeros(SENSORS_VEC_DIM), dtype=np.float32
-        )
+        np.asarray(sensors if sensors is not None else np.zeros(SENSORS_VEC_DIM), dtype=np.float32)
     )
     if sens.shape[0] != SENSORS_VEC_DIM:
         padded = np.zeros(SENSORS_VEC_DIM, dtype=np.float32)

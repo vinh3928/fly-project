@@ -58,7 +58,9 @@ class NoveltyTracker:
     def __init__(self, config: NoveltyConfig | None = None) -> None:
         self.config = config or NoveltyConfig()
         self._cell_visits: dict[tuple[int, int], int] = {}
-        self.experience = ExperienceNovelty(ExperienceNoveltyConfig.from_dict(self.config.experience))
+        self.experience = ExperienceNovelty(
+            ExperienceNoveltyConfig.from_dict(self.config.experience)
+        )
         self._chem_visits: dict[tuple[int, ...], int] = {}
         self._events: set[str] = set()
         self.exploration_xp: float = 0.0
@@ -83,7 +85,9 @@ class NoveltyTracker:
         size = max(1e-6, float(self.config.grid_cell_size))
         return (int(np.floor(float(pos[0]) / size)), int(np.floor(float(pos[1]) / size)))
 
-    def _hash_vector(self, vec: np.ndarray | None, bins: int, dims: int = 8) -> tuple[int, ...] | None:
+    def _hash_vector(
+        self, vec: np.ndarray | None, bins: int, dims: int = 8
+    ) -> tuple[int, ...] | None:
         if vec is None:
             return None
         arr = np.asarray(vec, dtype=np.float32).reshape(-1)

@@ -37,9 +37,7 @@ def _push(
 ):
     state = t.state()
     for _ in range(n):
-        state = t.observe_physical(
-            position=None, action=action, speed=speed, wall_hazard=wall
-        )
+        state = t.observe_physical(position=None, action=action, speed=speed, wall_hazard=wall)
     return state
 
 
@@ -84,9 +82,7 @@ def test_position_without_change_counts_as_blocked():
     t = _tracker(horizon=3)
     state = t.state()
     for _ in range(4):
-        state = t.observe_physical(
-            position=np.zeros(3), action=FORWARD, wall_hazard=WALL
-        )
+        state = t.observe_physical(position=np.zeros(3), action=FORWARD, wall_hazard=WALL)
     assert state.escaping
 
 
@@ -248,8 +244,6 @@ def test_pipeline_keeps_wall_raw_while_blocked():
 
     place_map()
     assert calls[-1]["unattenuated"] == ()
-    pipe._observe_physical_into(
-        {"vision_cues": {"wall_hazard_raw": WALL}}, None, FORWARD
-    )
+    pipe._observe_physical_into({"vision_cues": {"wall_hazard_raw": WALL}}, None, FORWARD)
     place_map()
     assert calls[-1]["unattenuated"] == ("wall_hazard",)

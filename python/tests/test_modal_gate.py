@@ -123,8 +123,14 @@ def test_slow_drift_accumulates_against_l1_baseline() -> None:
         dim=4,
     )
     gate.observe(np.asarray([0.50, 0, 0, 0], dtype=np.float32), step=0, now_s=0.0)
-    assert gate.observe(np.asarray([0.52, 0, 0, 0], dtype=np.float32), step=1, now_s=1.0).changed is False
-    assert gate.observe(np.asarray([0.54, 0, 0, 0], dtype=np.float32), step=2, now_s=2.0).changed is False
+    assert (
+        gate.observe(np.asarray([0.52, 0, 0, 0], dtype=np.float32), step=1, now_s=1.0).changed
+        is False
+    )
+    assert (
+        gate.observe(np.asarray([0.54, 0, 0, 0], dtype=np.float32), step=2, now_s=2.0).changed
+        is False
+    )
     tripped = gate.observe(np.asarray([0.56, 0, 0, 0], dtype=np.float32), step=3, now_s=3.0)
     assert tripped.changed is True
 

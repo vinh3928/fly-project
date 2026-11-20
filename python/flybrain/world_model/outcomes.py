@@ -134,7 +134,9 @@ def spiritual_growth_score(
         "coherence_neg": 0.2,
         **(weights or {}),
     }
-    nov = float(novelty if novelty is not None else affect.get("novelty", affect.get("exploration", 0.0)))
+    nov = float(
+        novelty if novelty is not None else affect.get("novelty", affect.get("exploration", 0.0))
+    )
     comfort = float(affect.get("comfort", 0.0))
     trust = float(affect.get("trust", 0.0))
     altruism = float(affect.get("altruism", 0.0))
@@ -188,7 +190,9 @@ def label_transition(
     bitter = float(next_signals.get("bitter", 0.0))
     damage = float(next_signals.get("damage", next_affect.get("pain", 0.0)))
     d_comfort = float(next_affect.get("comfort", 0.0)) - float(prev_affect.get("comfort", 0.0))
-    d_survival = float(next_affect.get("survival_risk", 0.0)) - float(prev_affect.get("survival_risk", 0.0))
+    d_survival = float(next_affect.get("survival_risk", 0.0)) - float(
+        prev_affect.get("survival_risk", 0.0)
+    )
     sugar_consumed = float(next_signals.get("sugar_consumed", 0.0)) - float(
         prev_signals.get("sugar_consumed", 0.0)
     )

@@ -88,9 +88,7 @@ class SensorySignals:
     left_eye: np.ndarray  # (1, H, W) or (H, W)
     right_eye: np.ndarray
     raw: np.ndarray
-    smell_vec: np.ndarray = field(
-        default_factory=lambda: np.zeros(SMELL_VEC_DIM, dtype=np.float32)
-    )
+    smell_vec: np.ndarray = field(default_factory=lambda: np.zeros(SMELL_VEC_DIM, dtype=np.float32))
     summary: dict[str, float] = field(default_factory=dict)
 
     def to_jsonable(self) -> dict[str, Any]:
@@ -214,12 +212,16 @@ class SignalBuilder:
             "hunger": max(0.0, min(1.0, hunger)),
             "damage": max(0.0, min(1.0, damage)),
             "instability": max(0.0, instability),
-            "proboscis_contact": float(proboscis[PROBOSCIS_CONTACT_INDEX])
-            if proboscis.size > PROBOSCIS_CONTACT_INDEX
-            else 0.0,
-            "proboscis_extension": float(proboscis[PROBOSCIS_EXTENSION_INDEX])
-            if proboscis.size > PROBOSCIS_EXTENSION_INDEX
-            else 0.0,
+            "proboscis_contact": (
+                float(proboscis[PROBOSCIS_CONTACT_INDEX])
+                if proboscis.size > PROBOSCIS_CONTACT_INDEX
+                else 0.0
+            ),
+            "proboscis_extension": (
+                float(proboscis[PROBOSCIS_EXTENSION_INDEX])
+                if proboscis.size > PROBOSCIS_EXTENSION_INDEX
+                else 0.0
+            ),
             **summary_note,
         }
 

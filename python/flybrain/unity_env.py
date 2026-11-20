@@ -108,7 +108,9 @@ def to_eye_frame(
         chans = [_resize2d(np.asarray(rgb[c], dtype=np.float32)) for c in range(3)]
         out = np.stack(chans, axis=0)
     else:
-        g = _resize2d(np.asarray(gray if gray is not None else np.zeros((size, size), dtype=np.float32)))
+        g = _resize2d(
+            np.asarray(gray if gray is not None else np.zeros((size, size), dtype=np.float32))
+        )
         out = g[None, ...]
 
     if float(out.max()) > 1.5:
@@ -167,7 +169,11 @@ def unpack_unity_observations(
             or (arr.ndim == 1 and flat.size >= vector_dim * 0.9 and flat.size <= vector_dim * 1.1)
         )
         # Prefer exact vector size; visual tensors are 2D/3D.
-        if is_vector and arr.ndim <= 2 and (arr.ndim == 1 or arr.shape[-1] == vector_dim or flat.size == vector_dim):
+        if (
+            is_vector
+            and arr.ndim <= 2
+            and (arr.ndim == 1 or arr.shape[-1] == vector_dim or flat.size == vector_dim)
+        ):
             if flat.size >= vector_dim:
                 vector = flat[:vector_dim].copy()
             else:
@@ -300,12 +306,8 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
             if len(o.shape) == 1 and int(o.shape[0]) > obs_size:
                 obs_size = int(o.shape[0])
         act_size = int(spec.action_spec.continuous_size)
-        self.observation_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(obs_size,), dtype=np.float32
-        )
-        self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(act_size,), dtype=np.float32
-        )
+        self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(obs_size,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(act_size,), dtype=np.float32)
         self._steps = 0
 
     @property

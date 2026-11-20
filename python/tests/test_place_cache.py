@@ -255,9 +255,7 @@ def test_l2_hit_saves_l1_l2_and_neo4j(tmp_path: Path) -> None:
         ent.dirty = False  # avoid prune flush before nearest
     cache._l1.clear()
 
-    third = cache.upsert_place(
-        view, fly_id="fly_a", step=2, walls={"east": {"familiarity": 0.4}}
-    )
+    third = cache.upsert_place(view, fly_id="fly_a", step=2, walls={"east": {"familiarity": 0.4}})
     assert str(third.id) == str(node.id)
     assert third.walls["east"]["familiarity"] == 0.4
     assert cache.stats.l2_hits >= 1

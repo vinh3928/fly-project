@@ -271,7 +271,9 @@ def format_live_step_log(
     else:
         insight = info.get("visual_insight")
         if isinstance(insight, dict) and insight.get("ran") and insight.get("decision") != "ignore":
-            vthink_s = f" vthink={insight.get('decision')}(sal={float(insight.get('salience', 0.0)):.2f})"
+            vthink_s = (
+                f" vthink={insight.get('decision')}(sal={float(insight.get('salience', 0.0)):.2f})"
+            )
     judge_s = ""
     judgement = info.get("judgement")
     if isinstance(judgement, dict) and judgement.get("decision"):
@@ -287,9 +289,7 @@ def format_live_step_log(
             judge_s += f"(eye={float(eye_m):.2f})"
     invest = info.get("investigation")
     if isinstance(invest, dict) and invest.get("remaining") is not None:
-        judge_s += (
-            f" invest={invest.get('kind')}(rem={int(invest.get('remaining', 0))})"
-        )
+        judge_s += f" invest={invest.get('kind')}(rem={int(invest.get('remaining', 0))})"
 
     si_s = ""
     si_dbg = info.get("interrupt_debug")
@@ -434,6 +434,7 @@ def log_live_step(
             if detail:
                 handle.write(detail + "\n")
             handle.flush()
+
 
 def load_mind_config(path: str | Path | None = None) -> dict[str, Any]:
     if path is None:
@@ -713,13 +714,9 @@ class LiveMindPipeline:
         from flybrain.debug.route_path_channel import RoutePathDebugChannel
 
         env_channel = getattr(env, "route_path_channel", None)
-        self.route_path = (
-            env_channel if env_channel is not None else RoutePathDebugChannel()
-        )
+        self.route_path = env_channel if env_channel is not None else RoutePathDebugChannel()
         mind_log_channel = getattr(env, "mind_log_channel", None)
-        self.mind_log = (
-            mind_log_channel if mind_log_channel is not None else MindLogDebugChannel()
-        )
+        self.mind_log = mind_log_channel if mind_log_channel is not None else MindLogDebugChannel()
         self._orient_base: np.ndarray | None = None
         self.visual_novelty = VisualNoveltyTracker(
             self.config.visual_novelty or VisualNoveltyConfig()
@@ -913,7 +910,9 @@ class LiveMindPipeline:
         cfg = self.stimulus_interrupt
         if not cfg.enabled:
             return
-        signals = sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else dict(sensory.summary)
+        signals = (
+            sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else dict(sensory.summary)
+        )
         affect_payload = affect.to_jsonable() if hasattr(affect, "to_jsonable") else dict(affect)
         # Avoid per-tick embed on the motor path. Joint SI pads missing sensors; patch
         # comes from eyes inside evaluate; smell from the antenna vector.
@@ -950,9 +949,7 @@ class LiveMindPipeline:
                 "backend": str(cfg.history_backend),
                 "min_sim": round(float(decision.best_similarity), 4),
                 "scores": {k: round(float(v), 4) for k, v in decision.modality_scores.items()},
-                "baselines": {
-                    k: round(float(v), 4) for k, v in decision.history_baselines.items()
-                },
+                "baselines": {k: round(float(v), 4) for k, v in decision.history_baselines.items()},
                 "novel": list(decision.novel_modalities),
                 "worst_cell": int(decision.patch_worst_cell),
                 "soft_low_load": bool(decision.soft_low_load),
@@ -1056,8 +1053,7 @@ class LiveMindPipeline:
                 )
                 if self.config.console_log:
                     print(
-                        f"si_saved_patch_stm step={self._step} "
-                        f"reason={self._interrupt_reason}",
+                        f"si_saved_patch_stm step={self._step} " f"reason={self._interrupt_reason}",
                         flush=True,
                     )
             except Exception as exc:  # pragma: no cover - DB optional in some runs
@@ -1190,7 +1186,9 @@ class LiveMindPipeline:
             right_eye=None if right_eye is None else np.array(right_eye, copy=True),
             chem_bearings=dict(bearing_fn()) if callable(bearing_fn) else None,
             position=np.asarray(pos_fn(), dtype=np.float32).copy() if callable(pos_fn) else None,
-            chem_vector=np.asarray(chem_fn(), dtype=np.float32).copy() if callable(chem_fn) else None,
+            chem_vector=(
+                np.asarray(chem_fn(), dtype=np.float32).copy() if callable(chem_fn) else None
+            ),
             step=int(self._step),
             sim_time=float(sim_time if sim_time is not None else self._step * 0.05),
         )
@@ -1422,9 +1420,11 @@ class LiveMindPipeline:
             "devil_critique": thought.devil_critique,
             "intent": thought.intent,
             "affect": affect_payload,
-            "vision_cues": place_info.get("vision_cues")
-            if place_info.get("vision_cues") is not None
-            else (cues.to_dict() if cues else None),
+            "vision_cues": (
+                place_info.get("vision_cues")
+                if place_info.get("vision_cues") is not None
+                else (cues.to_dict() if cues else None)
+            ),
             "place": place_info.get("place"),
             "mapped_sensors": place_info.get("mapped_sensors"),
             "curiosity": curiosity_step.curiosity,
@@ -1722,8 +1722,10 @@ class LiveMindPipeline:
         place_info: dict[str, Any],
     ) -> dict[str, Any]:
         """Rebuild signal payload from sensory summary after mapped-sensor feedback."""
-        signal_payload = sensory.to_jsonable() if hasattr(sensory, "to_jsonable") else dict(
-            getattr(sensory, "summary", {}) or {}
+        signal_payload = (
+            sensory.to_jsonable()
+            if hasattr(sensory, "to_jsonable")
+            else dict(getattr(sensory, "summary", {}) or {})
         )
         if place_info.get("vision_cues"):
             signal_payload.update(place_info["vision_cues"])
@@ -1996,7 +1998,9 @@ class LiveMindPipeline:
             self.judgement.record_reject(proposal)
 
         if result.decision == "acknowledge":
-            bearing = float(signals.get("novelty_bearing", signals.get("target_bearing", 0.0)) or 0.0)
+            bearing = float(
+                signals.get("novelty_bearing", signals.get("target_bearing", 0.0)) or 0.0
+            )
             if abs(bearing) < 0.05 and abs(proposal.turn_delta) > 0.05:
                 bearing = float(np.clip(proposal.turn_delta, -1.0, 1.0))
             novelty = float(signals.get("visual_novelty", signals.get("novelty", 0.0)) or 0.0)
@@ -2105,9 +2109,7 @@ class LiveMindPipeline:
                 bearing=float(visual_nov.novelty_bearing),
             )
             info["visual_think_gate"] = gate
-        goal = self.visual_thinker.bias_goal(
-            goal, tick=self._step, wall_hazard=float(wall_hazard)
-        )
+        goal = self.visual_thinker.bias_goal(goal, tick=self._step, wall_hazard=float(wall_hazard))
         info["visual_thinking"] = self.visual_thinker.is_pending
         insight = self.visual_thinker.last_insight
         if insight is not None:
@@ -2254,9 +2256,7 @@ class LiveMindPipeline:
         signal_payload["curiosity"] = curiosity_step.curiosity
         explore_bias = float(curiosity_step.explore_bias)
         if visual_nov is not None and visual_nov.visual_novelty > 0.15:
-            explore_bias = float(
-                np.clip(explore_bias + 0.55 * visual_nov.visual_novelty, 0.0, 1.0)
-            )
+            explore_bias = float(np.clip(explore_bias + 0.55 * visual_nov.visual_novelty, 0.0, 1.0))
         signal_payload["curiosity_drive"] = explore_bias
         signal_payload["explore_bias"] = explore_bias
         signal_payload["novelty"] = curiosity_step.novelty.novelty_score
@@ -2267,13 +2267,13 @@ class LiveMindPipeline:
         signal_payload["force_locomotion"] = bore_pre.force_locomotion
         # Soft-bump affect exploration/novelty for thinking when gate allows.
         affect_payload = affect.to_jsonable()
-        if curiosity_step.gate > 0.05 or (visual_nov is not None and visual_nov.visual_novelty > 0.15):
+        if curiosity_step.gate > 0.05 or (
+            visual_nov is not None and visual_nov.visual_novelty > 0.15
+        ):
             viz_boost = float(visual_nov.visual_novelty) if visual_nov is not None else 0.0
             affect_payload["exploration"] = float(
                 np.clip(
-                    affect_payload.get("exploration", 0.0)
-                    + 0.35 * explore_bias
-                    + 0.4 * viz_boost,
+                    affect_payload.get("exploration", 0.0) + 0.35 * explore_bias + 0.4 * viz_boost,
                     0.0,
                     1.0,
                 )
@@ -2321,9 +2321,11 @@ class LiveMindPipeline:
             "devil_critique": thought.devil_critique,
             "intent": thought.intent,
             "affect": affect_payload,
-            "vision_cues": place_info.get("vision_cues")
-            if place_info.get("vision_cues") is not None
-            else (cues.to_dict() if cues else None),
+            "vision_cues": (
+                place_info.get("vision_cues")
+                if place_info.get("vision_cues") is not None
+                else (cues.to_dict() if cues else None)
+            ),
             "place": place_info.get("place"),
             "mapped_sensors": place_info.get("mapped_sensors"),
             "maturity": self.experience.maturity(),
@@ -2403,11 +2405,7 @@ class LiveMindPipeline:
             )
             goal = self._apply_active_investigation(goal, info)
             route = self._last_route_home if isinstance(self._last_route_home, dict) else None
-            if (
-                route
-                and route.get("mode") in ("route", "scan")
-                and route.get("turn") is not None
-            ):
+            if route and route.get("mode") in ("route", "scan") and route.get("turn") is not None:
                 # Lock motor goal to the remembered path or landmark scan pivot.
                 goal = orient_goal(
                     goal,
@@ -2742,8 +2740,12 @@ class LiveMindPipeline:
                         action = self.motor.act(obs)
                     else:
                         action = action.copy()
-                        action[0] = (1.0 - blend) * float(action[0]) + blend * float(explore_action[0])
-                        action[1] = (1.0 - blend) * float(action[1]) + blend * float(explore_action[1])
+                        action[0] = (1.0 - blend) * float(action[0]) + blend * float(
+                            explore_action[0]
+                        )
+                        action[1] = (1.0 - blend) * float(action[1]) + blend * float(
+                            explore_action[1]
+                        )
                         action[3] = (1.0 - 0.5 * blend) * float(action[3]) + 0.5 * blend * float(
                             explore_action[3]
                         )

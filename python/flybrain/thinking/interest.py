@@ -95,8 +95,12 @@ def frame_similarity(a: np.ndarray | None, b: np.ndarray | None) -> float:
     if aa.shape != bb.shape:
         size = int(min(aa.shape[0], aa.shape[1], bb.shape[0], bb.shape[1], 32))
         size = max(4, size)
-        aa = _resize_square(_to_gray2d(aa) or aa.reshape(-1)[: size * size].reshape(size, size), size)
-        bb = _resize_square(_to_gray2d(bb) or bb.reshape(-1)[: size * size].reshape(size, size), size)
+        aa = _resize_square(
+            _to_gray2d(aa) or aa.reshape(-1)[: size * size].reshape(size, size), size
+        )
+        bb = _resize_square(
+            _to_gray2d(bb) or bb.reshape(-1)[: size * size].reshape(size, size), size
+        )
     # 1 - mean absolute error on [0,1] pixels.
     mae = float(np.mean(np.abs(aa - bb)))
     return _clamp(1.0 - mae, 0.0, 1.0)
@@ -160,9 +164,7 @@ class InterestPoint:
             "hits": self.hits,
             "proposal_risk": self.proposal_risk,
             "has_eyes": self.left_eye is not None or self.right_eye is not None,
-            "eye_shape": None
-            if self.left_eye is None
-            else list(np.asarray(self.left_eye).shape),
+            "eye_shape": None if self.left_eye is None else list(np.asarray(self.left_eye).shape),
             "stimuli_signature": dict(self.stimuli_signature),
         }
 
@@ -338,9 +340,7 @@ class InterestPointStore:
             if sig and point.stimuli_signature:
                 if _stimuli_overlap(sig, point.stimuli_signature) < 0.35:
                     continue
-            score = eye_pair_similarity(
-                left_snap, right_snap, point.left_eye, point.right_eye
-            )
+            score = eye_pair_similarity(left_snap, right_snap, point.left_eye, point.right_eye)
             if score > best:
                 best = score
                 best_point = point
@@ -466,9 +466,7 @@ def _stimuli_overlap(a: dict[str, float], b: dict[str, float]) -> float:
     return float(sum(diffs) / len(diffs))
 
 
-def apply_investigation_goal(
-    goal: np.ndarray, directive: InvestigationDirective
-) -> np.ndarray:
+def apply_investigation_goal(goal: np.ndarray, directive: InvestigationDirective) -> np.ndarray:
     """Bias motor goal toward the deferred interest point."""
     g = np.asarray(goal, dtype=np.float32).reshape(-1).copy()
     if g.size < 5:

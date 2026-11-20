@@ -170,11 +170,7 @@ class ModalChangeGate:
         cls,
         config: ModalGateConfig | dict[str, Any] | None = None,
     ) -> ModalChangeGate:
-        cfg = (
-            config
-            if isinstance(config, ModalGateConfig)
-            else ModalGateConfig.from_dict(config)
-        )
+        cfg = config if isinstance(config, ModalGateConfig) else ModalGateConfig.from_dict(config)
         return cls(
             modality=str(cfg.modality),
             ttl_seconds=float(cfg.ttl_seconds),
@@ -246,8 +242,7 @@ class ModalChangeGate:
 
         refresh = self.refresh_seconds
         due = refresh is not None and (
-            self._last_active_s is None
-            or (t - float(self._last_active_s)) >= float(refresh)
+            self._last_active_s is None or (t - float(self._last_active_s)) >= float(refresh)
         )
         out.active = bool(out.changed or force_open or due)
         if out.changed:

@@ -89,7 +89,9 @@ def test_scheduler_reraises_worker_errors_on_poll():
 def test_scheduler_default_executor_runs_on_background_thread():
     sched = AsyncMindScheduler()
     seen: dict = {}
-    sched.submit(MIND_JOB_THINK, lambda: seen.setdefault("thread", threading.current_thread()), step=0)
+    sched.submit(
+        MIND_JOB_THINK, lambda: seen.setdefault("thread", threading.current_thread()), step=0
+    )
     sched.wait(timeout=5)
     result = sched.poll()
     sched.shutdown()

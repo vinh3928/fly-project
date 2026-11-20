@@ -27,7 +27,13 @@ def test_present_future_stub_survival() -> None:
 def test_composer_clamps_and_survival() -> None:
     result = compose_thought(
         signals={"sugar": 0.8, "bitter": 0.0},
-        affect={"survival_risk": 0.9, "exploration": 0.8, "joy": 0.7, "anger": 0.0, "altruism": 0.1},
+        affect={
+            "survival_risk": 0.9,
+            "exploration": 0.8,
+            "joy": 0.7,
+            "anger": 0.0,
+            "altruism": 0.1,
+        },
         reflection="none",
         present_future={"present": "p", "future_hypothesis": "f"},
         devil_critique="Counter: forward drive without upright stability risks falling.",

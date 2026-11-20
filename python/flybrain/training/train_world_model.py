@@ -40,7 +40,9 @@ def train_world_model(
 ) -> dict[str, float]:
     torch.manual_seed(seed)
     dev = torch.device(device)
-    model = NextStateWorldModel(latent_dim=latent_dim, action_dim=action_dim, hidden_dim=hidden_dim).to(dev)
+    model = NextStateWorldModel(
+        latent_dim=latent_dim, action_dim=action_dim, hidden_dim=hidden_dim
+    ).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Untrained baseline loss on a fixed eval batch

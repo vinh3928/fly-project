@@ -125,9 +125,10 @@ def test_layer1_advanced_weights_move_ranking() -> None:
     _, scored_a, w_a = layer1_quick_scan(signals=signals, affect=affect, experience=advanced)
     assert w_a.spiritual + w_a.altruism > w_y.spiritual + w_y.altruism
     # Values differ under advanced weights for at least one candidate
-    assert any(
-        abs(a.value - b.value) > 1e-4 for a, b in zip(scored_y, scored_a, strict=False)
-    ) or w_a.spiritual > 0.05
+    assert (
+        any(abs(a.value - b.value) > 1e-4 for a, b in zip(scored_y, scored_a, strict=False))
+        or w_a.spiritual > 0.05
+    )
 
 
 def test_layer2_vetoes_undesirable_history() -> None:
@@ -200,7 +201,9 @@ def test_retrospective_labels_and_skips_high_load() -> None:
         fly_id=fly,
         signals={"bitter": 0.0, "wall_hazard": 0.0},
         affect={"survival_risk": 0.2},
-        recent_actions=[{"stm_id": 1, "step": 0, "action_name": "forward", "action": [0.5, 0, 0.5, 0.5, 0]}],
+        recent_actions=[
+            {"stm_id": 1, "step": 0, "action_name": "forward", "action": [0.5, 0, 0.5, 0.5, 0]}
+        ],
     )
     assert ok.ran
     assert exp.labeled_outcomes > labeled_before

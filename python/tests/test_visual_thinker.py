@@ -63,25 +63,39 @@ def test_disabled_never_thinks() -> None:
 
 def test_gate_blocks_low_novelty_wall_and_danger() -> None:
     left, right = _eyes()
-    base = dict(
-        left_eye=left, right_eye=right, new_stimulus=True, bearing=0.4
-    )
+    base = dict(left_eye=left, right_eye=right, new_stimulus=True, bearing=0.4)
     low = _thinker(VisualThinkerConfig(enabled=True, mock=True, min_visual_novelty=0.5))
-    assert low.maybe_think(tick=0, visual_novelty=0.2, wall_hazard=0.0, survival_risk=0.0, **base) == "low_novelty"
+    assert (
+        low.maybe_think(tick=0, visual_novelty=0.2, wall_hazard=0.0, survival_risk=0.0, **base)
+        == "low_novelty"
+    )
 
     wall = _thinker(VisualThinkerConfig(enabled=True, mock=True, max_wall_hazard=0.5))
-    assert wall.maybe_think(tick=0, visual_novelty=0.9, wall_hazard=0.8, survival_risk=0.0, **base) == "wall"
+    assert (
+        wall.maybe_think(tick=0, visual_novelty=0.9, wall_hazard=0.8, survival_risk=0.0, **base)
+        == "wall"
+    )
 
     danger = _thinker(VisualThinkerConfig(enabled=True, mock=True, max_survival_risk=0.5))
-    assert danger.maybe_think(tick=0, visual_novelty=0.9, wall_hazard=0.0, survival_risk=0.9, **base) == "danger"
+    assert (
+        danger.maybe_think(tick=0, visual_novelty=0.9, wall_hazard=0.0, survival_risk=0.9, **base)
+        == "danger"
+    )
 
 
 def test_cooldown_prevents_back_to_back_inspections() -> None:
-    thinker = _thinker(VisualThinkerConfig(enabled=True, mock=True, cooldown_ticks=20, min_visual_novelty=0.4))
+    thinker = _thinker(
+        VisualThinkerConfig(enabled=True, mock=True, cooldown_ticks=20, min_visual_novelty=0.4)
+    )
     left, right = _eyes()
     kwargs = dict(
-        visual_novelty=0.9, new_stimulus=True, wall_hazard=0.0, survival_risk=0.0,
-        left_eye=left, right_eye=right, bearing=0.3,
+        visual_novelty=0.9,
+        new_stimulus=True,
+        wall_hazard=0.0,
+        survival_risk=0.0,
+        left_eye=left,
+        right_eye=right,
+        bearing=0.3,
     )
     assert thinker.maybe_think(tick=0, **kwargs) == "go"
     assert thinker.maybe_think(tick=5, **kwargs) == "cooldown"
@@ -93,8 +107,14 @@ def test_offline_heuristic_approaches_high_novelty() -> None:
     thinker = _thinker(VisualThinkerConfig(enabled=True, mock=True, min_visual_novelty=0.4))
     left, right = _eyes()
     gate = thinker.maybe_think(
-        tick=0, visual_novelty=0.8, new_stimulus=True, wall_hazard=0.0,
-        survival_risk=0.0, left_eye=left, right_eye=right, bearing=-0.6,
+        tick=0,
+        visual_novelty=0.8,
+        new_stimulus=True,
+        wall_hazard=0.0,
+        survival_risk=0.0,
+        left_eye=left,
+        right_eye=right,
+        bearing=-0.6,
     )
     assert gate == "go"
     insight = thinker.last_insight
@@ -111,8 +131,14 @@ def test_llm_client_reply_parsed_and_biases_goal() -> None:
     )
     left, right = _eyes()
     gate = thinker.maybe_think(
-        tick=3, visual_novelty=0.7, new_stimulus=True, wall_hazard=0.1,
-        survival_risk=0.0, left_eye=left, right_eye=right, bearing=-0.7,
+        tick=3,
+        visual_novelty=0.7,
+        new_stimulus=True,
+        wall_hazard=0.1,
+        survival_risk=0.0,
+        left_eye=left,
+        right_eye=right,
+        bearing=-0.7,
     )
     assert gate == "go"
     assert client.calls == 1
@@ -132,8 +158,14 @@ def test_client_error_degrades_gracefully() -> None:
     )
     left, right = _eyes()
     gate = thinker.maybe_think(
-        tick=0, visual_novelty=0.9, new_stimulus=True, wall_hazard=0.0,
-        survival_risk=0.0, left_eye=left, right_eye=right, bearing=0.2,
+        tick=0,
+        visual_novelty=0.9,
+        new_stimulus=True,
+        wall_hazard=0.0,
+        survival_risk=0.0,
+        left_eye=left,
+        right_eye=right,
+        bearing=0.2,
     )
     assert gate == "go"
     insight = thinker.last_insight
@@ -167,7 +199,8 @@ def test_insight_expires_after_ttl() -> None:
 def test_parse_insight_handles_noise_and_bad_json() -> None:
     good = _parse_insight(
         'noise {"decision":"inspect","salience":0.5,"bearing":0.3} tail',
-        fallback_bearing=0.0, tick=1,
+        fallback_bearing=0.0,
+        tick=1,
     )
     assert good.decision == "inspect" and abs(good.bearing - 0.3) < 1e-6
     bad = _parse_insight("no json here", fallback_bearing=0.25, tick=2)

@@ -230,9 +230,7 @@ class HazardConditioning:
 
     def confirmed(self, min_confirmations: int | None = None) -> bool:
         need = int(
-            self.config.judgement_confirmations
-            if min_confirmations is None
-            else min_confirmations
+            self.config.judgement_confirmations if min_confirmations is None else min_confirmations
         )
         if self._confirm_count < max(1, need):
             return False

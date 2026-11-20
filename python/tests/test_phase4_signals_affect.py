@@ -53,7 +53,16 @@ def test_affect_estimator_sugar_and_bitter() -> None:
     builder = SignalBuilder()
     obs = np.zeros(197, dtype=np.float32)
     signals = builder.build(obs)
-    signals.summary.update({"sugar": 0.9, "bitter": 0.0, "energy": 0.9, "hunger": 0.0, "damage": 0.0, "instability": 0.0})
+    signals.summary.update(
+        {
+            "sugar": 0.9,
+            "bitter": 0.0,
+            "energy": 0.9,
+            "hunger": 0.0,
+            "damage": 0.0,
+            "instability": 0.0,
+        }
+    )
     joy_state = AffectEstimator().estimate(signals)
     assert joy_state.scores["joy"] > 0.5
     assert joy_state.scores["anger"] < 0.2

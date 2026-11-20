@@ -35,9 +35,7 @@ class PersonalityTraits:
     wisdom: float = 0.30
 
     def clamped(self) -> PersonalityTraits:
-        return PersonalityTraits(
-            **{name: _clamp01(getattr(self, name)) for name in TRAIT_NAMES}
-        )
+        return PersonalityTraits(**{name: _clamp01(getattr(self, name)) for name in TRAIT_NAMES})
 
     def as_dict(self) -> dict[str, float]:
         return {name: float(getattr(self, name)) for name in TRAIT_NAMES}
@@ -66,9 +64,7 @@ class PersonalityState:
     def snapshot(self) -> PersonalityTraits:
         return PersonalityTraits(**self.traits.as_dict())
 
-    def adjust(
-        self, deltas: dict[str, float], *, source: str = "external"
-    ) -> PersonalityTraits:
+    def adjust(self, deltas: dict[str, float], *, source: str = "external") -> PersonalityTraits:
         applied: dict[str, float] = {}
         for name, delta in deltas.items():
             if name not in TRAIT_NAMES:

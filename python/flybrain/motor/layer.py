@@ -35,7 +35,11 @@ def ensure_locomotion_floor(
     """Keep non-stop goals walking so mind+motor produce visible gait."""
     g = clip_goal(goal)
     # Explicit stop / near-zero command: leave alone.
-    if abs(float(g[0])) <= stop_forward_eps and abs(float(g[1])) <= stop_forward_eps and float(g[4]) < 0.4:
+    if (
+        abs(float(g[0])) <= stop_forward_eps
+        and abs(float(g[1])) <= stop_forward_eps
+        and float(g[4]) < 0.4
+    ):
         return g
     # Feeding with proboscis: allow slow approach but keep some crawl.
     if float(g[4]) >= 0.5:

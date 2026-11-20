@@ -82,12 +82,16 @@ def test_turn_is_clamped_and_fixed_candidates_unchanged() -> None:
     turn, _ = cue_turn(signals)
     assert turn == pytest.approx(CUE_TURN_MAX)
     for name in ("forward", "turn_left", "turn_right", "stop"):
-        np.testing.assert_allclose(steer_candidate(name, _candidate(name), signals), _candidate(name))
+        np.testing.assert_allclose(
+            steer_candidate(name, _candidate(name), signals), _candidate(name)
+        )
 
 
 def test_steering_does_not_mutate_candidate_table() -> None:
     before = _candidate("explore").copy()
-    steer_candidate("explore", _candidate("explore"), {**_HUNGRY, "sugar_smell": 0.2, "sugar_bearing": -1.0})
+    steer_candidate(
+        "explore", _candidate("explore"), {**_HUNGRY, "sugar_smell": 0.2, "sugar_bearing": -1.0}
+    )
     np.testing.assert_allclose(_candidate("explore"), before)
 
 
@@ -110,7 +114,10 @@ def test_layer1_hungry_without_sugar_contact_still_chooses_feed() -> None:
         experience=LifeExperience(),
     )
     assert best.name == "feed"
-    assert scored[0].name == "feed" or {r.name: r for r in scored}["feed"].value >= scored[0].value - 1e-6
+    assert (
+        scored[0].name == "feed"
+        or {r.name: r for r in scored}["feed"].value >= scored[0].value - 1e-6
+    )
 
 
 @pytest.mark.parametrize("bearing", [-0.7, 0.7])

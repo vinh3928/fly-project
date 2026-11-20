@@ -163,9 +163,7 @@ def test_risk_averse_low_curiosity_still_rejects() -> None:
     prop = DevilProposal(
         risk="wall", forward_scale=0.4, turn_delta=0.3, confidence=0.8, reason="wall", ran=True
     )
-    result = judge.evaluate(
-        prop, traits=traits, signals={"wall_hazard": 0.8, "survival_risk": 0.2}
-    )
+    result = judge.evaluate(prop, traits=traits, signals={"wall_hazard": 0.8, "survival_risk": 0.2})
     assert result.decision == "reject"
 
 

@@ -64,14 +64,26 @@ def test_heuristic_wall_hazard_ignores_textured_grass_like_field() -> None:
     assert "wall" not in _stimulus_peaks(mild, {})
     fast = compose_thought(
         signals=mild,
-        affect={"survival_risk": 0.0, "exploration": 0.5, "joy": 0.2, "anger": 0.0, "altruism": 0.0},
+        affect={
+            "survival_risk": 0.0,
+            "exploration": 0.5,
+            "joy": 0.2,
+            "anger": 0.0,
+            "altruism": 0.0,
+        },
         reflection="",
         present_future={"present": "", "future": ""},
         devil_critique="",
     )
     blocked = compose_thought(
         signals={**mild, "wall_hazard": 0.8},
-        affect={"survival_risk": 0.0, "exploration": 0.5, "joy": 0.2, "anger": 0.0, "altruism": 0.0},
+        affect={
+            "survival_risk": 0.0,
+            "exploration": 0.5,
+            "joy": 0.2,
+            "anger": 0.0,
+            "altruism": 0.0,
+        },
         reflection="",
         present_future={"present": "", "future": ""},
         devil_critique="",

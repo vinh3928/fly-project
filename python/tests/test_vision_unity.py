@@ -36,7 +36,9 @@ H = W = 8
 COLUMNS = 4
 
 
-def _write_dataset(root: Path, labels: np.ndarray, frames: np.ndarray, regions: list[str] | None = None) -> Path:
+def _write_dataset(
+    root: Path, labels: np.ndarray, frames: np.ndarray, regions: list[str] | None = None
+) -> Path:
     """Mirror VisionDatasetWriter.cs: frames (N,2,H,W,3) uint8, labels (N,5) in LABEL_COLUMNS order."""
     root.mkdir(parents=True, exist_ok=True)
     n = labels.shape[0]
@@ -48,7 +50,8 @@ def _write_dataset(root: Path, labels: np.ndarray, frames: np.ndarray, regions: 
         rows.append(",".join([region, *[f"{v:g}" for v in labels[i]], *["1"] * COLUMNS]))
     (root / LABELS_FILE).write_text("\n".join(rows) + "\n", encoding="utf-8")
     (root / META_FILE).write_text(
-        json.dumps({"count": n, "width": W, "height": H, "channels": 3, "columns": COLUMNS}), encoding="utf-8"
+        json.dumps({"count": n, "width": W, "height": H, "channels": 3, "columns": COLUMNS}),
+        encoding="utf-8",
     )
     return root
 
@@ -63,7 +66,7 @@ def _learnable_dataset(root: Path, n: int = 96, seed: int = 0) -> Path:
         frames[i] = int(hazard * 255)
         opening = i % 2 == 0
         if opening:
-            frames[i, 1, :, W // 2:, 1] = 255
+            frames[i, 1, :, W // 2 :, 1] = 255
         labels[i] = [hazard, 1 - 2 * hazard, 0.0, 0.5 if opening else 0.0, 0.25 if opening else 0.0]
     return _write_dataset(root, labels, frames)
 
@@ -72,7 +75,9 @@ def test_load_maps_labels_and_keeps_top_first_frames(tmp_path: Path) -> None:
     frames = np.zeros((2, 2, H, W, 3), dtype=np.uint8)
     frames[0, 0, 0, :, 0] = 200  # left eye, top row, red
     labels = np.array([[0.3, 0.4, -0.2, 0.6, 0.5], [0.0, 1.0, 0.0, 0.0, 0.0]], dtype=np.float32)
-    ds = load_unity_vision_dataset(_write_dataset(tmp_path, labels, frames, ["NearWall", "Outside"]))
+    ds = load_unity_vision_dataset(
+        _write_dataset(tmp_path, labels, frames, ["NearWall", "Outside"])
+    )
 
     assert len(ds) == 2
     assert ds.regions == ["NearWall", "Outside"]
@@ -94,9 +99,13 @@ def test_mirror_swaps_eyes_flips_images_and_negates_bearings(tmp_path: Path) -> 
     labels = np.array([[0.3, 0.4, -0.2, 0.6, 0.5]], dtype=np.float32)
     ds = load_unity_vision_dataset(_write_dataset(tmp_path, labels, frames))
 
-    left, right, targets = ds.batch(np.array([0]), rng=np.random.default_rng(0), mirror_prob=1.0, brightness_jitter=0.0)
+    left, right, targets = ds.batch(
+        np.array([0]), rng=np.random.default_rng(0), mirror_prob=1.0, brightness_jitter=0.0
+    )
 
-    assert left[0, 2, :, -1].min() == pytest.approx(1.0)  # came from the right eye, now on the right edge
+    assert left[0, 2, :, -1].min() == pytest.approx(
+        1.0
+    )  # came from the right eye, now on the right edge
     assert right.max() == 0.0
     assert targets[0, CUE_NAMES.index("opening_bearing")] == pytest.approx(-0.6)
     assert targets[0, CUE_NAMES.index("turn_bias")] == pytest.approx(0.2)
@@ -104,7 +113,9 @@ def test_mirror_swaps_eyes_flips_images_and_negates_bearings(tmp_path: Path) -> 
 
 
 def test_load_rejects_truncated_frames(tmp_path: Path) -> None:
-    root = _write_dataset(tmp_path, np.zeros((2, 5), np.float32), np.zeros((2, 2, H, W, 3), np.uint8))
+    root = _write_dataset(
+        tmp_path, np.zeros((2, 5), np.float32), np.zeros((2, 2, H, W, 3), np.uint8)
+    )
     (root / FRAMES_FILE).write_bytes(b"\x00" * 10)
     with pytest.raises(ValueError):
         load_unity_vision_dataset(root)
@@ -147,7 +158,12 @@ def test_unity_training_learns_and_saves(tmp_path: Path) -> None:
     root = _learnable_dataset(tmp_path / "ds", n=160)
     ckpt = tmp_path / "vh.pt"
     metrics = train_vision_head_unity(
-        dataset_dir=root, epochs=40, batch_size=32, learning_rate=3e-3, val_fraction=0.25, checkpoint_path=ckpt
+        dataset_dir=root,
+        epochs=40,
+        batch_size=32,
+        learning_rate=3e-3,
+        val_fraction=0.25,
+        checkpoint_path=ckpt,
     )
     assert ckpt.exists()
     assert metrics["samples"] == 160
@@ -184,23 +200,33 @@ def test_on_epoch_reports_each_epoch_with_validation(tmp_path: Path) -> None:
     root = _learnable_dataset(tmp_path / "ds", n=16)
     seen: list[tuple[int, dict[str, float]]] = []
     train_vision_head_unity(
-        dataset_dir=root, epochs=3, batch_size=8, val_fraction=0.25, on_epoch=lambda e, m: seen.append((e, m))
+        dataset_dir=root,
+        epochs=3,
+        batch_size=8,
+        val_fraction=0.25,
+        on_epoch=lambda e, m: seen.append((e, m)),
     )
     assert [e for e, _ in seen] == [1, 2, 3]
     assert all("loss" in m and "mae_wall_hazard" in m for _, m in seen)
 
 
 def test_cue_turn_steers_toward_opening() -> None:
-    turn, source = cue_turn({"opening_strength": 0.3, "opening_bearing": 0.5, "energy": 1.0, "hunger": 0.0})
+    turn, source = cue_turn(
+        {"opening_strength": 0.3, "opening_bearing": 0.5, "energy": 1.0, "hunger": 0.0}
+    )
     assert source == "opening"
     assert turn == pytest.approx(OPENING_TURN_GAIN * 0.5)
 
 
 def test_cue_turn_prefers_novelty_and_ignores_weak_openings() -> None:
     sated = {"energy": 1.0, "hunger": 0.0}
-    _, source = cue_turn({**sated, "opening_strength": 0.3, "opening_bearing": 0.5, "visual_novelty": 0.5})
+    _, source = cue_turn(
+        {**sated, "opening_strength": 0.3, "opening_bearing": 0.5, "visual_novelty": 0.5}
+    )
     assert source == "novelty"
-    _, source = cue_turn({**sated, "opening_strength": 0.05, "opening_bearing": 0.5, "turn_bias": 0.3})
+    _, source = cue_turn(
+        {**sated, "opening_strength": 0.05, "opening_bearing": 0.5, "turn_bias": 0.3}
+    )
     assert source == "wall"
 
 
@@ -246,7 +272,9 @@ def test_live_mind_labels_place_outside_from_opening_cue() -> None:
             max_steps=1,
             llm_mock=True,
             fly_id="fly_outside_label",
-            place_graph=PlaceGraphConfig(enabled=True, backend="in_memory", cache={"enabled": False}),
+            place_graph=PlaceGraphConfig(
+                enabled=True, backend="in_memory", cache={"enabled": False}
+            ),
         ),
     )
     try:

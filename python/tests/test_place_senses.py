@@ -103,7 +103,10 @@ def test_senses_vector_order_stable() -> None:
 
 def test_mostly_open_view_is_labelled_outside() -> None:
     assert infer_place_label({"opening_strength": OUTSIDE_OPENING_MIN, "odor": 0.3}) == "outside"
-    assert infer_place_label({"opening_strength": OUTSIDE_OPENING_MIN - 0.01, "odor": 0.3}) == "odor_plume"
+    assert (
+        infer_place_label({"opening_strength": OUTSIDE_OPENING_MIN - 0.01, "odor": 0.3})
+        == "odor_plume"
+    )
     assert infer_place_label({"opening_strength": 0.9, "sugar": 0.3}) == "puddle"
 
 
@@ -125,7 +128,9 @@ def test_vision_place_outside_the_box_is_labelled_outside() -> None:
     )
     view = np.zeros(PATCH_VEC_DIM, dtype=np.float32)
     view[3] = 1.0
-    report = fb.sense(raw={"wall_hazard": 0.0, "opening_strength": 0.95, "odor": 0.2}, view_vec=view, step=0)
+    report = fb.sense(
+        raw={"wall_hazard": 0.0, "opening_strength": 0.95, "odor": 0.2}, view_vec=view, step=0
+    )
     assert report.label == "outside"
     assert report.place is not None and report.place.props["label"] == "outside"
     assert "opening_strength" not in report.readings  # stored as a detail, never attenuated

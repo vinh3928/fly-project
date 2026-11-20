@@ -132,7 +132,9 @@ def test_default_config_uses_fused_latent_only() -> None:
 
 def test_tracker_scores_experience_novelty() -> None:
     tracker = NoveltyTracker(
-        NoveltyConfig(experience_weight=0.6, experience=dict(dims=4, warmup=3, knn=2, recent_exclude=0))
+        NoveltyConfig(
+            experience_weight=0.6, experience=dict(dims=4, warmup=3, knn=2, recent_exclude=0)
+        )
     )
     rng = np.random.default_rng(4)
     for _ in range(30):

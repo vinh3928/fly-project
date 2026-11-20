@@ -183,7 +183,9 @@ def run_retrospective(
             next_signals=nxt.signals,
             next_affect=nxt.affect,
         )
-        entry = LabeledOutcome(stm_id=nxt.id, action_name=action_name, label=label, embedding=nxt.embedding)
+        entry = LabeledOutcome(
+            stm_id=nxt.id, action_name=action_name, label=label, embedding=nxt.embedding
+        )
         labeled.append(entry)
         outcome_memory.add(entry.to_dict())
         experience.record_label(1)

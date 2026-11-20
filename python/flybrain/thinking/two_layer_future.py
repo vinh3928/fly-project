@@ -294,7 +294,9 @@ def _utilities_from_state(
     survival = float(affect.get("survival_risk", 0.0))
     damage = float(signals.get("damage", affect.get("pain", 0.0)))
     survival_u = float(
-        np.clip(0.55 * energy + 0.35 * (1.0 - survival) + 0.1 * (1.0 - bitter) - 0.2 * damage, 0.0, 1.0)
+        np.clip(
+            0.55 * energy + 0.35 * (1.0 - survival) + 0.1 * (1.0 - bitter) - 0.2 * damage, 0.0, 1.0
+        )
     )
     altruism_u = float(np.clip(affect.get("altruism", 0.0), 0.0, 1.0))
     spiritual_u = spiritual_growth_score(
@@ -342,7 +344,9 @@ def score_candidate(
         z = _latent_from_embedding(embedding, latent_dim)
         with torch.no_grad():
             z_t = torch.as_tensor(z, dtype=torch.float32).unsqueeze(0)
-            a_t = torch.as_tensor(action[: world_model.action_dim], dtype=torch.float32).unsqueeze(0)
+            a_t = torch.as_tensor(action[: world_model.action_dim], dtype=torch.float32).unsqueeze(
+                0
+            )
             z_next = world_model(z_t, a_t).squeeze(0).numpy()
         delta = float(np.linalg.norm(z_next - z))
         learning_progress = max(learning_progress, float(np.clip(delta / (1.0 + delta), 0.0, 1.0)))
@@ -441,7 +445,10 @@ def layer1_quick_scan(
     survival_risk = float(affect.get("survival_risk", 0.0))
     weights = experience.priority_weights(survival_risk=survival_risk)
     peaks = _stimulus_peaks(signals, affect, stimulus_thresholds)
-    pool = [(name, steer_candidate(name, action, signals)) for name, action in (candidates or _CANDIDATES)]
+    pool = [
+        (name, steer_candidate(name, action, signals))
+        for name, action in (candidates or _CANDIDATES)
+    ]
     maturity = float(experience.maturity())
     safe_mode = TendencyDrive.is_safe_mode(signals, peaks)
     # Inject into signals for score_candidate (avoid threading many kwargs).
@@ -647,7 +654,9 @@ def predict_present_future(
         f"weights={weights.as_dict()}; "
         f"{'override: ' + reason if overridden else 'confirm: ' + reason}."
     )
-    conf = float(np.clip(0.35 + 0.4 * float(chosen.improves) + 0.2 * experience.maturity(), 0.1, 0.95))
+    conf = float(
+        np.clip(0.35 + 0.4 * float(chosen.improves) + 0.2 * experience.maturity(), 0.1, 0.95)
+    )
     if overridden:
         conf = float(np.clip(conf + 0.05, 0.1, 0.95))
 

@@ -818,9 +818,7 @@ def test_deep_thought_uses_faster_mind_interval() -> None:
 
 def test_passive_smell_gate_samples_on_interval_only() -> None:
     gate = PassiveSmellGate(interval=4, change_min=0.05, refresh_ms=500.0)
-    sampled = [
-        gate.observe(_smell(odor_l=0.5), step=step, now_ms=0.0).sampled for step in range(8)
-    ]
+    sampled = [gate.observe(_smell(odor_l=0.5), step=step, now_ms=0.0).sampled for step in range(8)]
     assert sampled == [True, False, False, False, True, False, False, False]
 
 

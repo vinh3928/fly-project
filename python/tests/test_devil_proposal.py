@@ -205,7 +205,9 @@ def test_propose_critique_requests_json_schema() -> None:
 
 def test_propose_critique_tolerates_client_without_response_format() -> None:
     prop = propose_critique(
-        _LegacyClient('{"risk":"fall","forward_scale":0.2,"turn_delta":0,"confidence":0.4,"reason":"r"}'),
+        _LegacyClient(
+            '{"risk":"fall","forward_scale":0.2,"turn_delta":0,"confidence":0.4,"reason":"r"}'
+        ),
         draft="d",
         affect={},
         signals={},
