@@ -12,7 +12,7 @@ import json
 import os
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -293,8 +293,8 @@ class PlaceNode:
     view_vec: np.ndarray
     walls: dict[str, dict[str, Any]] = field(default_factory=default_walls)
     props: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -322,8 +322,8 @@ class PlaceNode:
             view_vec=encode_place_view(vec, max(PATCH_VEC_DIM, int(vec.size) or PATCH_VEC_DIM)),
             walls=_normalize_walls(raw.get("walls")),
             props=dict(raw.get("props") or {}),
-            created_at=created or datetime.now(UTC),
-            updated_at=updated or datetime.now(UTC),
+            created_at=created or datetime.now(timezone.utc),
+            updated_at=updated or datetime.now(timezone.utc),
         )
 
 
@@ -622,7 +622,7 @@ class InMemoryPlaceGraph:
             if sim > best_sim:
                 best_sim = sim
                 best = node
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         if best is not None and best_sim >= float(match_min):
             if walls is not None:
                 best.walls = _normalize_walls({**best.walls, **walls})
@@ -658,7 +658,7 @@ class InMemoryPlaceGraph:
         step: int | None = None,
     ) -> PlaceNode:
         """Always allocate a new Place (ignores view lookalikes)."""
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         node = PlaceNode(
             id=self._next_id,
             fly_id=fly_id,
@@ -692,7 +692,7 @@ class InMemoryPlaceGraph:
             node.props.update(props)
         if step is not None:
             node.props["last_step"] = int(step)
-        node.updated_at = datetime.now(UTC)
+        node.updated_at = datetime.now(timezone.utc)
         return node
 
     def get(self, place_id: int | str) -> PlaceNode | None:
@@ -748,7 +748,7 @@ class InMemoryPlaceGraph:
         if extra:
             wall.update(extra)
         node.walls[d] = wall
-        node.updated_at = datetime.now(UTC)
+        node.updated_at = datetime.now(timezone.utc)
         return node
 
     def upsert_adjacent(
@@ -1377,7 +1377,7 @@ class Neo4jPlaceGraph:
             return value
         if isinstance(value, str) and value:
             return datetime.fromisoformat(value)
-        return datetime.now(UTC)
+        return datetime.now(timezone.utc)
 
     def _record_to_node(self, record: Any) -> PlaceNode:
         walls_raw = record.get("walls") or []
@@ -1524,7 +1524,7 @@ class Neo4jPlaceGraph:
         props: dict[str, Any],
         created_at: str | None = None,
     ) -> PlaceNode:
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         wall_rows: list[dict[str, Any]] = []
         for direction in WALL_DIRS:
             wall = dict(walls[direction])
@@ -1731,7 +1731,7 @@ class Neo4jPlaceGraph:
         prop_map = dict(props or {})
         if step is not None:
             prop_map["last_step"] = int(step)
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         rows = self._query(
             """
             MATCH (src:Place {place_id: $src_id})

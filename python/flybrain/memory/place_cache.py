@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -41,7 +41,7 @@ def _now() -> float:
 
 
 def _utc_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass
@@ -367,7 +367,7 @@ class CachedPlaceGraph:
             walls=_normalize_walls({**node.walls, **(walls or {})}),
             props={**dict(node.props), **prop_map},
             created_at=node.created_at,
-            updated_at=datetime.now(UTC),
+            updated_at=datetime.now(timezone.utc),
         )
 
     # --- PlaceGraphStore API ---------------------------------------------------
@@ -512,7 +512,7 @@ class CachedPlaceGraph:
             return self._persist_all_layers(updated, flush_neo4j=True, now=now)
 
         place_id = str(uuid4())
-        created = datetime.now(UTC)
+        created = datetime.now(timezone.utc)
         fresh = PlaceNode(
             id=place_id,
             fly_id=fly_id,
@@ -545,8 +545,8 @@ class CachedPlaceGraph:
             view_vec=vec,
             walls=_normalize_walls(walls),
             props=prop_map,
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         return self._persist_all_layers(fresh, flush_neo4j=True, now=now)
 
@@ -617,7 +617,7 @@ class CachedPlaceGraph:
         if extra:
             wall.update(extra)
         node.walls[direction] = wall
-        node.updated_at = datetime.now(UTC)
+        node.updated_at = datetime.now(timezone.utc)
         if l1_hot:
             return self._put_l1_only(node, dirty=True, now=now)
         return self._persist_all_layers(node, flush_neo4j=True, now=now)

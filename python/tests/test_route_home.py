@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -969,7 +969,7 @@ def test_graph_food_prefers_first_experience_over_later_smell() -> None:
     from datetime import datetime, timedelta
 
     g = InMemoryPlaceGraph()
-    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
     first = g.create_place(
         _view(1),
         fly_id="fly_a",

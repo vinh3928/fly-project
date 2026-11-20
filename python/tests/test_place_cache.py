@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +70,7 @@ class FakeNeo4jPlaceGraph:
         created_at: str | None = None,
     ) -> PlaceNode:
         self.save_calls += 1
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         created = now
         if created_at:
             try:

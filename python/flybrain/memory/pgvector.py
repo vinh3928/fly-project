@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Literal, Protocol
 
 import numpy as np
@@ -129,7 +129,7 @@ class StmRecord:
     joint_vec: np.ndarray = field(
         default_factory=lambda: np.zeros(INTERRUPT_JOINT_VEC_DIM, dtype=np.float32)
     )
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass
@@ -140,7 +140,7 @@ class ThoughtRecord:
     devil_critique: str
     refined_thought: str
     intent: dict[str, Any]
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ShortTermMemory(Protocol):
