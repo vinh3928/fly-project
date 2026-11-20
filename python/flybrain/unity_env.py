@@ -231,6 +231,20 @@ class UnityFlyConfig:
     vision_size: int = DEFAULT_VISION_SIZE
 
 
+def resolve_unity_file_name(config: UnityFlyConfig) -> str | None:
+    """Pick the ML-Agents ``file_name``: explicit path, Editor attach, or build fallback.
+
+    ``editor_connect=True`` keeps ``None`` so the open Unity Editor is used — never
+    auto-launch ``builds/FlyChamber.*``.
+    """
+    if config.file_name is not None:
+        return config.file_name
+    if config.editor_connect:
+        return None
+    build = default_build_path()
+    return str(build) if build is not None else None
+
+
 class UnityFlyEnv(gym.Env if gym is not None else object):
     """Gymnasium wrapper around ``mlagents_envs.UnityEnvironment``.
 
@@ -257,10 +271,7 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
             ) from exc
 
         self.config = config or UnityFlyConfig()
-        file_name = self.config.file_name
-        if file_name is None and not self.config.editor_connect:
-            build = default_build_path()
-            file_name = str(build) if build is not None else None
+        file_name = resolve_unity_file_name(self.config)
 
         self._engine_channel = EngineConfigurationChannel()
         from flybrain.debug.mind_log_channel import MindLogDebugChannel

@@ -2,27 +2,27 @@
 
 from __future__ import annotations
 
-from flybrain.unity_env import UnityFlyConfig, default_build_path
+from pathlib import Path
+
+from flybrain.unity_env import UnityFlyConfig, resolve_unity_file_name
 
 
-def test_editor_connect_skips_build_fallback() -> None:
-    """UnityFlyEnv used to replace file_name=None with the standalone build path."""
-    assert default_build_path() is not None  # repo has a build; that's what caused the bug
+def test_editor_connect_skips_build_fallback(monkeypatch, tmp_path: Path) -> None:
+    """Even when a standalone build exists, editor_connect must keep file_name=None."""
+    fake_build = tmp_path / "FlyChamber.app"
+    fake_build.mkdir()
+    monkeypatch.setattr("flybrain.unity_env.default_build_path", lambda: fake_build)
 
-    cfg = UnityFlyConfig(file_name=None, editor_connect=True)
-    file_name = cfg.file_name
-    if file_name is None and not cfg.editor_connect:
-        build = default_build_path()
-        file_name = str(build) if build is not None else None
-    assert file_name is None
+    editor = UnityFlyConfig(file_name=None, editor_connect=True)
+    assert resolve_unity_file_name(editor) is None
 
-    cfg_build = UnityFlyConfig(file_name=None, editor_connect=False)
-    file_name = cfg_build.file_name
-    if file_name is None and not cfg_build.editor_connect:
-        build = default_build_path()
-        file_name = str(build) if build is not None else None
-    assert file_name is not None
-    assert "FlyChamber" in file_name
+    build = UnityFlyConfig(file_name=None, editor_connect=False)
+    resolved = resolve_unity_file_name(build)
+    assert resolved is not None
+    assert "FlyChamber" in resolved
+
+    explicit = UnityFlyConfig(file_name="/custom/player", editor_connect=True)
+    assert resolve_unity_file_name(explicit) == "/custom/player"
 
 
 def test_editor_default_port_is_5004() -> None:
@@ -41,8 +41,6 @@ def test_editor_default_port_is_5004() -> None:
 
 def test_editor_connect_instructions_are_not_inverted() -> None:
     """Regression: docs/script used to say wait for unity_env_ready before Play."""
-    from pathlib import Path
-
     script = Path(__file__).resolve().parents[1] / "scripts" / "run_live_mind.py"
     text = script.read_text(encoding="utf-8")
     assert "Do NOT wait for unity_env_ready first" in text
