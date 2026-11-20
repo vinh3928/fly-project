@@ -6,43 +6,69 @@ This repository is an **embodied fly-inspired learning simulation**, not a biolo
 
 ## Status
 
-**Phases 0–7 are complete** (foundation through two-layer next-state / low-load retrospective).
+**Phases 0–9 are complete** (foundation through Architecture B motor layer). Next: Phase 10 (simplified flight).
 
-- Unity 6 project with chamber, fly body, sensors, motors, and ML-Agents agent wiring
-- Deterministic seed resets, physics stability monitor, episode telemetry
-- Balance + tripod gait + root locomotion (stand / walk / turn / recover)
-- Synchronized multimodal recording (joints/contacts/taste/odor/pose/vision) + Python replay
-- Multimodal mind pipeline: affective embeddings → pgvector STM → thinking (+ devil’s advocate)
-- Hybrid visual navigation: recurrent vision head + FakeVisualNavEnv + Unity VisualTarget arena
-- Taste/homeostasis food-search: FakeFoodSearchEnv + consume/aversion via mind pipeline
-- Two-layer present/future (priority scan + outcome reflection) with low-load retrospective
-- Python `flybrain` package with encoders, world model, curiosity, and policy modules
-- FakeFlyEnv smoke test + CI
-- Standalone player build (`./scripts/build_unity_player.sh`) and Python launch
-  (`python -m scripts.launch_unity`)
+| Area             | What’s in                                                                         |
+| ---------------- | --------------------------------------------------------------------------------- |
+| Simulation       | Unity 6 chamber + outside world, six-leg body, sensors, ML-Agents agent           |
+| Locomotion       | Balance, tripod gait, root locomotion; mind goals → motor layer every tick        |
+| Sensing / record | Vision (hex eyes), proprioception, taste, odor, pose; synced episode logs         |
+| Mind             | Affective embeddings → pgvector STM → async thinking + devil’s advocate           |
+| Place memory     | Neo4j place graph (walls/senses) with L1/L2 cache; `route_home` when hungry       |
+| Learning         | Curiosity / novelty, homeostasis, next-state world model, visual nav, food search |
+| Viz              | Display 1 overview, Display 2 fly-follow cam, Display 3 mind/deep-thought log     |
+| Tooling          | Fake envs, Phase 0–8 deterministic benchmark, CI, standalone player build         |
 
-Next: Phase 10 (simplified flight). Phase 9 learned locomotion (architecture B) is complete.
+Flight is deferred until walking, sensing, recording, and learning stay stable.
 
-Flight is intentionally deferred until walking, sensing, recording, and learning are stable.
+## Performance
+
+With Unity live: the bottleneck is Unity’s 20 Hz Academy decision tick (env.step waits for the next decision). Python can run hundreds–thousands of fake steps/sec, so the sim is paced by Unity, not by the mind loop.
+
+**Designed rates** (Unity / mind config):
+
+| Domain                      | Rate                                                                |
+| --------------------------- | ------------------------------------------------------------------- |
+| Unity physics               | 200 Hz (`Fixed Timestep` 0.005 s)                                   |
+| Agent decision / motor tick | 20 Hz (`decision_hz` in `mind.yaml`)                                |
+| Vision capture              | 30 Hz                                                               |
+| Sensor recording            | 50 Hz                                                               |
+| Mind think                  | async worker (default); or every `mind_interval` steps in sync mode |
+
+At **20 Hz decision**, 1 simulated minute ≈ **1,200 steps**; 10 minutes ≈ **12,000 steps**.
+
+**Measured on a standard Apple MacBook Pro (M1 Pro, 32 GB)** — FakeFlyEnv, no Unity graphics, local Neo4j/pgvector when noted, mock or background Ollama devil:
+
+| Mode                                     | Approx. decision throughput | vs 20 Hz realtime |
+| ---------------------------------------- | --------------------------- | ----------------- |
+| Async mind + in-memory place/STM         | ~3,000–4,000 Hz             | ~150–200×         |
+| Async mind + Neo4j (L1 cache) + pgvector | ~1,500 Hz                   | ~75×              |
+| Sync mind, `mind_interval=4`, in-memory  | ~500–700 Hz                 | ~25–35×           |
+
+So the Python mind loop is not the bottleneck for realtime on this class of laptop. With **Unity Editor / player**, the loop is paced by Academy decisions at **20 Hz**; an M1/M2/M3 MacBook Pro typically holds that realtime target when `async_mind` is on and the devil LLM runs in the background (`llm.background: true`). Use `--realtime` on fake runs to pace wall-clock to 20 Hz.
+
+Throughput drops when thoughts block the motor path: sync mind with a live local LLM, vision VL calls, or cold Neo4j/pgvector without cache. Numbers vary with thermal state, Docker, and model choice — treat the table as order-of-magnitude, not a guarantee.
 
 ## Technology stack
 
 | Layer      | Tools                                                                      |
 | ---------- | -------------------------------------------------------------------------- |
-| Simulation | Unity 6, C#, Unity Physics, ArticulationBody, ML-Agents                    |
-| Learning   | Python 3.11+, PyTorch, NumPy, Gymnasium-compatible wrappers                |
-| Data       | Parquet, JSON/JSONL, MP4/image sequences, PyTorch checkpoints              |
+| Simulation | Unity 6, C#, Unity Physics, ML-Agents 4.x                                  |
+| Learning   | Python 3.10+, PyTorch, NumPy, Gymnasium-compatible wrappers                |
+| Memory     | PostgreSQL + pgvector (STM), Neo4j Community (place graph)                 |
+| Data       | Parquet, JSON/JSONL, image sequences, PyTorch checkpoints                  |
 | Tooling    | Git LFS, Docker, Unity Test Framework, Pytest, Ruff, Black, GitHub Actions |
 
 ## Repository layout
 
 ```text
 fly-project/
-├── unity/          # Unity simulation
-├── python/         # flybrain training package
+├── unity/          # Unity simulation (Chamber + FlyBoot scenes)
+├── python/         # flybrain package, configs, tests, scripts
 ├── data/           # experiments, checkpoints, exports
-├── docker/         # training containers
-├── docs/           # architecture and phase docs
+├── docker/         # pgvector + Neo4j for mind memory
+├── docs/           # architecture, phases, Unity setup
+├── scripts/        # build player, EditMode tests, ML-Agents venv
 └── .github/        # CI workflows
 ```
 
@@ -50,9 +76,9 @@ fly-project/
 
 ### Prerequisites
 
-- Unity 6 (6000.x) — ML-Agents package is listed in `unity/Packages/manifest.json`
-- Python 3.10+ (main package); **Python 3.10** for the ML-Agents launch bridge
-- Docker (optional, for reproducible training)
+- Unity 6 (6000.x) — ML-Agents is listed in `unity/Packages/manifest.json`
+- Python 3.10+ for `flybrain`; **Python 3.10** for the ML-Agents launch bridge (`.venv-mlagents`)
+- Docker (optional; needed for real pgvector / Neo4j)
 
 ### Python setup
 
@@ -60,18 +86,50 @@ fly-project/
 cd python
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,mind]"
 ```
 
-Command to run python in /python.
-.venv-mlagents/bin/python -m scripts.run_live_mind --editor --continuous --mind-interval 4
+Optional ML-Agents bridge (Unity launch / live mind against Editor or player):
+
+```bash
+# from repo root
+./scripts/setup_mlagents_venv.sh
+```
 
 ### Unity setup (interactive chamber)
 
 1. Open `unity/` in Unity Hub (Unity 6).
 2. Wait for package resolution.
 3. **Tools → Fly → Setup Chamber Scene** (creates/refreshes `Assets/Scenes/Chamber.unity`).
-4. Press **Play** to view the chamber, fly, and legs.
+4. Press **Play**. Use the Game tab **Display** dropdown for overview (1), follow cam (2), or mind log (3).
+
+More detail: [docs/unity-setup.md](docs/unity-setup.md).
+
+### Live mind (main loop)
+
+Start memory services (optional for in-memory tests; required for real STM / place graph):
+
+```bash
+docker compose -f docker/docker-compose.mind.yml up -d
+```
+
+**Fake env** (no Unity):
+
+```bash
+cd python && source .venv/bin/activate
+python -m scripts.run_live_mind --fake --steps 80
+```
+
+**Unity Editor** (Play `Chamber.unity` with walking demo off, then):
+
+```bash
+cd python
+../.venv-mlagents/bin/python -m scripts.run_live_mind --editor --continuous --mind-interval 4
+# or, after activating the mlagents venv:
+# source .venv-mlagents/bin/activate && python -m scripts.run_live_mind --editor --continuous --mind-interval 4
+```
+
+Useful variants: `--fake-visual-nav`, `--fake-food-search`, `--fake-explore`, `--fake-locomotion`, `--sync-mind`, `--no-curiosity`. Config: `python/configs/mind.yaml`.
 
 ## Test locally
 
@@ -83,9 +141,17 @@ source .venv/bin/activate
 pytest
 ```
 
-Expect all tests to pass.
+### 2. Phase 0–8 deterministic benchmark (fake envs)
 
-### 2. Unity EditMode tests (Phase 1)
+```bash
+cd python
+export PYTHONHASHSEED=0
+python -m scripts.run_phase_benchmark --check --self-check
+```
+
+After intentional metric changes: `python -m scripts.run_phase_benchmark --write`.
+
+### 3. Unity EditMode tests
 
 **Close the Unity Editor first** if the project is open.
 
@@ -93,83 +159,55 @@ Expect all tests to pass.
 ./scripts/run_unity_editmode_tests.sh
 ```
 
-### 3. Unity ↔ Python launch (Phase 0)
+### 4. Unity ↔ Python launch
 
-**Close the Unity Editor first** — batch builds cannot open a project that is already open.
+**Close the Unity Editor first** — batch builds cannot open a locked project.
 
 ```bash
-cd /path/to/fly-project
+./scripts/setup_mlagents_venv.sh   # once
+./scripts/build_unity_player.sh    # → builds/FlyChamber.app
 
-# One-time: ML-Agents Python 3.10 env
-./scripts/setup_mlagents_venv.sh
-
-# Build standalone player → builds/FlyChamber.app
-./scripts/build_unity_player.sh
-
-# Launch player and exchange one observation/action
 source python/.venv-mlagents/bin/activate
 cd python
 python -m scripts.launch_unity
 ```
 
-Expect:
+Expect `unity_launch_ok` with `obs_shape=(197,)` and `action_shape=(5,)`.  
+Training player uses `FlyBoot.unity`; `Chamber.unity` is the interactive editor scene.
 
-```text
-unity_launch_ok
-obs_shape=(197,) action_shape=(5,)
-```
+Editor-only (no rebuild): Play `FlyBoot` or `Chamber`, then `python -m scripts.launch_unity --editor`.
 
-The training player uses `Assets/Scenes/FlyBoot.unity` (minimal ML-Agents agent).
-`Chamber.unity` remains the interactive editor scene.
-
-### 3. Optional — Editor play mode (no rebuild)
-
-1. Open `unity/` in Unity Hub.
-2. Open `Assets/Scenes/FlyBoot.unity` (or `Chamber.unity` for visuals).
-3. Press **Play**.
-4. In another terminal:
+### 5. Optional — Fake env smoke / Docker
 
 ```bash
-source python/.venv-mlagents/bin/activate
-cd python
-python -m scripts.launch_unity --editor
-```
-
-### 4. Optional — Fake env smoke (no Unity)
-
-```bash
-cd python
-source .venv/bin/activate
+cd python && source .venv/bin/activate
 python -m scripts.smoke_exchange
-```
 
-### 5. Optional — Docker
-
-```bash
+# from repo root
 docker build -f docker/Dockerfile -t flybrain:latest .
 docker run --rm -v "$(pwd)/data:/data" flybrain:latest pytest
 ```
-
-More detail: [docs/unity-setup.md](docs/unity-setup.md), [docs/phases.md](docs/phases.md).
 
 ## Development phases
 
 See [docs/phases.md](docs/phases.md) for exit criteria. Recommended order:
 
-1. Chamber and deterministic experiments
-2. Passive fly body
-3. Articulated legs and hand-coded walking
-4. Sensor recording
-5. Multimodal mind pipeline (STM + thinking)
-6. Visual navigation (hybrid vision head + arena)
-7. Taste and homeostasis (food-search)
-8. Curiosity-driven exploration ✅ (novelty / learning-progress rewards; see docs/phases.md)
-9. Learned locomotion ✅ (mind goals → motor layer; see docs/phases.md)
+1. Chamber and deterministic experiments ✅
+2. Passive fly body ✅
+3. Articulated legs and hand-coded walking ✅
+4. Sensor recording ✅
+5. Multimodal mind pipeline (STM + thinking) ✅
+6. Visual navigation ✅
+7. Taste and homeostasis ✅
+8. Curiosity-driven exploration ✅
+9. Learned locomotion (Architecture B) ✅
 10. Flight (simplified, then articulated)
+
+Architecture overview, async mind, stimulus interrupt, and place graph: [docs/architecture.md](docs/architecture.md).
 
 ## First release target
 
-A walking fly with six articulated legs, eye cameras, foot contact/taste sensors, internal state, sugar/bitter surfaces, synchronized recording, a learned walking policy, food-search behavior, and a basic next-state world model.
+A walking fly with six articulated legs, eye cameras, foot contact/taste sensors, internal state, sugar/bitter surfaces, synchronized recording, a learned walking policy, food-search / route-home behavior, place memory, and a basic next-state world model.
 
 ## License
 
