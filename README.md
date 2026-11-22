@@ -209,6 +209,10 @@ Architecture overview, async mind, stimulus interrupt, and place graph: [docs/ar
 
 A walking fly with six articulated legs, eye cameras, foot contact/taste sensors, internal state, sugar/bitter surfaces, synchronized recording, a learned walking policy, food-search / route-home behavior, place memory, and a basic next-state world model.
 
+context for system design here:
+
+https://medium.com/@VinhNguyen
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
