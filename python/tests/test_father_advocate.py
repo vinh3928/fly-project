@@ -257,8 +257,8 @@ def test_father_lesson_persists_on_place_and_reuses() -> None:
     """Father reply attaches HAS_LESSON; same place+cue reuses without re-ask."""
     from flybrain.env import FakeFlyConfig, FakeFlyEnv
     from flybrain.memory.place_graph import InMemoryPlaceGraph
-    from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline
     from flybrain.phase4 import PATCH_VEC_DIM
+    from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline
 
     cfg = LiveMindConfig(
         backend="in_memory",

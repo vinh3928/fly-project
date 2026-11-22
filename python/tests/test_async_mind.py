@@ -129,9 +129,8 @@ def _pipeline(ex: ManualExecutor, *, interrupt: bool = False) -> LiveMindPipelin
     from flybrain.memory.embedder import TOTAL_EMBEDDING_DIM
     from flybrain.memory.pgvector import InMemoryShortTermMemory
     from flybrain.motor import MotorLayerConfig
-    from flybrain.thinking.stimulus_interrupt import StimulusInterruptConfig
-
     from flybrain.thinking.father_advocate import FatherAdvocateConfig
+    from flybrain.thinking.stimulus_interrupt import StimulusInterruptConfig
 
     pipe = LiveMindPipeline(
         FakeFlyEnv(),
