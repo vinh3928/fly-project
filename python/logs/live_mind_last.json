@@ -1,156 +1,157 @@
 {
-  "steps": 406,
-  "interrupted": true,
+  "steps": 24005,
+  "terminated": true,
+  "truncated": false,
   "last": {
-    "stm_id": 83665,
-    "thought_id": 76141,
-    "refined_thought": "Present: energy=0.99, sugar=0.00, bitter=0.00, odor=0.09, survival_risk=0.01, stimuli=['calm'], maturity=0.11. Judged: reject odor (scores_reject). CONDITIONING: wall\u00d79670 strength=6.65 (conditioned) \"weak wall hazard, prioritize sugar search\"; energy\u00d788 strength=0.99 (conditioned) \"low energy, conserve\"; odor\u00d731357 strength=0.95 (conditioned) \"new, strong odor plume, sample it\". Future hypothesis (L1+L2): act=explore value=1.377 improves=True; weights={'survival': 0.9258509712, 'altruism': 0.03707451439999998, 'spiritual': 0.03707451439999998}; confirm: history[explore]=0.04. Refined after critique: forward=0.63 turn=-0.15. Critique noted: Counter: new, strong odor plume, sample it (risk=odor, fwd\u00d70.40, turn\u0394=-0.10).",
-    "devil_critique": "Counter: new, strong odor plume, sample it (risk=odor, fwd\u00d70.40, turn\u0394=-0.10).",
+    "stm_id": 98089,
+    "thought_id": 90029,
+    "refined_thought": "Present: energy=0.68, sugar=0.90, bitter=0.00, odor=0.13, survival_risk=0.18, stimuli=['sugar', 'hunger'], maturity=1.00. Judged: reject odor (scores_reject). CONDITIONING: wall\u00d710021 strength=6.65 (conditioned) \"weak wall hazard, prioritize sugar search\"; energy\u00d7317 strength=0.99 (conditioned) \"low energy, conserve\"; odor\u00d737952 strength=0.95 (conditioned) \"strong new odor plume, sample it\". Future hypothesis (L1+L2): act=feed value=0.923 improves=True; weights={'survival': 0.3882566417604685, 'altruism': 0.30587167911976576, 'spiritual': 0.30587167911976576}; confirm: history[feed]=0.03. Refined after critique: forward=0.27 turn=0.72. Critique noted: Counter: strong new odor plume, sample it (risk=odor, fwd\u00d70.70, turn\u0394=+0.10).",
+    "devil_critique": "Counter: strong new odor plume, sample it (risk=odor, fwd\u00d70.70, turn\u0394=+0.10).",
     "intent": {
-      "forward": 0.6342522370093961,
-      "turn": -0.14970946286046477,
+      "forward": 0.27397214011526144,
+      "turn": 0.7185112205100018,
       "height": 0.5,
-      "frequency": 0.6406303322090189,
-      "proboscis": 0.0,
-      "confidence": 0.8839546924877766,
+      "frequency": 0.513307323819881,
+      "proboscis": 0.904999977350235,
+      "confidence": 0.9308716791197658,
       "action": [
-        0.6342522501945496,
-        -0.14970946311950684,
+        0.27397215366363525,
+        0.7185112237930298,
         0.5,
-        0.640630304813385,
-        0.0
+        0.5133073329925537,
+        0.9049999713897705
       ],
       "future": {
-        "chosen_name": "explore",
+        "chosen_name": "feed",
         "chosen_action": [
+          0.25,
           0.75,
-          -0.19576388597488403,
           0.5,
-          0.800000011920929,
-          0.0
+          0.44999998807907104,
+          0.8999999761581421
         ],
         "layer2_override": false,
-        "layer2_reason": "history[explore]=0.04",
+        "layer2_reason": "history[feed]=0.03",
         "priority_weights": {
-          "survival": 0.9258509712,
-          "altruism": 0.03707451439999998,
-          "spiritual": 0.03707451439999998
+          "survival": 0.3882566417604685,
+          "altruism": 0.30587167911976576,
+          "spiritual": 0.30587167911976576
         },
         "layer1_values": [
           {
-            "name": "explore",
-            "value": 1.3770733757851432,
+            "name": "feed",
+            "value": 0.9226668790329482,
             "improves": true,
-            "survival_u": 0.984531957247248,
-            "altruism_u": 0.12768342884518205,
-            "spiritual_u": 0.3235509443987482
-          },
-          {
-            "name": "forward",
-            "value": 1.3023137521061743,
-            "improves": true,
-            "survival_u": 0.9832944574439432,
-            "altruism_u": 0.12768342884518205,
-            "spiritual_u": 0.32340349087283493
+            "survival_u": 0.8631873611465096,
+            "altruism_u": 0.37939468659162523,
+            "spiritual_u": 0.3315610957252526
           },
           {
             "name": "turn_left",
-            "value": 1.1095343707056946,
+            "value": 0.7331120891467319,
             "improves": true,
-            "survival_u": 0.9853569574439432,
-            "altruism_u": 0.12768342884518205,
-            "spiritual_u": 0.3251624999712305
+            "survival_u": 0.8466873611465097,
+            "altruism_u": 0.37939468659162523,
+            "spiritual_u": 0.3364444743972358
           },
           {
             "name": "turn_right",
-            "value": 1.1094362311844577,
+            "value": 0.7322236279377421,
             "improves": true,
-            "survival_u": 0.9853569574439432,
-            "altruism_u": 0.12768342884518205,
-            "spiritual_u": 0.32251541145705115
+            "survival_u": 0.8466873611465097,
+            "altruism_u": 0.37939468659162523,
+            "spiritual_u": 0.3335397883159794
+          },
+          {
+            "name": "forward",
+            "value": 0.7091795522708941,
+            "improves": true,
+            "survival_u": 0.8631873611465096,
+            "altruism_u": 0.37939468659162523,
+            "spiritual_u": 0.33399536172432814
+          },
+          {
+            "name": "explore",
+            "value": 0.5586196161994467,
+            "improves": true,
+            "survival_u": 0.8532873627200722,
+            "altruism_u": 0.37939468659162523,
+            "spiritual_u": 0.3342888088715168
           },
           {
             "name": "court",
-            "value": 1.0301772440300563,
-            "improves": true,
-            "survival_u": 0.9861819571489002,
-            "altruism_u": 0.12768342884518205,
-            "spiritual_u": 0.3225681467975237
-          },
-          {
-            "name": "feed",
-            "value": 0.8079910685992676,
+            "value": 0.41570731763126406,
             "improves": false,
-            "survival_u": 0.9886569572472479,
-            "altruism_u": 0.08768342884518204,
-            "spiritual_u": 0.31535436476347195
+            "survival_u": 0.8400873635068535,
+            "altruism_u": 0.37939468659162523,
+            "spiritual_u": 0.3333929202181559
           },
           {
             "name": "stop",
-            "value": 0.7771926045030833,
+            "value": 0.3053372654041091,
             "improves": false,
-            "survival_u": 0.9907194572472479,
-            "altruism_u": 0.08768342884518204,
-            "spiritual_u": 0.3151278571734932
+            "survival_u": 0.7617873627200723,
+            "altruism_u": 0.33939468659162525,
+            "spiritual_u": 0.3212361465746222
           }
         ],
-        "maturity": 0.10592718400000002,
+        "maturity": 1.0,
         "tendency": {
-          "curiosity": 0.8587907527243706,
-          "sex": 0.06426581931624624,
-          "forage": 0.0769434279593833,
+          "curiosity": 0.40925131095614076,
+          "sex": 0.2562917879279658,
+          "forage": 0.3344569011158934,
           "dominant": "curiosity",
-          "maturity": 0.10592718400000002,
-          "safe_mode": true
+          "maturity": 1.0,
+          "safe_mode": false
         },
         "devil_proposal": {
           "risk": "odor",
-          "forward_scale": 0.4,
-          "turn_delta": -0.1,
-          "confidence": 0.6,
-          "reason": "new, strong odor plume, sample it",
+          "forward_scale": 0.7,
+          "turn_delta": 0.1,
+          "confidence": 0.9,
+          "reason": "strong new odor plume, sample it",
           "ran": true,
           "source": "llm",
           "signature": [
             "odor",
-            -1,
-            1
+            1,
+            2
           ]
         }
       }
     },
     "affect": {
-      "surprise": 0.0003077028505504132,
-      "joy": 0.0009508447023108601,
-      "sad": 0.012068983912467956,
+      "surprise": 0.024799473881721504,
+      "joy": 1.0,
+      "sad": 0.30474788844585415,
       "anger": 0.0,
-      "fear": 0.0004230914195068182,
+      "fear": 0.03409927658736707,
       "disgust": 0.0,
-      "trust": 0.30038033788092433,
-      "anticipation": 0.008271361663006247,
-      "altruism": 0.08768342884518204,
-      "survival_risk": 0.006552103648893535,
-      "energy_threat": 0.012704193592071533,
-      "social_drive": 0.06173033990878612,
-      "exploration": 0.20306165665400105,
-      "comfort": 0.6432573387376033,
+      "trust": 0.7,
+      "anticipation": 0.49932576729655265,
+      "altruism": 0.33939468659162525,
+      "survival_risk": 0.17651328352093698,
+      "energy_threat": 0.320787250995636,
+      "social_drive": 0.23986515345931053,
+      "exploration": 0.3529269474506882,
+      "comfort": 0.954967406541109,
       "pain": 0.0,
-      "novelty": 0.06142573529654644
+      "novelty": 0.11826903627703651
     },
     "vision_cues": {
-      "target_bearing": -0.008437910117208958,
-      "target_confidence": 0.0027166991494596004,
-      "wall_hazard": 0.000769257126376033,
-      "forward_bias": 0.996318519115448,
-      "turn_bias": 0.02506682649254799,
-      "opening_bearing": -0.2610185146331787,
-      "opening_strength": 0.46542924642562866,
-      "wall_hazard_raw": 0.0051283808425068855
+      "target_bearing": 0.05284127593040466,
+      "target_confidence": 0.008073076605796814,
+      "wall_hazard": 0.06199868470430375,
+      "forward_bias": 0.14580538868904114,
+      "turn_bias": 0.49281641840934753,
+      "opening_bearing": 0.40747249126434326,
+      "opening_strength": 0.23614363372325897,
+      "wall_hazard_raw": 0.4133245646953583
     },
     "place": {
-      "place_id": "ff7fa3d9-81ad-45e5-ade0-0e7b66689348",
-      "label": "odor_plume",
-      "similarity": 0.9974867105484009,
+      "place_id": "65e19ce1-7e1a-4a52-b931-365f3b037fed",
+      "label": "puddle",
+      "similarity": 0.977033911766643,
       "is_new": false,
       "mapped": true,
       "mean_familiarity": 1.0,
@@ -163,65 +164,77 @@
           "present": true,
           "label": "north",
           "familiarity": 1.0,
-          "last_seen_step": 404,
+          "last_seen_step": 24000,
           "notes": ""
         },
         "east": {
           "present": true,
           "label": "east",
           "familiarity": 1.0,
-          "last_seen_step": 404,
+          "last_seen_step": 24000,
           "notes": ""
         },
         "south": {
           "present": true,
           "label": "south",
           "familiarity": 1.0,
-          "last_seen_step": 404,
+          "last_seen_step": 24000,
           "notes": ""
         },
         "west": {
           "present": true,
           "label": "west",
           "familiarity": 1.0,
-          "last_seen_step": 404,
+          "last_seen_step": 24000,
           "notes": ""
         }
       },
       "items": {
         "odor": {
           "familiarity": 1.0,
-          "last_seen_step": 316
+          "last_seen_step": 22440
+        },
+        "sugar": {
+          "familiarity": 0.12,
+          "last_seen_step": 22440
         }
       },
       "senses": {
         "odor": {
-          "value": 0.5665668845176697,
-          "last_seen_step": 316
+          "value": 0.853435754776001,
+          "last_seen_step": 22440
         },
         "odor_left": {
-          "value": 0.4861436188220978,
-          "last_seen_step": 316
+          "value": 0.8488990664482117,
+          "last_seen_step": 22440
         },
         "odor_right": {
-          "value": 0.5665668845176697,
-          "last_seen_step": 316
+          "value": 0.853435754776001,
+          "last_seen_step": 22440
         },
         "sugar_smell": {
-          "value": 0.5665668845176697,
-          "last_seen_step": 316
+          "value": 0.853435754776001,
+          "last_seen_step": 22440
         },
         "opening_strength": {
-          "value": 0.43514010310173035,
-          "last_seen_step": 316
+          "value": 0.23603956401348114,
+          "last_seen_step": 22440
+        },
+        "wall_hazard": {
+          "value": 0.41376203298568726,
+          "last_seen_step": 22440
+        },
+        "sugar": {
+          "value": 1.0,
+          "last_seen_step": 22440
         }
       },
       "sensors": {
         "wall_hazard": {
           "channel": "wall_hazard",
           "item": "wall",
-          "raw": 0.0051283808425068855,
-          "reported": 0.000769257126376033,
+          "raw": 0.4133245646953583,
+          "reported": 0.06199868470430375,
           "mapped": true,
           "familiarity": 1.0,
           "scale": 0.15000000000000002
@@ -229,8 +242,8 @@
         "odor": {
           "channel": "odor",
           "item": "odor",
-          "raw": 0.5869674682617188,
-          "reported": 0.08804512023925783,
+          "raw": 0.85335773229599,
+          "reported": 0.12800365984439852,
           "mapped": true,
           "familiarity": 1.0,
           "scale": 0.15000000000000002
@@ -238,8 +251,8 @@
         "odor_left": {
           "channel": "odor_left",
           "item": "odor",
-          "raw": 0.4995335042476654,
-          "reported": 0.07493002563714982,
+          "raw": 0.8488410115242004,
+          "reported": 0.12732615172863007,
           "mapped": true,
           "familiarity": 1.0,
           "scale": 0.15000000000000002
@@ -247,8 +260,8 @@
         "odor_right": {
           "channel": "odor_right",
           "item": "odor",
-          "raw": 0.5869674682617188,
-          "reported": 0.08804512023925783,
+          "raw": 0.85335773229599,
+          "reported": 0.12800365984439852,
           "mapped": true,
           "familiarity": 1.0,
           "scale": 0.15000000000000002
@@ -265,22 +278,22 @@
         "sugar": {
           "channel": "sugar",
           "item": "sugar",
-          "raw": 0.0,
-          "reported": 0.0,
-          "mapped": false,
-          "familiarity": 0.0,
-          "scale": 1.0
+          "raw": 1.0,
+          "reported": 0.898,
+          "mapped": true,
+          "familiarity": 0.12,
+          "scale": 0.898
         }
       },
-      "wall_hazard_raw": 0.0051283808425068855,
-      "wall_hazard": 0.000769257126376033
+      "wall_hazard_raw": 0.4133245646953583,
+      "wall_hazard": 0.06199868470430375
     },
     "mapped_sensors": {
       "wall_hazard": {
         "channel": "wall_hazard",
         "item": "wall",
-        "raw": 0.0051283808425068855,
-        "reported": 0.000769257126376033,
+        "raw": 0.4133245646953583,
+        "reported": 0.06199868470430375,
         "mapped": true,
         "familiarity": 1.0,
         "scale": 0.15000000000000002
@@ -288,8 +301,8 @@
       "odor": {
         "channel": "odor",
         "item": "odor",
-        "raw": 0.5869674682617188,
-        "reported": 0.08804512023925783,
+        "raw": 0.85335773229599,
+        "reported": 0.12800365984439852,
         "mapped": true,
         "familiarity": 1.0,
         "scale": 0.15000000000000002
@@ -297,8 +310,8 @@
       "odor_left": {
         "channel": "odor_left",
         "item": "odor",
-        "raw": 0.4995335042476654,
-        "reported": 0.07493002563714982,
+        "raw": 0.8488410115242004,
+        "reported": 0.12732615172863007,
         "mapped": true,
         "familiarity": 1.0,
         "scale": 0.15000000000000002
@@ -306,8 +319,8 @@
       "odor_right": {
         "channel": "odor_right",
         "item": "odor",
-        "raw": 0.5869674682617188,
-        "reported": 0.08804512023925783,
+        "raw": 0.85335773229599,
+        "reported": 0.12800365984439852,
         "mapped": true,
         "familiarity": 1.0,
         "scale": 0.15000000000000002
@@ -324,100 +337,103 @@
       "sugar": {
         "channel": "sugar",
         "item": "sugar",
-        "raw": 0.0,
-        "reported": 0.0,
-        "mapped": false,
-        "familiarity": 0.0,
-        "scale": 1.0
+        "raw": 1.0,
+        "reported": 0.898,
+        "mapped": true,
+        "familiarity": 0.12,
+        "scale": 0.898
       }
     },
-    "maturity": 0.10786867199999998,
+    "maturity": 1.0,
     "priority_weights": {
-      "survival": 0.9258509712,
-      "altruism": 0.03707451439999998,
-      "spiritual": 0.03707451439999998
+      "survival": 0.3882566417604685,
+      "altruism": 0.30587167911976576,
+      "spiritual": 0.30587167911976576
     },
     "retrospective_ran": true,
-    "labeled_outcomes": 210,
-    "curiosity": 0.0005479180055979351,
-    "curiosity_gated": 0.0005379739250040809,
-    "curiosity_gate": 0.9818511520113263,
-    "explore_bias": 0.00023771271203442104,
-    "coverage": 0.04,
-    "unique_cells": 1,
-    "exploration_xp": 0.47549999810394183,
+    "labeled_outcomes": 2354,
+    "curiosity": 0.0006335276709139261,
+    "curiosity_gated": 0.00034320252808228854,
+    "curiosity_gate": 0.5417324985776628,
+    "explore_bias": 8.366579002071734e-05,
+    "coverage": 0.52,
+    "unique_cells": 13,
+    "exploration_xp": 120.3990797530836,
     "experience_novelty": 0.0,
     "novelty_first_visit": false,
-    "visual_novelty": 0.0003105423656517526,
-    "novelty_bearing": 1.0,
+    "visual_novelty": 1.2111814712926068e-244,
+    "novelty_bearing": 0.2999999999999999,
     "new_stimulus": false,
-    "boredom": 0.0,
+    "boredom": 0.55,
     "thought_stuck": 0.0,
-    "physical_stuck": 0.0,
-    "force_locomotion": false,
+    "physical_stuck": 1.0,
+    "force_locomotion": true,
     "tendency": {
-      "curiosity": 0.8587907527243706,
-      "sex": 0.06426581931624624,
-      "forage": 0.0769434279593833,
+      "curiosity": 0.40925131095614076,
+      "sex": 0.2562917879279658,
+      "forage": 0.3344569011158934,
       "dominant": "curiosity",
-      "maturity": 0.10592718400000002,
-      "safe_mode": true
+      "maturity": 1.0,
+      "safe_mode": false
     },
-    "mind_tick": true,
-    "energy": 0.9872958064079285,
-    "hunger": 0.012704193592071533,
-    "sugar_smell": 0.5869674682617188,
-    "sugar_bearing": 1.0,
+    "mind_tick": false,
+    "energy": 0.680752694606781,
+    "hunger": 0.319247305393219,
+    "sugar_smell": 0.85335773229599,
+    "sugar_bearing": 0.053069252790691385,
     "sugar_search": {
-      "mode": "off",
-      "turn": null,
+      "mode": "search",
+      "turn": 0.75,
       "change": 0.0,
-      "streak": 0
+      "streak": 80
     },
     "route_home": {
-      "mode": "off",
+      "mode": "handoff",
       "turn": null,
       "forward": 0.55,
-      "home_id": null,
+      "home_id": "65e19ce1-7e1a-4a52-b931-365f3b037fed",
       "next_id": null,
       "hops_left": 0,
-      "path": [],
+      "path": [
+        "65e19ce1-7e1a-4a52-b931-365f3b037fed"
+      ],
       "path_edges": [],
-      "reason": "not_hungry",
+      "reason": "on_sugar",
       "smell_delta": 0.0,
-      "food_kind": "",
-      "food_value": 0.0,
+      "food_kind": "sugar",
+      "food_value": 0.898,
       "scan_yaw_degrees": 0.0,
       "commit_degrees_left": 0.0
     },
-    "proboscis_extension": 0.0,
-    "proboscis_contact": 0.0,
-    "taste_sugar": 0.0,
+    "proboscis_extension": 1.0,
+    "proboscis_contact": 1.0,
+    "taste_sugar": 1.0,
     "antenna_debug": {
-      "left_sugar": 0.4995335042476654,
+      "left_sugar": 0.8488410115242004,
       "left_bitter": 0.0,
-      "left_odor": 0.4995335042476654,
-      "right_sugar": 0.5869674682617188,
+      "left_odor": 0.8488410115242004,
+      "right_sugar": 0.85335773229599,
       "right_bitter": 0.0,
-      "right_odor": 0.5869674682617188
+      "right_odor": 0.85335773229599
     },
-    "eye_match": 0.0,
+    "eye_match": 0.8224373236298561,
+    "eye_match_interest_id": 1,
     "judgement": {
       "decision": "reject",
       "reason": "scores_reject",
       "blend_weight": 0.0,
       "proposal": {
         "risk": "odor",
-        "forward_scale": 0.4,
-        "turn_delta": -0.1,
-        "confidence": 0.6,
-        "reason": "new, strong odor plume, sample it",
+        "forward_scale": 0.7,
+        "turn_delta": 0.1,
+        "confidence": 0.9,
+        "reason": "strong new odor plume, sample it",
         "ran": true,
         "source": "llm",
         "signature": [
           "odor",
-          -1,
-          1
+          1,
+          2
         ]
       },
       "traits": {
@@ -428,17 +444,17 @@
         "wisdom": 0.3
       },
       "scores": {
-        "accept": 0.16499999999999998,
-        "reject": 0.7297500000000001,
+        "accept": 0.26999999999999996,
+        "reject": 0.6172500000000001,
         "ignore": 0.0,
         "reconsider": 0.0,
         "acknowledge": 0.0,
         "severity": 0.55,
         "inconsistent": 0.0,
         "novelty": 0.3925,
-        "load": 0.006552103648893535,
-        "eye_match": 0.0,
-        "acknowledge_blocked": 0.0
+        "load": 0.17651328352093698,
+        "eye_match": 0.8224373236298561,
+        "acknowledge_blocked": 1.0
       }
     },
     "personality": {
@@ -453,16 +469,16 @@
     },
     "devil_proposal": {
       "risk": "odor",
-      "forward_scale": 0.4,
-      "turn_delta": -0.1,
-      "confidence": 0.6,
-      "reason": "new, strong odor plume, sample it",
+      "forward_scale": 0.7,
+      "turn_delta": 0.1,
+      "confidence": 0.9,
+      "reason": "strong new odor plume, sample it",
       "ran": true,
       "source": "llm",
       "signature": [
         "odor",
-        -1,
-        1
+        1,
+        2
       ]
     },
     "interest_pending": 0,
@@ -470,15 +486,15 @@
       "entries": {
         "odor": {
           "risk": "odor",
-          "hits": 31357,
+          "hits": 37952,
           "strength": 0.95,
-          "last_reason": "new, strong odor plume, sample it",
+          "last_reason": "strong new odor plume, sample it",
           "acknowledged": false,
           "conditioned": true
         },
         "wall": {
           "risk": "wall",
-          "hits": 9670,
+          "hits": 10021,
           "strength": 6.653378701210022,
           "last_reason": "weak wall hazard, prioritize sugar search",
           "acknowledged": false,
@@ -486,48 +502,92 @@
         },
         "energy": {
           "risk": "energy",
-          "hits": 88,
+          "hits": 317,
           "strength": 0.9900000002235174,
           "last_reason": "low energy, conserve",
           "acknowledged": false,
           "conditioned": true
         }
       },
-      "confirm_key": [
-        "reject",
-        "odor"
-      ],
-      "confirm_count": 1,
+      "confirm_key": null,
+      "confirm_count": 0,
       "freeze_acknowledged": [],
-      "memory_block": "CONDITIONING: wall\u00d79670 strength=6.65 (conditioned) \"weak wall hazard, prioritize sugar search\"; energy\u00d788 strength=0.99 (conditioned) \"low energy, conserve\"; odor\u00d731357 strength=0.95 (conditioned) \"new, strong odor plume, sample it\""
+      "memory_block": "CONDITIONING: wall\u00d710021 strength=6.65 (conditioned) \"weak wall hazard, prioritize sugar search\"; energy\u00d7317 strength=0.99 (conditioned) \"low energy, conserve\"; odor\u00d737952 strength=0.95 (conditioned) \"strong new odor plume, sample it\""
     },
-    "conditioning_stm_id": 83666,
-    "visual_think_gate": "pending",
-    "visual_thinking": true,
+    "conditioning_stm_id": 98090,
+    "visual_think_gate": "low_novelty",
+    "visual_thinking": false,
+    "visual_insight": {
+      "ran": true,
+      "reason": "llm",
+      "description": "Pink dots on a tree branch.",
+      "salience": 0.6,
+      "decision": "inspect",
+      "bearing": 0.8,
+      "tick": 21600
+    },
     "blocked_escape_goal": false,
     "architecture": "B",
     "motor_goal": [
-      0.4000000059604645,
-      -0.007900666445493698,
+      0.0,
+      0.0,
       0.5,
-      0.8000267744064331,
-      0.0
+      0.45000940561294556,
+      1.0
     ],
     "motor_action": [
-      0.3999999761581421,
-      -0.007348933257162571,
+      0.0,
+      0.0,
       0.5,
-      0.8000267744064331,
-      0.0
+      0.45000940561294556,
+      1.0
     ],
-    "motor_tracking_error": 0.00011035260104108602,
+    "motor_tracking_error": 0.0,
     "act_mode": "act_anything",
-    "act_plan": "explore",
+    "act_plan": "feed",
     "act_reason": "mind_think",
     "blocked_streak": 0,
     "blocked_escape": false,
-    "blocked_wall": 0.0051283808425068855
+    "blocked_wall": 0.4133245646953583,
+    "sugar_orient": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "sugar_orient_mode": "feed(32)",
+    "steps": 24005,
+    "has_eyes": true
   },
-  "mind_ticks": 102,
-  "motor_ticks": 407
+  "start_distance": 0.0,
+  "end_distance": 0.0,
+  "wall_hits": 0,
+  "success": false,
+  "sugar_consumed": 0.0,
+  "bitter_contacts": 0,
+  "maturity": 1.0,
+  "labeled_outcomes": 2354,
+  "episodes": 1,
+  "coverage": 0.52,
+  "unique_cells": 13,
+  "exploration_xp": 120.3990797530836,
+  "curiosity_reward_mean": 0.020448706490930474,
+  "curiosity": {
+    "coverage": 0.52,
+    "unique_cells": 13,
+    "experience_memory": 1000,
+    "unique_chem": 0,
+    "unique_events": 0,
+    "exploration_xp": 120.3990797530836,
+    "streak": 0,
+    "steps": 1209,
+    "curiosity_reward_mean": 0.020448706490930474,
+    "curiosity_reward_sum": 24.722486147534944,
+    "curiosity_steps": 1209,
+    "enabled": true
+  },
+  "mind_ticks": 1209,
+  "motor_ticks": 24005,
+  "mind_interval": 20,
+  "async_mind": null,
+  "architecture": "B"
 }

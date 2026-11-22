@@ -53,7 +53,9 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+# Match requires-python (>=3.10) so UP rules do not rewrite to 3.11-only APIs
+# like datetime.UTC (breaks the ML-Agents 3.10 launch venv).
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
@@ -62,4 +64,4 @@ ignore = ["E501"]
 
 [tool.black]
 line-length = 100
-target-version = ["py311"]
+target-version = ["py310"]

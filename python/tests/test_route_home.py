@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
@@ -966,8 +966,6 @@ def test_wall_aware_path_prefers_opening_edge() -> None:
 
 def test_graph_food_prefers_first_experience_over_later_smell() -> None:
     """Hungry routing queries food senses and returns to the earliest food place."""
-    from datetime import datetime, timedelta
-
     g = InMemoryPlaceGraph()
     t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
     first = g.create_place(
