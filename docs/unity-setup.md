@@ -54,10 +54,23 @@ After it runs, open `Assets/Scenes/Chamber.unity` if it is not already open. Sel
 
 Press **Play** and watch the **Game** tab (not only Scene view). You should see the grey floor, yellow/purple pads, and dark fly through the cutaway.
 
+**Fly profiles:** on Play, a **Choose your fly** panel appears on Display 1. Pick **Fly 1**
+(current default), another existing fly, or **+ Create new fly** (Fly 2, 3, …). The choice is
+saved to `data/fly_profiles.json` (and StreamingAssets) so Python live-mind uses the same
+`fly_id` for STM / place-graph memory. From Python you can also pass `--fly 2`, `--new-fly Scout`,
+or `--select-fly`.
+
 **Three displays:** Display 1 is the fixed chamber overview (cutaway). Display 2 is
 `FlyFollowCamera` — a third-person chase view that always centers on the fly.
 Display 3 is `MindLogDisplay` — human-readable **mind** and **deep thought** panels
 (plan, energy/hunger, route, thought, devil) streamed from Python over a SideChannel.
+When a stimulus interrupt arms, a **Father advocate** dialog also appears on Display 3:
+the question about the novel situation, a text box for your teaching reply, **Ask LLM**,
+or **Skip**. The fly’s motor hard-stops until you reply (or **60 s** elapses → auto LLM).
+The reply is a **one-shot lesson**: stored on the current Place as
+`(:Place)-[:HAS_LESSON]->(:Lesson)`, structured as `approach` / `avoid` / `taste` / `idle`
+(+ turn bias / confidence), and bound into the motor directive when the freeze clears.
+Same place+cue later reuses the lesson without re-asking.
 In the Game tab, open the **Display** dropdown and pick **Display 2** / **Display 3**
 (or plug in extra monitors; Play activates them when present). Re-run
 **Tools → Fly → Fix Chamber Visibility** (or Setup Chamber Scene) if a cam is missing.
@@ -182,11 +195,12 @@ Mind databases:
 
 - pgvector STM: `fly_mind.short_term_memory`, port `5433`
 - Neo4j place graph: Browser `http://127.0.0.1:7474`, Bolt port `7687`
+- Neo4j skill cortex: Browser `http://127.0.0.1:7475`, Bolt port `7688`
 
 ```bash
 docker compose -f docker/docker-compose.mind.yml up -d
-# Neo4j development login: neo4j / flymindgraph
-# Override before startup: export NEO4J_PASSWORD='...'
+# Place Neo4j: neo4j / flymindgraph  (override: NEO4J_PASSWORD)
+# Skill Neo4j: neo4j / flymindskill  (override: NEO4J_SKILL_PASSWORD)
 # mind.yaml defaults to backend: pgvector; override with -- or database.backend: in_memory
 python -m scripts.run_live_mind --fake
 python -m scripts.run_live_mind --fake --pgvector

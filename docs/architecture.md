@@ -198,8 +198,13 @@ The first sighting creates a Place with four Wall details. **Sensor + smell
 readings are correlated onto that vision Place** (not separate place keys):
 `props.label` (e.g. `puddle`), `props.senses.bitter.value = 0.49`, and optional
 `props.smell_vec`. Neo4j also links `(:Place)-[:HAS_SENSE]->(:Sense)`.
-`ModalChangeGate` (10s / per-step sample-diff) keeps unchanged smell/sensor
-snapshots on L1 so Neo4j is not rewritten every tick.
+Father-advocate teachings attach as `(:Place)-[:HAS_LESSON]->(:Lesson)`
+(cue / question / answer / risk plus structured `action`, `turn_bias`,
+`confidence`) so revisiting a place can reuse the lesson without re-asking.
+On interrupt clear the structured fields blend into the motor directive bus
+(`approach` / `avoid` / `taste` / `idle`) so the body obeys the teaching, not
+only the mind-panel text. `ModalChangeGate` (10s / per-step sample-diff) keeps
+unchanged smell/sensor snapshots on L1 so Neo4j is not rewritten every tick.
 
 **Sensor feedback** (`MappedSensorFeedback`) is where decay lives: raw
 eye/antenna/taste transducers stay honest (`*_raw`), but once an item is mapped
@@ -217,12 +222,37 @@ Neo4j traffic is buffered by a **two-layer place cache** (`CachedPlaceGraph`):
 - Dirty L1 entries flush to L2 + Neo4j when they age out of the 10s window
   (or on `close()` / `flush()`).
 
-Start both memory databases:
+Start memory databases (pgvector + place Neo4j + skill Neo4j):
 
 ```bash
 docker compose -f docker/docker-compose.mind.yml up -d
 ```
 
-Neo4j Browser is at `http://127.0.0.1:7474`; Bolt is
+Place-graph Neo4j Browser is at `http://127.0.0.1:7474`; Bolt is
 `bolt://127.0.0.1:7687`. Development login defaults to
 `neo4j` / `flymindgraph`; set `NEO4J_PASSWORD` to override it.
+
+### Skill cortex (separate Neo4j partition)
+
+Community Edition cannot host two logical DBs on one server, so discovered
+motor programs live on a **second** Neo4j container:
+
+| | Place graph | Skill cortex |
+|---|---|---|
+| Compose service | `neo4j` | `neo4j-skill` |
+| Browser | `http://127.0.0.1:7474` | `http://127.0.0.1:7475` |
+| Bolt | `7687` | `7688` |
+| Auth default | `neo4j` / `flymindgraph` | `neo4j` / `flymindskill` |
+| Env override | `NEO4J_PASSWORD` | `NEO4J_SKILL_PASSWORD` |
+
+Graph shape: `(:Skill)-[:HAS_STEP]->(:SkillStep)` with optional
+`(:Skill)-[:DISCOVERED_AT]->(:Context)` (`place_id` is a soft string only —
+no cross-cluster edges). Status flows `candidate` → `promoted`.
+
+**Discovery:** low-load motor babbling samples short timed 5-d goal sequences
+(groom/touch and dance motifs). Candidates are upserted into the skill cortex.
+**Father** promotes (or names) a candidate; promoted skills join L1 as dynamic
+candidates and play back via `SkillExecutor` on the Architecture-B motor bus.
+Place `HAS_LESSON.action` / `skill_name` can reference a promoted skill so
+one-shot place reuse triggers playback. Config: `skill_cortex` in
+`python/configs/mind.yaml`.

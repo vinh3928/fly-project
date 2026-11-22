@@ -209,6 +209,8 @@ namespace FlySimulation.EditorTools
 
             EnsureFlyFollowCamera(fly.transform);
             EnsureMindLogDisplay();
+            EnsureFatherDialogDisplay();
+            EnsureFlyProfileMenu();
 
             DirectoryEnsure("Assets/Scenes");
             EditorSceneManager.SaveScene(scene, "Assets/Scenes/Chamber.unity");
@@ -222,8 +224,8 @@ namespace FlySimulation.EditorTools
                 "Chamber scene ready: Assets/Scenes/Chamber.unity. " +
                 $"Arena {config.ChamberSize}, BodyScale={config.BodyScale}, " +
                 $"spawn Y={config.FlySpawnPosition.y:F4} (feet on floor). " +
-                "Display 1 = OverviewCamera; Display 2 = FlyFollowCamera; " +
-                "Display 3 = MindLogDisplay (mind/deep thoughts).");
+                "Display 1 = Overview + Fly profile picker; Display 2 = FlyFollowCamera; " +
+                "Display 3 = MindLogDisplay + Father dialog on interrupt.");
         }
 
         /// <summary>Third-person chase cam on Unity Display 2, always centered on the fly.</summary>
@@ -262,6 +264,37 @@ namespace FlySimulation.EditorTools
             }
 
             MindLogDisplay.Place(logCam);
+        }
+
+        /// <summary>Father-advocate ask/reply popup on Display 3 (child of MindLog).</summary>
+        private static void EnsureFatherDialogDisplay()
+        {
+            EnsureMindLogDisplay();
+            var logGo = GameObject.Find(MindLogDisplay.ObjectName);
+            if (logGo == null)
+            {
+                return;
+            }
+
+            if (logGo.GetComponent<FatherDialogDisplay>() == null)
+            {
+                logGo.AddComponent<FatherDialogDisplay>();
+            }
+        }
+
+        /// <summary>Pre-play fly roster (Fly 1 / 2 / 3 …) on Display 1.</summary>
+        private static void EnsureFlyProfileMenu()
+        {
+            var go = GameObject.Find(FlyProfileMenu.ObjectName);
+            if (go == null)
+            {
+                go = new GameObject(FlyProfileMenu.ObjectName);
+            }
+
+            if (go.GetComponent<FlyProfileMenu>() == null)
+            {
+                go.AddComponent<FlyProfileMenu>();
+            }
         }
 
         /// <summary>Drop asset-pack prefabs here to replace the primitive flowers, trees and houses.</summary>
@@ -420,6 +453,8 @@ namespace FlySimulation.EditorTools
             var flyBody = UnityEngine.Object.FindFirstObjectByType<FlySimulation.Fly.Body.FlyBodyController>();
             EnsureFlyFollowCamera(flyBody != null ? flyBody.transform : null);
             EnsureMindLogDisplay();
+            EnsureFatherDialogDisplay();
+            EnsureFlyProfileMenu();
 
             // Disable fly-eye cameras in Game view if they were left enabled.
             // Keep Overview (1), FlyFollow (2), and MindLog (3) enabled.
