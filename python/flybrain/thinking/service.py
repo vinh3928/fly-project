@@ -77,6 +77,8 @@ class ThinkingService:
         self._last_retrospective: RetrospectiveResult | None = None
         self._last_devil_proposal = None
         self.interest_store = None  # set by LiveMindPipeline when available
+        # Dynamic L1 candidates from promoted skill-cortex programs (name, first goal).
+        self.extra_action_candidates: list[tuple[str, np.ndarray]] = []
 
     def think_on_record(self, stm: StmRecord) -> tuple[ThoughtResult, ThoughtRecord]:
         reflection, _, _ = build_reflection(
@@ -95,6 +97,7 @@ class ThinkingService:
             embedding=stm.embedding,
             stimulus_thresholds=self.config.stimulus_thresholds,
             tendency=self.tendency,
+            candidates=list(self.extra_action_candidates) or None,
         )
         from flybrain.thinking.tendency import TendencyDrive
         from flybrain.thinking.two_layer_future import _stimulus_peaks

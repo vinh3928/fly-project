@@ -19,6 +19,13 @@ from .layer import (
     orient_goal,
 )
 from .rewards import compute_locomotion_reward
+from .skill_babble import (
+    babble_gate,
+    build_candidate_skill,
+    sample_babble_program,
+    score_babble_episode,
+)
+from .skill_executor import SkillExecutor, SkillPlaybackFrame
 
 __all__ = [
     "ActMode",
@@ -29,6 +36,10 @@ __all__ = [
     "MotorLayer",
     "MotorLayerConfig",
     "MotorPolicyNet",
+    "SkillExecutor",
+    "SkillPlaybackFrame",
+    "babble_gate",
+    "build_candidate_skill",
     "clip_goal",
     "compute_locomotion_reward",
     "ensure_locomotion_floor",
@@ -36,4 +47,6 @@ __all__ = [
     "make_directive",
     "mode_for_plan",
     "orient_goal",
+    "sample_babble_program",
+    "score_babble_episode",
 ]

@@ -53,6 +53,26 @@ place_graph:
     l1_persist_every: 1.0
     neo4j_flush_every: 5.0 # seconds; durable save of the place the fly keeps revisiting
 
+# Skill cortex: separate Neo4j (Bolt 7688) for discovered motor programs
+# (touch/dance-style goal sequences). Babble proposes candidates; Father promotes.
+skill_cortex:
+  enabled: true
+  backend: neo4j # in_memory | neo4j
+  uri: "bolt://127.0.0.1:7688"
+  user: neo4j
+  password: flymindskill # override with NEO4J_SKILL_PASSWORD
+  database: neo4j
+  babble:
+    enabled: true
+    min_novelty: 0.35
+    max_survival_risk: 0.45
+    max_hunger: 0.55
+    cooldown_steps: 200
+    max_steps: 8
+    min_steps: 3
+    duration_range: [8, 24]
+  promote_min_score: 0.4
+
 embedding:
   latent_dim: 256
   affect_dim: 16
@@ -397,6 +417,20 @@ judgement:
   acknowledge_novelty_min: 0.15
   acknowledge_load_min: 0.45
   acknowledge_eye_match_max: 0.4
+
+# Father advocate: on stimulus interrupt, ask a teaching question before devil
+# deep-thought. Unity Display 3 shows a textbox (human reply or Ask LLM).
+# Lessons reinforce future interrupts with the same cue.
+father_advocate:
+  enabled: true
+  # human_or_llm = Unity popup; llm = auto-answer (fake/headless / CI)
+  mode: human_or_llm
+  # Motor hard-stops until Reply / Ask LLM / Skip, or this many seconds → auto LLM.
+  timeout_seconds: 60
+  max_question_chars: 220
+  max_answer_chars: 420
+  mock: null # null = inherit llm.mock; true/false overrides
+  max_lessons: 64
 
 # Interrupt Architecture-B: novel cue → hard motor freeze + deep-thought stub.
 # Freeze lasts deep_thought_steps; mind ticks every deep_thought_mind_interval

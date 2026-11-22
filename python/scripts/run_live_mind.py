@@ -74,6 +74,30 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--config", type=str, default=None, help="Path to mind.yaml")
     parser.add_argument(
+        "--fly",
+        type=str,
+        default=None,
+        help="Fly profile number or id (e.g. 2 or fly_002). Creates it if missing.",
+    )
+    parser.add_argument(
+        "--fly-id",
+        type=str,
+        default=None,
+        help="Explicit fly_id (overrides --fly / active profile)",
+    )
+    parser.add_argument(
+        "--select-fly",
+        action="store_true",
+        help="Interactive menu to choose / create a fly profile before starting",
+    )
+    parser.add_argument(
+        "--new-fly",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Create a new fly profile with this display name and select it",
+    )
+    parser.add_argument(
         "--visual-nav-config", type=str, default=None, help="Path to visual_nav.yaml"
     )
     parser.add_argument("--pgvector", action="store_true", help="Force pgvector backend")
@@ -224,6 +248,28 @@ def main(argv: list[str] | None = None) -> int:
         with open(vn_path, encoding="utf-8") as handle:
             visual_nav = yaml.safe_load(handle) or {}
     cfg = LiveMindConfig.from_yaml(raw, visual_nav=visual_nav)
+
+    from flybrain.fly_profiles import FlyProfileStore
+
+    profiles = FlyProfileStore.load()
+    profiles.ensure(1, name="Fly 1")  # current default fly
+    if args.new_fly is not None:
+        created = profiles.create(name=str(args.new_fly).strip() or None)
+        profile = profiles.set_active(created.fly_id)
+    elif args.select_fly:
+        profile = profiles.interactive_select()
+    elif args.fly_id or args.fly:
+        profile = profiles.resolve(fly=args.fly, fly_id=args.fly_id)
+    else:
+        # Prefer the shared active profile (Unity menu or last Python run).
+        profiles.reload()
+        profile = profiles.set_active(profiles.active_fly_id)
+    cfg.fly_id = profile.fly_id
+    print(
+        f"fly_profile selected name={profile.name!r} id={profile.fly_id} " f"(#{profile.number})",
+        flush=True,
+    )
+
     if args.pgvector:
         cfg.backend = "pgvector"
     if args.no_curiosity and cfg.curiosity is not None:

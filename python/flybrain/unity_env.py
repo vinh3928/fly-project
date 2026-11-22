@@ -274,16 +274,20 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
         file_name = resolve_unity_file_name(self.config)
 
         self._engine_channel = EngineConfigurationChannel()
+        from flybrain.debug.father_dialog_channel import FatherDialogChannel
         from flybrain.debug.mind_log_channel import MindLogDebugChannel
         from flybrain.debug.route_path_channel import RoutePathDebugChannel
 
         self._route_path = RoutePathDebugChannel()
         self._mind_log = MindLogDebugChannel()
+        self._father_dialog = FatherDialogChannel()
         side_channels = [self._engine_channel]
         if self._route_path.side_channel is not None:
             side_channels.append(self._route_path.side_channel)
         if self._mind_log.side_channel is not None:
             side_channels.append(self._mind_log.side_channel)
+        if self._father_dialog.side_channel is not None:
+            side_channels.append(self._father_dialog.side_channel)
         self._env = UnityEnvironment(
             file_name=file_name,
             worker_id=self.config.worker_id,
@@ -435,6 +439,11 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
     def mind_log_channel(self):
         """SideChannel that mirrors mind/deep-thought panels into Unity Display 3."""
         return getattr(self, "_mind_log", None)
+
+    @property
+    def father_dialog_channel(self):
+        """SideChannel for Father-advocate ask/reply on Display 3."""
+        return getattr(self, "_father_dialog", None)
 
     def agent_position(self) -> np.ndarray | None:
         """Latest fly world XYZ from Unity (RoutePathDebugChannel pose)."""

@@ -665,3 +665,64 @@ def test_neo4j_find_places_filters_label_in_cypher(monkeypatch) -> None:
     assert captured[-1][1]["label_marker"] == '"label": "puddle"'
     assert len(found) == 1
     graph.close()
+
+
+def test_in_memory_upsert_lesson_has_lesson_on_place() -> None:
+    g = InMemoryPlaceGraph()
+    place = g.upsert_place(_view(7), fly_id="fly_a", step=1)
+    row = g.upsert_lesson(
+        place.id,
+        cue="smell_novelty",
+        question="Is this food?",
+        answer="Approach slowly and taste.",
+        lesson="Taste before diving in.",
+        risk="low",
+        source="human",
+        step=12,
+        action="taste",
+        turn_bias=0.1,
+        confidence=0.8,
+    )
+    assert row.place_id == place.id
+    assert row.cue == "smell_novelty"
+    assert row.action == "taste"
+    listed = g.list_lessons(place.id, cue="smell_novelty")
+    assert len(listed) == 1
+    assert listed[0].answer.startswith("Approach")
+    assert listed[0].confidence == 0.8
+    latest = g.latest_lesson(place.id, cue="smell_novelty")
+    assert latest is not None
+    assert latest.lesson.startswith("Taste")
+    assert g.latest_lesson(place.id, cue="other") is None
+    assert "lessons" in (place.props or {})
+
+
+def test_neo4j_upsert_lesson_writes_has_lesson(monkeypatch) -> None:
+    driver = _FakeNeo4jDriver()
+    graph_database = SimpleNamespace(driver=lambda *args, **kwargs: driver)
+    monkeypatch.setitem(sys.modules, "neo4j", SimpleNamespace(GraphDatabase=graph_database))
+    graph = Neo4jPlaceGraph(password="test-password")
+    captured: list[tuple[str, dict]] = []
+
+    def _query(cypher, params=None):
+        captured.append((str(cypher), dict(params or {})))
+        return []
+
+    graph._query = _query  # type: ignore[method-assign]
+    row = graph.upsert_lesson(
+        "place-42",
+        cue="bitter",
+        question="Safe to taste?",
+        answer="Back away; high bitter.",
+        risk="high",
+        source="human",
+        step=9,
+    )
+    assert row.place_id == "place-42"
+    assert any("HAS_LESSON" in q for q, _ in captured)
+    assert any(":Lesson" in q for q, _ in captured)
+    params = captured[0][1]
+    assert params["place_id"] == "place-42"
+    assert params["cue"] == "bitter"
+    assert params["risk"] == "high"
+    graph.close()

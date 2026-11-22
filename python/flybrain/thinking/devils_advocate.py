@@ -45,9 +45,24 @@ _SIGNAL_KEYS = (
     "interrupt_remaining",
     "interrupt_cue",
     "interrupt_reason",
+    "father_question",
+    "father_answer",
+    "father_lesson",
+    "father_risk",
+    "father_action",
+    "father_turn_bias",
+    "father_confidence",
 )
 # String signals passed through verbatim (short) instead of coerced to float.
-_PASSTHROUGH_STR_KEYS = {"interrupt_cue", "interrupt_reason"}
+_PASSTHROUGH_STR_KEYS = {
+    "interrupt_cue",
+    "interrupt_reason",
+    "father_question",
+    "father_answer",
+    "father_lesson",
+    "father_risk",
+    "father_action",
+}
 _AFFECT_KEYS = (
     "survival_risk",
     "fear",

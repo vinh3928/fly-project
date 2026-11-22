@@ -378,6 +378,60 @@ class FoodPlaceHit:
 
 
 @dataclass
+class PlaceLesson:
+    """Father-advocate lesson anchored on a Place (Neo4j ``HAS_LESSON``)."""
+
+    lesson_id: str
+    place_id: int | str
+    cue: str
+    question: str
+    answer: str
+    lesson: str
+    risk: str
+    source: str
+    step: int
+    created_at: str = ""
+    action: str = "idle"
+    turn_bias: float = 0.0
+    confidence: float = 0.5
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "lesson_id": self.lesson_id,
+            "place_id": self.place_id,
+            "cue": self.cue,
+            "question": self.question,
+            "answer": self.answer,
+            "lesson": self.lesson or self.answer,
+            "risk": self.risk,
+            "source": self.source,
+            "step": int(self.step),
+            "created_at": self.created_at,
+            "action": self.action,
+            "turn_bias": float(self.turn_bias),
+            "confidence": float(self.confidence),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> PlaceLesson:
+        return cls(
+            lesson_id=str(raw.get("lesson_id") or ""),
+            place_id=raw.get("place_id") if raw.get("place_id") is not None else "",
+            cue=str(raw.get("cue") or ""),
+            question=str(raw.get("question") or ""),
+            answer=str(raw.get("answer") or ""),
+            lesson=str(raw.get("lesson") or raw.get("answer") or ""),
+            risk=str(raw.get("risk") or "medium"),
+            source=str(raw.get("source") or ""),
+            step=int(raw.get("step") or 0),
+            created_at=str(raw.get("created_at") or ""),
+            action=str(raw.get("action") or "idle"),
+            turn_bias=float(raw.get("turn_bias") or 0.0),
+            confidence=float(raw.get("confidence") or 0.5),
+        )
+
+
+@dataclass
 class PathHop:
     """One ADJACENT hop on a return path (node pair + edge props for steering)."""
 
@@ -582,6 +636,38 @@ class PlaceGraphStore(Protocol):
         max_hops: int = 64,
     ) -> tuple[list[int | str], list[PathHop]] | None: ...
 
+    def upsert_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str,
+        question: str,
+        answer: str,
+        lesson: str = "",
+        risk: str = "medium",
+        source: str = "",
+        step: int = 0,
+        lesson_id: str | None = None,
+        action: str = "idle",
+        turn_bias: float = 0.0,
+        confidence: float = 0.5,
+    ) -> PlaceLesson: ...
+
+    def list_lessons(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+        limit: int = 16,
+    ) -> list[PlaceLesson]: ...
+
+    def latest_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+    ) -> PlaceLesson | None: ...
+
 
 @dataclass
 class InMemoryPlaceGraph:
@@ -590,12 +676,14 @@ class InMemoryPlaceGraph:
     view_dim: int = PATCH_VEC_DIM
     _nodes: dict[int, PlaceNode] = field(default_factory=dict)
     _edges: dict[int, PlaceEdge] = field(default_factory=dict)
+    _lessons: dict[str, list[PlaceLesson]] = field(default_factory=dict)
     _next_id: int = 1
     _next_edge_id: int = 1
 
     def reset(self) -> None:
         self._nodes.clear()
         self._edges.clear()
+        self._lessons.clear()
         self._next_id = 1
         self._next_edge_id = 1
 
@@ -822,6 +910,83 @@ class InMemoryPlaceGraph:
     ) -> list[FoodPlaceHit]:
         rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
         return find_food_places_in_nodes(rows, min_value=min_value, limit=limit, kinds=kinds)
+
+    def upsert_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str,
+        question: str,
+        answer: str,
+        lesson: str = "",
+        risk: str = "medium",
+        source: str = "",
+        step: int = 0,
+        lesson_id: str | None = None,
+        action: str = "idle",
+        turn_bias: float = 0.0,
+        confidence: float = 0.5,
+    ) -> PlaceLesson:
+        node = self.get(place_id)
+        if node is None:
+            raise KeyError(f"unknown place_id: {place_id}")
+        lid = str(lesson_id or uuid4())
+        created = datetime.now(timezone.utc).isoformat()
+        row = PlaceLesson(
+            lesson_id=lid,
+            place_id=node.id,
+            cue=str(cue or ""),
+            question=str(question or "")[:400],
+            answer=str(answer or "")[:800],
+            lesson=str(lesson or answer or "")[:800],
+            risk=str(risk or "medium"),
+            source=str(source or ""),
+            step=int(step),
+            created_at=created,
+            action=str(action or "idle"),
+            turn_bias=float(turn_bias),
+            confidence=float(confidence),
+        )
+        key = str(node.id)
+        bucket = self._lessons.setdefault(key, [])
+        # Replace same cue+source+step lesson so place does not grow unbounded duplicates.
+        bucket[:] = [
+            item
+            for item in bucket
+            if not (
+                str(item.cue).lower() == row.cue.lower()
+                and str(item.source) == row.source
+                and int(item.step) == int(row.step)
+            )
+        ]
+        bucket.append(row)
+        props = dict(node.props or {})
+        props["lessons"] = [item.to_dict() for item in bucket[-16:]]
+        node.props = props
+        node.updated_at = datetime.now(timezone.utc)
+        return row
+
+    def list_lessons(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+        limit: int = 16,
+    ) -> list[PlaceLesson]:
+        rows = list(self._lessons.get(str(place_id), []))
+        if cue is not None:
+            want = str(cue).strip().lower()
+            rows = [r for r in rows if str(r.cue).strip().lower() == want]
+        return rows[-max(1, int(limit)) :]
+
+    def latest_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+    ) -> PlaceLesson | None:
+        rows = self.list_lessons(place_id, cue=cue, limit=1)
+        return rows[-1] if rows else None
 
     def shortest_path(
         self,
@@ -1264,6 +1429,93 @@ class PgPlaceGraph:
         rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
         return find_food_places_in_nodes(rows, min_value=min_value, limit=limit, kinds=kinds)
 
+    def upsert_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str,
+        question: str,
+        answer: str,
+        lesson: str = "",
+        risk: str = "medium",
+        source: str = "",
+        step: int = 0,
+        lesson_id: str | None = None,
+        action: str = "idle",
+        turn_bias: float = 0.0,
+        confidence: float = 0.5,
+    ) -> PlaceLesson:
+        """Postgres place graph stores lessons on node props only (no Lesson table)."""
+        pid = int(place_id)
+        node = self.get(pid)
+        if node is None:
+            raise KeyError(f"unknown place_id: {place_id}")
+        lid = str(lesson_id or uuid4())
+        created = datetime.now(timezone.utc).isoformat()
+        row = PlaceLesson(
+            lesson_id=lid,
+            place_id=node.id,
+            cue=str(cue or ""),
+            question=str(question or "")[:400],
+            answer=str(answer or "")[:800],
+            lesson=str(lesson or answer or "")[:800],
+            risk=str(risk or "medium"),
+            source=str(source or ""),
+            step=int(step),
+            created_at=created,
+            action=str(action or "idle"),
+            turn_bias=float(turn_bias),
+            confidence=float(confidence),
+        )
+        props = dict(node.props or {})
+        bucket = [
+            PlaceLesson.from_dict(x)
+            for x in list(props.get("lessons") or [])
+            if isinstance(x, dict)
+        ]
+        bucket = [
+            item
+            for item in bucket
+            if not (
+                str(item.cue).lower() == row.cue.lower()
+                and str(item.source) == row.source
+                and int(item.step) == int(row.step)
+            )
+        ]
+        bucket.append(row)
+        props["lessons"] = [item.to_dict() for item in bucket[-16:]]
+        self.refresh_place(pid, node.view_vec, walls=node.walls, props=props, step=step or None)
+        return row
+
+    def list_lessons(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+        limit: int = 16,
+    ) -> list[PlaceLesson]:
+        node = self.get(int(place_id))
+        if node is None:
+            return []
+        rows = [
+            PlaceLesson.from_dict(x)
+            for x in list((node.props or {}).get("lessons") or [])
+            if isinstance(x, dict)
+        ]
+        if cue is not None:
+            want = str(cue).strip().lower()
+            rows = [r for r in rows if str(r.cue).strip().lower() == want]
+        return rows[-max(1, int(limit)) :]
+
+    def latest_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+    ) -> PlaceLesson | None:
+        rows = self.list_lessons(place_id, cue=cue, limit=1)
+        return rows[-1] if rows else None
+
     def shortest_path(
         self,
         src_id: int | str,
@@ -1298,6 +1550,7 @@ class Neo4jPlaceGraph:
 
     ``(:Place)-[:HAS_WALL]->(:Wall)`` for chamber walls.
     ``(:Place)-[:HAS_SENSE]->(:Sense)`` for vision-correlated smell/taste details.
+    ``(:Place)-[:HAS_LESSON]->(:Lesson)`` for Father-advocate teachings at a place.
     ``(:Place)-[:ADJACENT]->(:Place)`` for path/reference transitions.
     """
 
@@ -1311,6 +1564,7 @@ class Neo4jPlaceGraph:
     VECTOR_INDEX = "place_view_vec"
     PLACE_ID_CONSTRAINT = "place_id_unique"
     WALL_ID_CONSTRAINT = "wall_id_unique"
+    LESSON_ID_CONSTRAINT = "lesson_id_unique"
 
     def __post_init__(self) -> None:
         try:
@@ -1350,6 +1604,10 @@ class Neo4jPlaceGraph:
         self._query(f"""
             CREATE CONSTRAINT {self.WALL_ID_CONSTRAINT} IF NOT EXISTS
             FOR (w:Wall) REQUIRE w.wall_id IS UNIQUE
+            """)
+        self._query(f"""
+            CREATE CONSTRAINT {self.LESSON_ID_CONSTRAINT} IF NOT EXISTS
+            FOR (l:Lesson) REQUIRE l.lesson_id IS UNIQUE
             """)
         self._query("""
             CREATE INDEX place_fly_updated IF NOT EXISTS
@@ -1952,6 +2210,143 @@ class Neo4jPlaceGraph:
             limit=limit,
             kinds=kind_list,
         )
+
+    def upsert_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str,
+        question: str,
+        answer: str,
+        lesson: str = "",
+        risk: str = "medium",
+        source: str = "",
+        step: int = 0,
+        lesson_id: str | None = None,
+        action: str = "idle",
+        turn_bias: float = 0.0,
+        confidence: float = 0.5,
+    ) -> PlaceLesson:
+        """Attach ``(:Place)-[:HAS_LESSON]->(:Lesson)`` for Father teachings."""
+        lid = str(lesson_id or uuid4())
+        created = datetime.now(timezone.utc).isoformat()
+        text_lesson = str(lesson or answer or "")[:800]
+        row = PlaceLesson(
+            lesson_id=lid,
+            place_id=str(place_id),
+            cue=str(cue or ""),
+            question=str(question or "")[:400],
+            answer=str(answer or "")[:800],
+            lesson=text_lesson,
+            risk=str(risk or "medium"),
+            source=str(source or ""),
+            step=int(step),
+            created_at=created,
+            action=str(action or "idle"),
+            turn_bias=float(turn_bias),
+            confidence=float(confidence),
+        )
+        self._query(
+            """
+            MATCH (p:Place {place_id: $place_id})
+            MERGE (l:Lesson {lesson_id: $lesson_id})
+            SET l.cue = $cue,
+                l.question = $question,
+                l.answer = $answer,
+                l.lesson = $lesson,
+                l.risk = $risk,
+                l.source = $source,
+                l.step = $step,
+                l.action = $action,
+                l.turn_bias = $turn_bias,
+                l.confidence = $confidence,
+                l.created_at = coalesce(l.created_at, $created_at),
+                l.updated_at = $created_at
+            MERGE (p)-[r:HAS_LESSON]->(l)
+            SET r.step = $step,
+                r.cue = $cue,
+                r.source = $source,
+                r.action = $action,
+                r.created_at = coalesce(r.created_at, $created_at)
+            """,
+            {
+                "place_id": str(place_id),
+                "lesson_id": row.lesson_id,
+                "cue": row.cue,
+                "question": row.question,
+                "answer": row.answer,
+                "lesson": row.lesson,
+                "risk": row.risk,
+                "source": row.source,
+                "step": int(row.step),
+                "action": row.action,
+                "turn_bias": float(row.turn_bias),
+                "confidence": float(row.confidence),
+                "created_at": created,
+            },
+        )
+        return row
+
+    def list_lessons(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+        limit: int = 16,
+    ) -> list[PlaceLesson]:
+        rows = self._query(
+            """
+            MATCH (p:Place {place_id: $place_id})-[r:HAS_LESSON]->(l:Lesson)
+            WHERE $cue IS NULL OR toLower(coalesce(l.cue, '')) = toLower($cue)
+            RETURN l.lesson_id AS lesson_id,
+                   p.place_id AS place_id,
+                   l.cue AS cue,
+                   l.question AS question,
+                   l.answer AS answer,
+                   l.lesson AS lesson,
+                   l.risk AS risk,
+                   l.source AS source,
+                   coalesce(l.step, r.step, 0) AS step,
+                   coalesce(l.created_at, r.created_at, '') AS created_at,
+                   coalesce(l.action, 'idle') AS action,
+                   coalesce(l.turn_bias, 0.0) AS turn_bias,
+                   coalesce(l.confidence, 0.5) AS confidence
+            ORDER BY coalesce(l.step, r.step, 0) ASC, coalesce(l.created_at, '') ASC
+            LIMIT $limit
+            """,
+            {
+                "place_id": str(place_id),
+                "cue": None if cue is None else str(cue),
+                "limit": max(1, int(limit)),
+            },
+        )
+        return [
+            PlaceLesson(
+                lesson_id=str(row.get("lesson_id") or ""),
+                place_id=row.get("place_id") if row.get("place_id") is not None else place_id,
+                cue=str(row.get("cue") or ""),
+                question=str(row.get("question") or ""),
+                answer=str(row.get("answer") or ""),
+                lesson=str(row.get("lesson") or row.get("answer") or ""),
+                risk=str(row.get("risk") or "medium"),
+                source=str(row.get("source") or ""),
+                step=int(row.get("step") or 0),
+                created_at=str(row.get("created_at") or ""),
+                action=str(row.get("action") or "idle"),
+                turn_bias=float(row.get("turn_bias") or 0.0),
+                confidence=float(row.get("confidence") or 0.5),
+            )
+            for row in rows
+        ]
+
+    def latest_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+    ) -> PlaceLesson | None:
+        rows = self.list_lessons(place_id, cue=cue, limit=64)
+        return rows[-1] if rows else None
 
     def shortest_path(
         self,

@@ -131,6 +131,8 @@ def _pipeline(ex: ManualExecutor, *, interrupt: bool = False) -> LiveMindPipelin
     from flybrain.motor import MotorLayerConfig
     from flybrain.thinking.stimulus_interrupt import StimulusInterruptConfig
 
+    from flybrain.thinking.father_advocate import FatherAdvocateConfig
+
     pipe = LiveMindPipeline(
         FakeFlyEnv(),
         config=LiveMindConfig(
@@ -145,6 +147,7 @@ def _pipeline(ex: ManualExecutor, *, interrupt: bool = False) -> LiveMindPipelin
             async_min_steps=2,
             async_reframe_max_steps=50,
             use_vision_head=False,
+            father_advocate=FatherAdvocateConfig(enabled=False),
         ),
         memory=InMemoryShortTermMemory(dim=TOTAL_EMBEDDING_DIM),
     )

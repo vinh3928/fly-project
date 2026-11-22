@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,15 +25,26 @@ from flybrain.env import FakeFlyEnv
 from flybrain.memory.embedder import MindEmbedder
 from flybrain.memory.pgvector import ShortTermMemory, open_short_term_memory
 from flybrain.memory.place_graph import PlaceGraphConfig, open_place_graph
+from flybrain.memory.skill_cortex import (
+    SkillCortexConfig,
+    SkillProgram,
+    open_skill_cortex,
+)
 from flybrain.motor import (
     MotorActController,
     MotorLayer,
     MotorLayerConfig,
+    SkillExecutor,
+    babble_gate,
+    build_candidate_skill,
     goal_from_intent,
     make_directive,
     mode_for_plan,
     orient_goal,
+    sample_babble_program,
+    score_babble_episode,
 )
+from flybrain.motor.skill_babble import signals_for_gate
 from flybrain.phase9 import DEFAULT_MIND_INTERVAL
 from flybrain.pipeline.async_mind import (
     MIND_JOB_DEEP,
@@ -53,6 +65,19 @@ from flybrain.thinking.conditioning import (
     rewrite_present_after_judgement,
 )
 from flybrain.thinking.devils_advocate import propose_critique
+from flybrain.thinking.father_advocate import (
+    FatherAdvocateConfig,
+    FatherLesson,
+    FatherLessonStore,
+    FatherQuestion,
+    FatherReply,
+    answer_father_question,
+    blend_goal_with_father,
+    directive_fields_from_father_lesson,
+    lesson_from_reply,
+    make_father_client,
+    propose_father_question,
+)
 from flybrain.thinking.interest import (
     InterestConfig,
     InterestPointStore,
@@ -492,7 +517,9 @@ class LiveMindConfig:
     judgement: JudgementConfig | None = None
     interest: InterestConfig | None = None
     stimulus_interrupt: StimulusInterruptConfig | None = None
+    father_advocate: FatherAdvocateConfig | None = None
     place_graph: PlaceGraphConfig | None = None
+    skill_cortex: SkillCortexConfig | None = None
     sugar_search: SugarSearchConfig | None = None
     route_home: RouteHomeConfig | None = None
 
@@ -516,7 +543,9 @@ class LiveMindConfig:
         judgement_raw = data.get("judgement") or {}
         interest_raw = data.get("interest") or {}
         interrupt_raw = data.get("stimulus_interrupt") or {}
+        father_raw = data.get("father_advocate") or {}
         place_raw = data.get("place_graph") or {}
+        skill_raw = data.get("skill_cortex") or {}
         clamps = dict(thinking.get("action_clamps") or {})
         if "wall_hazard_forward_scale" in vn_live:
             clamps["wall_hazard_forward_scale"] = vn_live["wall_hazard_forward_scale"]
@@ -580,7 +609,9 @@ class LiveMindConfig:
             judgement=JudgementConfig.from_dict(judgement_raw),
             interest=InterestConfig.from_dict(interest_raw),
             stimulus_interrupt=StimulusInterruptConfig.from_dict(interrupt_raw),
+            father_advocate=FatherAdvocateConfig.from_dict(father_raw),
             place_graph=PlaceGraphConfig.from_dict(place_raw),
+            skill_cortex=SkillCortexConfig.from_dict(skill_raw),
             sugar_search=SugarSearchConfig.from_dict(data.get("sugar_search") or {}),
             route_home=RouteHomeConfig.from_dict(data.get("route_home") or {}),
         )
@@ -710,6 +741,7 @@ class LiveMindPipeline:
         )
         self._last_route_home: dict[str, Any] | None = None
         self._last_place_node = None
+        from flybrain.debug.father_dialog_channel import FatherDialogChannel
         from flybrain.debug.mind_log_channel import MindLogDebugChannel
         from flybrain.debug.route_path_channel import RoutePathDebugChannel
 
@@ -717,6 +749,26 @@ class LiveMindPipeline:
         self.route_path = env_channel if env_channel is not None else RoutePathDebugChannel()
         mind_log_channel = getattr(env, "mind_log_channel", None)
         self.mind_log = mind_log_channel if mind_log_channel is not None else MindLogDebugChannel()
+        father_ch = getattr(env, "father_dialog_channel", None)
+        self.father_dialog = father_ch if father_ch is not None else FatherDialogChannel()
+        self.father_config = self.config.father_advocate or FatherAdvocateConfig()
+        father_mock = (
+            self.config.llm_mock
+            if self.father_config.mock is None
+            else bool(self.father_config.mock)
+        )
+        self.father_client = make_father_client(
+            mock=father_mock,
+            llm_kwargs=self.config.llm_kwargs,
+        )
+        self.father_lessons = FatherLessonStore(max_lessons=int(self.father_config.max_lessons))
+        self._father_waiting = False
+        self._father_wait_steps = 0
+        self._father_wait_started: float | None = None
+        self._father_request_id = 0
+        self._father_question: FatherQuestion | None = None
+        self._father_lesson: FatherLesson | None = None
+        self._next_father_request_id = 1
         self._orient_base: np.ndarray | None = None
         self.visual_novelty = VisualNoveltyTracker(
             self.config.visual_novelty or VisualNoveltyConfig()
@@ -742,6 +794,16 @@ class LiveMindPipeline:
             )
         )
         pg_cfg = self.config.place_graph or PlaceGraphConfig(enabled=False, backend="in_memory")
+        # Isolate place-cache disk per fly so Fly 1 / 2 maps do not collide.
+        if isinstance(pg_cfg.cache, dict):
+            from flybrain.fly_profiles import place_cache_dir_for_fly
+
+            base = str(pg_cfg.cache.get("dir") or "logs/place_cache")
+            if not str(base).rstrip("/").endswith(self.config.fly_id):
+                pg_cfg.cache = {
+                    **pg_cfg.cache,
+                    "dir": place_cache_dir_for_fly(self.config.fly_id, base=base),
+                }
         self.place_graph_config = pg_cfg
         self.place_graph = None
         self.mapped_sensors: MappedSensorFeedback | None = None
@@ -760,6 +822,23 @@ class LiveMindPipeline:
                 config=pg_cfg,
                 fly_id=self.config.fly_id,
             )
+        sc_cfg = self.config.skill_cortex or SkillCortexConfig(enabled=False, backend="in_memory")
+        self.skill_cortex_config = sc_cfg
+        self.skill_cortex = None
+        self.skill_executor = SkillExecutor()
+        self._last_babble_step = -10_000
+        self._last_babble_skill_id: str | None = None
+        self._pending_skill_promote_id: str | None = None
+        self._skill_playing_candidate = False
+        if sc_cfg.enabled:
+            self.skill_cortex = open_skill_cortex(
+                backend=sc_cfg.backend,
+                uri=sc_cfg.uri,
+                user=sc_cfg.user,
+                password=sc_cfg.password,
+                database=sc_cfg.database,
+            )
+            self._refresh_skill_candidates()
         self._interrupt_pending = False
         self._interrupt_remaining = 0
         self._interrupt_reason = ""
@@ -1023,6 +1102,488 @@ class LiveMindPipeline:
                 ).copy()
             else:
                 self._interrupt_joint_vec = None
+            self._begin_father_advocate(signals if isinstance(signals, dict) else {})
+
+    def _begin_father_advocate(self, signals: dict[str, Any]) -> None:
+        """Ask the Father advocate when a novel interrupt arms."""
+        cfg = self.father_config
+        self._father_lesson = None
+        self._father_question = None
+        self._father_waiting = False
+        self._father_wait_steps = 0
+        self._father_wait_started = None
+        if not bool(cfg.enabled):
+            return
+        cue = str((self._interrupt_meta or {}).get("cue") or "")
+        place_id = getattr(self._last_place_node, "id", None)
+        prior = self._lookup_father_lesson(cue=cue, place_id=place_id)
+        if prior is not None:
+            # Already taught on this place+cue (or cue) — reuse without blocking.
+            self._father_lesson = prior
+            self._install_father_resume_goal(prior)
+            if self.config.console_log:
+                print(
+                    f"father_reuse step={self._step} cue={cue} place={place_id} "
+                    f"action={prior.action} lesson={prior.lesson[:80]}",
+                    flush=True,
+                )
+            return
+        request_id = int(self._next_father_request_id)
+        self._next_father_request_id = request_id + 1
+        question = propose_father_question(
+            self.father_client,
+            request_id=request_id,
+            step=int(self._step),
+            cue=cue,
+            reason=str(self._interrupt_reason or ""),
+            signals=signals,
+            config=cfg,
+        )
+        self._father_question = question
+        self._father_request_id = request_id
+        mode = str(cfg.mode or "human_or_llm").lower()
+        has_unity = self.father_dialog.side_channel is not None
+        if mode == "llm" or not has_unity:
+            reply = answer_father_question(
+                self.father_client,
+                question,
+                config=cfg,
+                source="llm",
+            )
+            self._apply_father_reply(reply)
+            return
+        allow_llm = mode in ("human_or_llm", "llm")
+        self.father_dialog.send_ask(
+            request_id=request_id,
+            step=int(self._step),
+            cue=cue,
+            question=question.question,
+            allow_llm=allow_llm,
+        )
+        # Hard-stop motor until human/LLM reply (or timeout_seconds → auto LLM).
+        self._father_waiting = True
+        self._father_wait_steps = 0
+        self._father_wait_started = time.monotonic()
+        self._father_polled_step = -1
+        if self.motor is not None:
+            pushed = self._push_motor_directive(
+                mode="idle",
+                plan_name="idle",
+                goal=STOP_GOAL.copy(),
+                reason="father_waiting",
+            )
+            if pushed is None:
+                self.motor.set_goal(STOP_GOAL.copy())
+                set_goal = getattr(self.env, "set_goal", None)
+                if callable(set_goal):
+                    set_goal(STOP_GOAL.copy())
+        if self.config.console_log:
+            print(
+                f"father_ask step={self._step} id={request_id} cue={cue} "
+                f"timeout_s={float(cfg.timeout_seconds):.0f} q={question.question}",
+                flush=True,
+            )
+
+    def _lookup_father_lesson(
+        self,
+        *,
+        cue: str,
+        place_id: int | str | None,
+    ) -> FatherLesson | None:
+        """Reuse RAM lesson, then place-graph ``HAS_LESSON`` for place+cue."""
+        ram = self.father_lessons.latest_for_place_cue(place_id, cue)
+        if ram is not None:
+            return ram
+        if place_id is None or self.place_graph is None:
+            return None
+        latest_fn = getattr(self.place_graph, "latest_lesson", None)
+        if not callable(latest_fn):
+            return None
+        try:
+            placed = latest_fn(place_id, cue=cue)
+        except Exception:
+            return None
+        if placed is None:
+            return None
+        return FatherLesson(
+            cue=str(getattr(placed, "cue", cue) or cue),
+            question=str(getattr(placed, "question", "") or ""),
+            answer=str(getattr(placed, "answer", "") or ""),
+            lesson=str(getattr(placed, "lesson", "") or getattr(placed, "answer", "") or ""),
+            risk=str(getattr(placed, "risk", "medium") or "medium"),
+            source=str(getattr(placed, "source", "place") or "place"),
+            step=int(getattr(placed, "step", 0) or 0),
+            place_id=getattr(placed, "place_id", place_id),
+            action=str(getattr(placed, "action", "idle") or "idle"),
+            turn_bias=float(getattr(placed, "turn_bias", 0.0) or 0.0),
+            confidence=float(getattr(placed, "confidence", 0.5) or 0.5),
+        )
+
+    def _persist_father_lesson(self, lesson: FatherLesson) -> None:
+        """Attach ``(:Place)-[:HAS_LESSON]->(:Lesson)`` when a place is known."""
+        if self.place_graph is None or lesson.place_id is None:
+            return
+        upsert = getattr(self.place_graph, "upsert_lesson", None)
+        if not callable(upsert):
+            return
+        try:
+            upsert(
+                lesson.place_id,
+                cue=lesson.cue,
+                question=lesson.question,
+                answer=lesson.answer,
+                lesson=lesson.lesson,
+                risk=lesson.risk,
+                source=lesson.source,
+                step=int(lesson.step),
+                action=lesson.action,
+                turn_bias=float(lesson.turn_bias),
+                confidence=float(lesson.confidence),
+            )
+        except Exception as exc:
+            if self.config.console_log:
+                print(f"father_place_lesson_error step={self._step} err={exc}", flush=True)
+
+    def _install_father_resume_goal(self, lesson: FatherLesson) -> None:
+        """Blend structured Father action into the post-freeze resume goal."""
+        if float(lesson.confidence) < 0.25:
+            return
+        self._resume_goal = blend_goal_with_father(self._resume_goal, lesson)
+
+    def _push_father_motor_directive(self, lesson: FatherLesson) -> None:
+        """Push structured Father action onto the motor directive bus."""
+        if self.act_controller is None or self.motor is None:
+            return
+        if float(lesson.confidence) < 0.25:
+            return
+        if self._maybe_start_skill_from_lesson(lesson):
+            return
+        fields = directive_fields_from_father_lesson(lesson)
+        self._push_motor_directive(
+            mode=fields["mode"],
+            plan_name=fields["plan_name"],
+            goal=fields["goal"],
+            reason=str(fields["reason"]),
+            allow_pivot=bool(fields["allow_pivot"]),
+        )
+
+    def _refresh_skill_candidates(self) -> None:
+        """Load promoted skills into L1 dynamic candidate pool."""
+        thinking = getattr(self, "thinking", None)
+        if thinking is None:
+            return
+        if self.skill_cortex is None:
+            thinking.extra_action_candidates = []
+            return
+        try:
+            promoted = self.skill_cortex.list_skills(
+                fly_id=self.config.fly_id, status="promoted", limit=32
+            )
+        except Exception:
+            thinking.extra_action_candidates = []
+            return
+        thinking.extra_action_candidates = [
+            (str(p.name), np.asarray(p.first_goal, dtype=np.float32)) for p in promoted if p.steps
+        ]
+
+    def _lookup_promoted_skill(self, name: str) -> SkillProgram | None:
+        if self.skill_cortex is None or not str(name or "").strip():
+            return None
+        key = str(name).strip()
+        if key.startswith("skill_"):
+            key = key[len("skill_") :]
+        try:
+            return self.skill_cortex.get_by_name(
+                key, fly_id=self.config.fly_id, status="promoted"
+            )
+        except Exception:
+            return None
+
+    def _start_skill_playback(self, program: SkillProgram, *, candidate: bool = False) -> None:
+        self.skill_executor.start(program)
+        self._skill_playing_candidate = bool(candidate)
+        # Install first step without advancing duration; caller ticks next.
+        if (
+            self.act_controller is not None
+            and self.motor is not None
+            and program.steps
+        ):
+            step0 = program.steps[0]
+            self._push_motor_directive(
+                mode="act_anything",
+                plan_name=f"skill_{program.name}",
+                goal=np.asarray(step0.goal, dtype=np.float32).copy(),
+                reason="skill_start",
+                allow_pivot=True,
+            )
+
+    def _maybe_start_skill_from_lesson(self, lesson: FatherLesson) -> bool:
+        """If lesson names a promoted skill, start playback instead of single-goal map."""
+        name = str(lesson.skill_name or "").strip()
+        if not name:
+            # Place lessons may store skill name in action when Father taught a move.
+            action = str(lesson.action or "").strip()
+            if action and action not in ("approach", "avoid", "taste", "idle"):
+                name = action
+        if not name:
+            return False
+        program = self._lookup_promoted_skill(name)
+        if program is None:
+            return False
+        self._start_skill_playback(program, candidate=False)
+        return True
+
+    def _handle_father_skill_promote(self, lesson: FatherLesson) -> None:
+        """Promote last babble candidate and/or bind skill_name into cortex."""
+        if self.skill_cortex is None:
+            return
+        skill_id = self._pending_skill_promote_id or self._last_babble_skill_id
+        if lesson.promote_last_candidate or lesson.skill_name:
+            if skill_id:
+                try:
+                    promoted = self.skill_cortex.promote_skill(
+                        skill_id,
+                        name=lesson.skill_name or None,
+                        tags=["father"],
+                    )
+                except Exception as exc:
+                    if self.config.console_log:
+                        print(
+                            f"skill_promote_error step={self._step} err={exc}",
+                            flush=True,
+                        )
+                    promoted = None
+                if promoted is not None:
+                    self._pending_skill_promote_id = None
+                    self._refresh_skill_candidates()
+                    if self.config.console_log:
+                        print(
+                            f"skill_promoted step={self._step} id={promoted.skill_id} "
+                            f"name={promoted.name}",
+                            flush=True,
+                        )
+                    return
+            # Father invent: no candidate — nothing to upsert without a program body.
+            if lesson.skill_name and self.config.console_log:
+                print(
+                    f"skill_promote_miss step={self._step} name={lesson.skill_name}",
+                    flush=True,
+                )
+
+    def _finish_skill_episode_if_needed(self) -> None:
+        if self.skill_cortex is None:
+            return
+        if not self.skill_executor.finished or self.skill_executor.program is None:
+            return
+        stats = self.skill_executor.episode_stats()
+        skill_id = str(stats.get("skill_id") or "")
+        if not skill_id:
+            self.skill_executor.clear()
+            return
+        score = score_babble_episode(
+            motion_variance=float(stats.get("motion_variance") or 0.0),
+            damage_spike=bool(stats.get("damage_spike")),
+            novelty_during=float(stats.get("novelty_during") or 0.0),
+            completed=bool(stats.get("completed")),
+        )
+        try:
+            self.skill_cortex.set_score(skill_id, score)
+        except Exception:
+            pass
+        if (
+            self._skill_playing_candidate
+            and score >= float(self.skill_cortex_config.promote_min_score)
+        ):
+            self._pending_skill_promote_id = skill_id
+        self._skill_playing_candidate = False
+        self.skill_executor.clear()
+
+    def _maybe_babble_skill(self, signals: dict[str, Any], affect: dict[str, Any]) -> bool:
+        """Start a babble candidate when gated; returns True if playback started."""
+        if self.skill_cortex is None or not self.skill_cortex_config.enabled:
+            return False
+        if self.skill_executor.active:
+            return False
+        if self._interrupt_pending or self._father_waiting:
+            return False
+        gate_vals = signals_for_gate(signals, affect)
+        gate = babble_gate(
+            config=self.skill_cortex_config.babble,
+            step=int(self._step),
+            last_babble_step=int(self._last_babble_step),
+            executor_active=self.skill_executor.active,
+            novelty=gate_vals["novelty"],
+            survival_risk=gate_vals["survival_risk"],
+            hunger=gate_vals["hunger"],
+            explore_tendency=gate_vals["explore_tendency"],
+            library_score_weak=True,
+        )
+        if not gate.ok:
+            return False
+        rng = np.random.default_rng(int(self._step) ^ hash(self.config.fly_id) & 0xFFFFFFFF)
+        name, steps, tags = sample_babble_program(
+            rng, config=self.skill_cortex_config.babble
+        )
+        place_id = getattr(self._last_place_node, "id", None)
+        program = build_candidate_skill(
+            fly_id=self.config.fly_id,
+            steps=steps,
+            name=name,
+            tags=tags,
+            cue=str(signals.get("interrupt_cue") or signals.get("cue") or "babble"),
+            place_id=str(place_id) if place_id is not None else None,
+            step=int(self._step),
+        )
+        try:
+            stored = self.skill_cortex.upsert_skill(program)
+        except Exception as exc:
+            if self.config.console_log:
+                print(f"skill_babble_error step={self._step} err={exc}", flush=True)
+            return False
+        self._last_babble_step = int(self._step)
+        self._last_babble_skill_id = stored.skill_id
+        self._start_skill_playback(stored, candidate=True)
+        if self.config.console_log:
+            print(
+                f"skill_babble step={self._step} id={stored.skill_id} "
+                f"name={stored.name} steps={len(stored.steps)}",
+                flush=True,
+            )
+        return True
+
+    def _tick_skill_executor(self, info: dict[str, Any] | None = None) -> bool:
+        """Advance active skill playback; return True if skill owns the motor."""
+        if not self.skill_executor.active and not (
+            self.skill_executor.program is not None and not self.skill_executor.finished
+        ):
+            self._finish_skill_episode_if_needed()
+            return False
+        if self._interrupt_pending or self._father_waiting:
+            self.skill_executor.preempt("interrupt")
+            self._finish_skill_episode_if_needed()
+            return False
+        snap = info if isinstance(info, dict) else {}
+        motion = abs(float(snap.get("speed", snap.get("pose_delta", 0.0)) or 0.0))
+        novelty = float(snap.get("visual_novelty", snap.get("novelty", 0.0)) or 0.0)
+        damage = float(snap.get("damage", snap.get("bitter", 0.0)) or 0.0)
+        self.skill_executor.observe(motion=motion, novelty=novelty, damage=damage)
+        frame = self.skill_executor.tick()
+        if frame.active and self.act_controller is not None and self.motor is not None:
+            self._push_motor_directive(
+                mode="act_anything",
+                plan_name=frame.plan_name,
+                goal=frame.goal,
+                reason=frame.reason,
+                allow_pivot=True,
+            )
+            if isinstance(info, dict):
+                info["skill_playback"] = True
+                info["skill_name"] = frame.skill_name
+                info["skill_step"] = frame.step_index
+            return True
+        self._finish_skill_episode_if_needed()
+        return False
+
+    def _apply_father_reply(self, reply: FatherReply) -> None:
+        question = self._father_question
+        if question is None:
+            self._father_waiting = False
+            return
+        place_id = getattr(self._last_place_node, "id", None)
+        lesson = lesson_from_reply(question, reply, place_id=place_id)
+        if str(reply.answer or "").strip() and reply.source != "skip":
+            self.father_lessons.add(lesson)
+            self._father_lesson = lesson
+            self._persist_father_lesson(lesson)
+            self._handle_father_skill_promote(lesson)
+            self._install_father_resume_goal(lesson)
+        else:
+            self._father_lesson = None
+        self._father_waiting = False
+        self._father_wait_started = None
+        self.father_dialog.send_hide(request_id=int(question.request_id))
+        if self.config.console_log:
+            print(
+                f"father_reply step={self._step} source={reply.source} "
+                f"place={place_id} action={lesson.action} "
+                f"skill={lesson.skill_name or '-'} "
+                f"conf={float(lesson.confidence):.2f} answer={reply.answer[:120]}",
+                flush=True,
+            )
+
+    def _poll_father_advocate(self) -> bool:
+        """Return True when Father is still waiting on a human/LLM reply.
+
+        Motor stays hard-stopped until a reply arrives or ``timeout_seconds``
+        elapses (then auto-LLM). Safe to call multiple times per step.
+        """
+        if not self._father_waiting or self._father_question is None:
+            return False
+        if int(getattr(self, "_father_polled_step", -1)) == int(self._step):
+            return True
+        self._father_polled_step = int(self._step)
+        cfg = self.father_config
+        incoming = self.father_dialog.pop_reply(int(self._father_request_id))
+        if incoming is not None:
+            source = str(incoming.get("source") or "human")
+            if source == "ask_llm":
+                reply = answer_father_question(
+                    self.father_client,
+                    self._father_question,
+                    config=cfg,
+                    source="llm",
+                )
+                self._apply_father_reply(reply)
+                return False
+            if source == "skip":
+                self._apply_father_reply(
+                    FatherReply(
+                        request_id=int(self._father_request_id),
+                        source="skip",
+                        answer="",
+                        lesson="",
+                        risk="medium",
+                    )
+                )
+                return False
+            answer = str(incoming.get("answer") or "").strip()
+            self._apply_father_reply(
+                FatherReply(
+                    request_id=int(self._father_request_id),
+                    source="human",
+                    answer=answer,
+                    lesson=answer,
+                    risk="medium",
+                )
+            )
+            return False
+        self._father_wait_steps += 1
+        timed_out = False
+        timeout_s = float(getattr(cfg, "timeout_seconds", 0.0) or 0.0)
+        if timeout_s > 0.0:
+            started = float(self._father_wait_started or time.monotonic())
+            timed_out = (time.monotonic() - started) >= timeout_s
+        elif int(getattr(cfg, "timeout_steps", 0) or 0) > 0:
+            timed_out = self._father_wait_steps >= max(1, int(cfg.timeout_steps))
+        else:
+            timed_out = (
+                time.monotonic() - float(self._father_wait_started or time.monotonic())
+            ) >= 60.0
+        if timed_out:
+            if self.config.console_log:
+                print(
+                    f"father_timeout step={self._step} " f"auto_llm after {timeout_s or 60.0:.0f}s",
+                    flush=True,
+                )
+            reply = answer_father_question(
+                self.father_client,
+                self._father_question,
+                config=cfg,
+                source="timeout_llm",
+            )
+            self._apply_father_reply(reply)
+            return False
+        return True
 
     def _clear_stimulus_interrupt(self) -> None:
         cfg = self.stimulus_interrupt
@@ -1034,13 +1595,16 @@ class LiveMindPipeline:
         joint = self._interrupt_joint_vec
         if patch is not None and float(np.linalg.norm(patch)) > 1e-6:
             try:
+                stm_signals: dict[str, Any] = {
+                    "stimulus_interrupt": True,
+                    "interrupt_reason": self._interrupt_reason,
+                    "cue": (self._interrupt_meta or {}).get("cue"),
+                }
+                if self._father_lesson is not None:
+                    stm_signals.update(self._father_lesson.to_signals())
                 self.memory.insert_embedding(
                     embedding=np.zeros(self.embedder.total_dim, dtype=np.float32),
-                    signals={
-                        "stimulus_interrupt": True,
-                        "interrupt_reason": self._interrupt_reason,
-                        "cue": (self._interrupt_meta or {}).get("cue"),
-                    },
+                    signals=stm_signals,
                     affect={},
                     episode_id=self.config.experiment_id,
                     step=int(self._step),
@@ -1067,11 +1631,29 @@ class LiveMindPipeline:
         self._interrupt_smell_vec = None
         self._interrupt_sensors_vec = None
         self._interrupt_joint_vec = None
+        if self._father_waiting and self._father_question is not None:
+            self.father_dialog.send_hide(request_id=int(self._father_question.request_id))
+        self._father_waiting = False
+        self._father_wait_steps = 0
+        self._father_wait_started = None
+        self._father_question = None
         self._interrupt_cooldown_until = int(self._step) + int(cfg.cooldown_steps)
         if self.mind_scheduler is not None:
             self.mind_scheduler.invalidate("freeze_cleared")
         self.conditioning.end_freeze()
         # Natural / early unlock: install last accept blend so motion resumes conditioned.
+        # Structured Father lessons win on locomotion channels when confidence is high.
+        if self._father_lesson is not None:
+            self._install_father_resume_goal(self._father_lesson)
+        father = self._father_lesson
+        if father is not None and float(father.confidence) >= 0.25:
+            if self._maybe_start_skill_from_lesson(father):
+                self._resume_goal = None
+                if self.motor is not None:
+                    self._pending_action = self.motor.goal.copy()
+                # Persist post-freeze conditioning (acks + hits) for later sessions.
+                self._persist_conditioning_to_stm()
+                return
         if self._resume_goal is not None and self.motor is not None:
             goal = np.asarray(self._resume_goal, dtype=np.float32).copy()
             plan_name = None
@@ -1082,7 +1664,27 @@ class LiveMindPipeline:
             )
             if isinstance(intent, dict):
                 plan_name = (intent.get("future") or {}).get("chosen_name")
-            if self.act_controller is not None:
+            if father is not None and float(father.confidence) >= 0.25:
+                fields = directive_fields_from_father_lesson(father)
+                plan_name = str(fields["plan_name"])
+                allow_pivot = bool(fields["allow_pivot"])
+                resume_mode = str(fields["mode"])
+                if resume_mode == "idle":
+                    resume_mode = "still"
+                if self.act_controller is not None:
+                    self._push_motor_directive(
+                        mode=resume_mode,
+                        plan_name=plan_name,
+                        goal=goal,
+                        reason="si_clear_father",
+                        allow_pivot=allow_pivot,
+                    )
+                else:
+                    self.motor.set_goal(goal, allow_pivot=allow_pivot)
+                    set_goal = getattr(self.env, "set_goal", None)
+                    if callable(set_goal):
+                        set_goal(goal)
+            elif self.act_controller is not None:
                 resume_mode = mode_for_plan(plan_name)
                 if resume_mode == "idle":
                     resume_mode = "act_anything"
@@ -1098,6 +1700,10 @@ class LiveMindPipeline:
                 if callable(set_goal):
                     set_goal(goal)
             self._pending_action = self.motor.goal.copy()
+        elif self._father_lesson is not None and float(self._father_lesson.confidence) >= 0.25:
+            self._push_father_motor_directive(self._father_lesson)
+            if self.motor is not None:
+                self._pending_action = self.motor.goal.copy()
         elif self.act_controller is not None:
             self._push_motor_directive(
                 mode="still",
@@ -1139,6 +1745,9 @@ class LiveMindPipeline:
         info["stimulus_interrupt_meta"] = dict(self._interrupt_meta)
         info["interrupt_remaining"] = int(self._interrupt_remaining)
         info["deep_thought"] = bool(mind_tick)
+        info["father_waiting"] = bool(self._father_waiting)
+        if self._father_waiting and self._father_question is not None:
+            info["father_question"] = self._father_question.question
         info["motor_goal"] = self.motor.goal.tolist()
         info["motor_action"] = action.tolist()
         info["architecture"] = "B"
@@ -1154,6 +1763,9 @@ class LiveMindPipeline:
         a plan made before the stimulus.
         """
         if not self._interrupt_pending:
+            return
+        # Hold the freeze clock while waiting on the Father dialog.
+        if self._poll_father_advocate():
             return
         self._interrupt_remaining = max(0, int(self._interrupt_remaining) - 1)
         if self._interrupt_remaining > 0:
@@ -1224,6 +1836,9 @@ class LiveMindPipeline:
         """Start the next background thought when the worker is idle (deep while frozen)."""
         sched = self.mind_scheduler
         if sched is None or sched.busy:
+            return False
+        # Do not think (or move planning) until Father reply arrives.
+        if self._father_waiting:
             return False
         deep = bool(self._interrupt_pending)
         min_steps = max(1, int(self.config.async_min_steps))
@@ -1361,6 +1976,11 @@ class LiveMindPipeline:
         signal_payload["interrupt_remaining"] = int(self._interrupt_remaining)
         signal_payload["interrupt_cue"] = meta.get("cue") or ""
         signal_payload["interrupt_reason"] = self._interrupt_reason or ""
+        if self._father_lesson is not None:
+            signal_payload.update(self._father_lesson.to_signals())
+        elif self._father_waiting and self._father_question is not None:
+            signal_payload["father_question"] = self._father_question.question
+            signal_payload["father_waiting"] = True
         place = place_info.get("place") or {}
         if place.get("place_id") is not None:
             signal_payload["place_id"] = place["place_id"]
@@ -1455,6 +2075,10 @@ class LiveMindPipeline:
             "mind_tick": True,
             "maturity": self.experience.maturity(),
         }
+        if self._father_lesson is not None:
+            info.update(self._father_lesson.to_signals())
+        elif self._father_question is not None:
+            info["father_question"] = self._father_question.question
 
         # Judge this deep tick (conditioning observe happens inside _apply_judgement).
         proposal = getattr(self.thinking, "_last_devil_proposal", None)
@@ -1644,6 +2268,9 @@ class LiveMindPipeline:
         pg_close = getattr(self.place_graph, "close", None)
         if callable(pg_close):
             pg_close()
+        sc_close = getattr(self.skill_cortex, "close", None)
+        if callable(sc_close):
+            sc_close()
         close = getattr(self.env, "close", None)
         if callable(close):
             close()
@@ -2125,6 +2752,17 @@ class LiveMindPipeline:
         right_eye: np.ndarray | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         if self._interrupt_pending and self._interrupt_remaining > 0:
+            if self._poll_father_advocate() or self._father_waiting:
+                info: dict[str, Any] = {
+                    "father_waiting": True,
+                    "father_question": (
+                        self._father_question.question if self._father_question else ""
+                    ),
+                }
+                if self._father_lesson is not None:
+                    info.update(self._father_lesson.to_signals())
+                action = self._apply_hard_stop(info, observation, mind_tick=False)
+                return action, info
             return self._process_deep_thought(
                 observation,
                 sim_time=sim_time,
@@ -2446,24 +3084,41 @@ class LiveMindPipeline:
             assert mind.goal is not None
             goal = mind.goal
             escaping = bool(info.get("blocked_escape_goal"))
-            # Mind push: think result → act_anything / still directive.
-            if self.act_controller is not None:
-                self._push_motor_directive(
-                    mode="act_anything" if escaping else mode_for_plan(plan_name),
-                    plan_name=str(plan_name or mode_for_plan(plan_name)),
-                    goal=goal,
-                    reason="blocked_escape" if escaping else "mind_think",
-                    allow_pivot=escaping,
-                )
+            # Skill playback owns the bus until done / preempted.
+            skill_owns = False
+            if escaping:
+                self.skill_executor.preempt("blocked_escape")
+                self._finish_skill_episode_if_needed()
             else:
-                self.motor.set_goal(goal, allow_pivot=escaping)
-                set_goal = getattr(self.env, "set_goal", None)
-                if callable(set_goal):
-                    set_goal(goal)
+                promoted = self._lookup_promoted_skill(str(plan_name or ""))
+                if promoted is not None and not self.skill_executor.active:
+                    self._start_skill_playback(promoted, candidate=False)
+                skill_owns = self._tick_skill_executor(info)
+                if not skill_owns:
+                    senses = info.get("signals") if isinstance(info.get("signals"), dict) else {}
+                    affect = info.get("affect") if isinstance(info.get("affect"), dict) else {}
+                    if self._maybe_babble_skill(senses or {}, affect or {}):
+                        skill_owns = True
+            if not skill_owns:
+                # Mind push: think result → act_anything / still directive.
+                if self.act_controller is not None:
+                    self._push_motor_directive(
+                        mode="act_anything" if escaping else mode_for_plan(plan_name),
+                        plan_name=str(plan_name or mode_for_plan(plan_name)),
+                        goal=goal,
+                        reason="blocked_escape" if escaping else "mind_think",
+                        allow_pivot=escaping,
+                    )
+                else:
+                    self.motor.set_goal(goal, allow_pivot=escaping)
+                    set_goal = getattr(self.env, "set_goal", None)
+                    if callable(set_goal):
+                        set_goal(goal)
             self._orient_base = None
             info["architecture"] = "B"
             if act:
-                self._apply_sugar_orient(mind.sensory, info)
+                if not skill_owns:
+                    self._apply_sugar_orient(mind.sensory, info)
                 if self.act_controller is not None:
                     action = self.act_controller.apply_tick(observation)
                 else:
@@ -2528,6 +3183,9 @@ class LiveMindPipeline:
             info=info,
         )
         if self._interrupt_pending and self.motor is not None:
+            if self.skill_executor.active:
+                self.skill_executor.preempt("interrupt")
+                self._finish_skill_episode_if_needed()
             action = self._apply_hard_stop(info, observation, mind_tick=False)
             self._motor_ticks += 1
             self._observe_physical_into(info, position, action)
@@ -2545,7 +3203,9 @@ class LiveMindPipeline:
             self._pending_action = action.copy()
             return action, info
 
-        self._apply_sugar_orient(sensory, info)
+        skill_owns = self._tick_skill_executor(info)
+        if not skill_owns:
+            self._apply_sugar_orient(sensory, info)
         if self.act_controller is not None:
             action = self.act_controller.apply_tick(observation)
         else:
@@ -2665,14 +3325,24 @@ class LiveMindPipeline:
                 if async_mind and self._last_mind_info:
                     action, info = self.process_async_step(obs)
                 elif should_think and self._interrupt_pending:
-                    if self.config.console_log:
-                        print(
-                            f"live_mind_deep_thought step={self._step} "
-                            f"remaining={self._interrupt_remaining} "
-                            f"reason={self._interrupt_reason}",
-                            flush=True,
-                        )
-                    action, info = self._process_deep_thought(obs)
+                    if self._poll_father_advocate() or self._father_waiting:
+                        info = {
+                            "father_waiting": True,
+                            "father_question": (
+                                self._father_question.question if self._father_question else ""
+                            ),
+                            "stimulus_interrupt": True,
+                        }
+                        action = self._apply_hard_stop(info, obs, mind_tick=False)
+                    else:
+                        if self.config.console_log:
+                            print(
+                                f"live_mind_deep_thought step={self._step} "
+                                f"remaining={self._interrupt_remaining} "
+                                f"reason={self._interrupt_reason}",
+                                flush=True,
+                            )
+                        action, info = self._process_deep_thought(obs)
                 elif should_think:
                     if self.config.console_log and self._step == 0:
                         print("live_mind_thinking step=0 …", flush=True)

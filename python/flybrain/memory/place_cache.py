@@ -702,6 +702,68 @@ class CachedPlaceGraph:
         rows = self.list_places(fly_id=fly_id, limit=max(64, int(limit) * 8))
         return find_food_places_in_nodes(rows, min_value=min_value, limit=limit, kinds=kinds)
 
+    def upsert_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str,
+        question: str,
+        answer: str,
+        lesson: str = "",
+        risk: str = "medium",
+        source: str = "",
+        step: int = 0,
+        lesson_id: str | None = None,
+        action: str = "idle",
+        turn_bias: float = 0.0,
+        confidence: float = 0.5,
+    ):
+        """Forward Father lessons to inner Neo4j / memory ``HAS_LESSON``."""
+        inner_fn = getattr(self.inner, "upsert_lesson", None)
+        if not callable(inner_fn):
+            raise AttributeError("inner place graph has no upsert_lesson")
+        self.stats.neo4j_writes += 1
+        return inner_fn(
+            place_id,
+            cue=cue,
+            question=question,
+            answer=answer,
+            lesson=lesson,
+            risk=risk,
+            source=source,
+            step=step,
+            lesson_id=lesson_id,
+            action=action,
+            turn_bias=turn_bias,
+            confidence=confidence,
+        )
+
+    def list_lessons(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+        limit: int = 16,
+    ):
+        inner_fn = getattr(self.inner, "list_lessons", None)
+        if not callable(inner_fn):
+            return []
+        self.stats.neo4j_reads += 1
+        return inner_fn(place_id, cue=cue, limit=limit)
+
+    def latest_lesson(
+        self,
+        place_id: int | str,
+        *,
+        cue: str | None = None,
+    ):
+        inner_fn = getattr(self.inner, "latest_lesson", None)
+        if callable(inner_fn):
+            self.stats.neo4j_reads += 1
+            return inner_fn(place_id, cue=cue)
+        rows = self.list_lessons(place_id, cue=cue, limit=1)
+        return rows[-1] if rows else None
+
     def shortest_path(
         self,
         src_id: int | str,

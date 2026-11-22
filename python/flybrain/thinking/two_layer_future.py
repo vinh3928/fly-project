@@ -625,13 +625,25 @@ def predict_present_future(
     embedding: np.ndarray | None = None,
     stimulus_thresholds: dict[str, float] | None = None,
     tendency: Any | None = None,
+    candidates: list[tuple[str, np.ndarray]] | None = None,
 ) -> FuturePrediction:
+    pool = list(_CANDIDATES)
+    if candidates:
+        # Append dynamic skill-cortex programs (first-step goals) without mutating library.
+        seen = {n for n, _ in pool}
+        for name, action in candidates:
+            key = str(name)
+            if key in seen:
+                continue
+            seen.add(key)
+            pool.append((key, np.asarray(action, dtype=np.float32)))
     best, scored, weights = layer1_quick_scan(
         signals=signals,
         affect=affect,
         experience=experience,
         world_model=world_model,
         embedding=embedding,
+        candidates=pool,
         stimulus_thresholds=stimulus_thresholds,
         tendency=tendency,
     )
