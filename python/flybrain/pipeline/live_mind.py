@@ -1293,9 +1293,7 @@ class LiveMindPipeline:
         if key.startswith("skill_"):
             key = key[len("skill_") :]
         try:
-            return self.skill_cortex.get_by_name(
-                key, fly_id=self.config.fly_id, status="promoted"
-            )
+            return self.skill_cortex.get_by_name(key, fly_id=self.config.fly_id, status="promoted")
         except Exception:
             return None
 
@@ -1303,11 +1301,7 @@ class LiveMindPipeline:
         self.skill_executor.start(program)
         self._skill_playing_candidate = bool(candidate)
         # Install first step without advancing duration; caller ticks next.
-        if (
-            self.act_controller is not None
-            and self.motor is not None
-            and program.steps
-        ):
+        if self.act_controller is not None and self.motor is not None and program.steps:
             step0 = program.steps[0]
             self._push_motor_directive(
                 mode="act_anything",
@@ -1390,9 +1384,8 @@ class LiveMindPipeline:
             self.skill_cortex.set_score(skill_id, score)
         except Exception:
             pass
-        if (
-            self._skill_playing_candidate
-            and score >= float(self.skill_cortex_config.promote_min_score)
+        if self._skill_playing_candidate and score >= float(
+            self.skill_cortex_config.promote_min_score
         ):
             self._pending_skill_promote_id = skill_id
         self._skill_playing_candidate = False
@@ -1421,9 +1414,7 @@ class LiveMindPipeline:
         if not gate.ok:
             return False
         rng = np.random.default_rng(int(self._step) ^ hash(self.config.fly_id) & 0xFFFFFFFF)
-        name, steps, tags = sample_babble_program(
-            rng, config=self.skill_cortex_config.babble
-        )
+        name, steps, tags = sample_babble_program(rng, config=self.skill_cortex_config.babble)
         place_id = getattr(self._last_place_node, "id", None)
         program = build_candidate_skill(
             fly_id=self.config.fly_id,

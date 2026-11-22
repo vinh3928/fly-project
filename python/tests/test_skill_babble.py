@@ -61,15 +61,18 @@ def test_babble_gate_conditions() -> None:
         survival_risk=0.1,
         hunger=0.1,
     ).ok
-    assert babble_gate(
-        config=cfg,
-        step=50,
-        last_babble_step=0,
-        executor_active=False,
-        novelty=0.5,
-        survival_risk=0.1,
-        hunger=0.1,
-    ).reason == "cooldown"
+    assert (
+        babble_gate(
+            config=cfg,
+            step=50,
+            last_babble_step=0,
+            executor_active=False,
+            novelty=0.5,
+            survival_risk=0.1,
+            hunger=0.1,
+        ).reason
+        == "cooldown"
+    )
     assert not babble_gate(
         config=cfg,
         step=500,

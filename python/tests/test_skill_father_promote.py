@@ -118,9 +118,7 @@ def test_father_promote_and_playback() -> None:
             promote_last_candidate=True,
         )
         pipe._handle_father_skill_promote(lesson)
-        got = pipe.skill_cortex.get_by_name(
-            "dance_spin", fly_id="fly_skill", status="promoted"
-        )
+        got = pipe.skill_cortex.get_by_name("dance_spin", fly_id="fly_skill", status="promoted")
         assert got is not None
         assert got.status == "promoted"
         names = [n for n, _ in pipe.thinking.extra_action_candidates]

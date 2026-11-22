@@ -14,8 +14,12 @@ def _prog() -> SkillProgram:
         name="dance_spin",
         status="promoted",
         steps=[
-            SkillStep(goal=np.asarray([0.3, 0.9, 0.5, 0.8, 0.0], dtype=np.float32), duration_steps=2),
-            SkillStep(goal=np.asarray([0.3, -0.9, 0.5, 0.8, 0.0], dtype=np.float32), duration_steps=2),
+            SkillStep(
+                goal=np.asarray([0.3, 0.9, 0.5, 0.8, 0.0], dtype=np.float32), duration_steps=2
+            ),
+            SkillStep(
+                goal=np.asarray([0.3, -0.9, 0.5, 0.8, 0.0], dtype=np.float32), duration_steps=2
+            ),
         ],
         tags=["dance"],
         source="babble",

@@ -382,24 +382,18 @@ class Neo4jSkillCortex:
         return list(records)
 
     def _ensure_schema(self) -> None:
-        self._query(
-            f"""
+        self._query(f"""
             CREATE CONSTRAINT {self.SKILL_ID_CONSTRAINT} IF NOT EXISTS
             FOR (s:Skill) REQUIRE s.skill_id IS UNIQUE
-            """
-        )
-        self._query(
-            f"""
+            """)
+        self._query(f"""
             CREATE CONSTRAINT {self.STEP_ID_CONSTRAINT} IF NOT EXISTS
             FOR (t:SkillStep) REQUIRE t.step_id IS UNIQUE
-            """
-        )
-        self._query(
-            """
+            """)
+        self._query("""
             CREATE INDEX skill_fly_status IF NOT EXISTS
             FOR (s:Skill) ON (s.fly_id, s.status, s.updated_at)
-            """
-        )
+            """)
 
     def upsert_skill(self, program: SkillProgram) -> SkillProgram:
         row = SkillProgram.from_dict(program.to_dict())
@@ -506,9 +500,7 @@ class Neo4jSkillCortex:
             ctx = SkillContext(
                 cue=str(record.get("ctx_cue") or ""),
                 place_id=(
-                    str(record["ctx_place_id"])
-                    if record.get("ctx_place_id") is not None
-                    else None
+                    str(record["ctx_place_id"]) if record.get("ctx_place_id") is not None else None
                 ),
                 step=int(record.get("ctx_step") or 0),
             )
@@ -568,9 +560,11 @@ class Neo4jSkillCortex:
         prog.steps = [
             SkillStep(
                 goal=np.asarray(
-                    json.loads(d["goal_json"])
-                    if isinstance(d.get("goal_json"), str)
-                    else (d.get("goal_json") or [0, 0, 0.5, 0.3, 0]),
+                    (
+                        json.loads(d["goal_json"])
+                        if isinstance(d.get("goal_json"), str)
+                        else (d.get("goal_json") or [0, 0, 0.5, 0.3, 0])
+                    ),
                     dtype=np.float32,
                 ),
                 duration_steps=int(d.get("duration_steps") or 12),

@@ -75,9 +75,7 @@ def format_mind_panel(step: int, info: dict[str, Any] | None, *, deep: bool = Fa
     if data.get("father_waiting"):
         father = f"father?: {_clean(data.get('father_question'), 160) or '-'}"
     elif data.get("father_answer") or data.get("father_lesson"):
-        father = (
-            f"father: {_clean(data.get('father_lesson') or data.get('father_answer'), 200)}"
-        )
+        father = f"father: {_clean(data.get('father_lesson') or data.get('father_answer'), 200)}"
 
     tag = "DEEP" if deep else "MIND"
     lines = [

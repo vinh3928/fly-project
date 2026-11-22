@@ -23,8 +23,12 @@ def _program(**kwargs) -> SkillProgram:
         name="candidate_dance_abc",
         status="candidate",
         steps=[
-            SkillStep(goal=np.asarray([0.2, 0.8, 0.5, 0.7, 0.0], dtype=np.float32), duration_steps=10),
-            SkillStep(goal=np.asarray([0.2, -0.8, 0.5, 0.7, 0.0], dtype=np.float32), duration_steps=10),
+            SkillStep(
+                goal=np.asarray([0.2, 0.8, 0.5, 0.7, 0.0], dtype=np.float32), duration_steps=10
+            ),
+            SkillStep(
+                goal=np.asarray([0.2, -0.8, 0.5, 0.7, 0.0], dtype=np.float32), duration_steps=10
+            ),
         ],
         tags=["dance"],
         source="babble",

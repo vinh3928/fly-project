@@ -392,14 +392,10 @@ def goal_from_father_structure(
         fwd = -0.35 * conf - (0.2 if risk_n == "high" else 0.0)
         if abs(turn) < 0.05:
             turn = 0.55 * conf
-        return clip_goal(
-            np.asarray([fwd, turn, 0.5, 0.5, 0.0], dtype=np.float32)
-        )
+        return clip_goal(np.asarray([fwd, turn, 0.5, 0.5, 0.0], dtype=np.float32))
     if act == "approach":
         fwd = 0.45 + 0.35 * conf
-        return clip_goal(
-            np.asarray([fwd, turn * 0.5, 0.5, 0.55, 0.0], dtype=np.float32)
-        )
+        return clip_goal(np.asarray([fwd, turn * 0.5, 0.5, 0.55, 0.0], dtype=np.float32))
     if act == "taste":
         fwd = 0.15 + 0.2 * conf
         return clip_goal(

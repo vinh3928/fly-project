@@ -43,9 +43,7 @@ def sample_groom_program(
         prob = float(rng.uniform(0.55, 1.0)) if i % 2 == 0 else float(rng.uniform(0.2, 0.6))
         steps.append(
             SkillStep(
-                goal=clip_goal(
-                    np.asarray([0.05, turn, height, freq, prob], dtype=np.float32)
-                ),
+                goal=clip_goal(np.asarray([0.05, turn, height, freq, prob], dtype=np.float32)),
                 duration_steps=_rand_duration(rng, lo, hi),
             )
         )
@@ -71,9 +69,7 @@ def sample_dance_program(
         height = float(rng.uniform(0.4, 0.7))
         steps.append(
             SkillStep(
-                goal=clip_goal(
-                    np.asarray([fwd, turn, height, freq, 0.0], dtype=np.float32)
-                ),
+                goal=clip_goal(np.asarray([fwd, turn, height, freq, 0.0], dtype=np.float32)),
                 duration_steps=_rand_duration(rng, lo, max(lo, hi // 2 + 2)),
             )
         )
@@ -202,7 +198,9 @@ def build_candidate_skill(
     )
 
 
-def signals_for_gate(signals: dict[str, Any] | None, affect: dict[str, Any] | None) -> dict[str, float]:
+def signals_for_gate(
+    signals: dict[str, Any] | None, affect: dict[str, Any] | None
+) -> dict[str, float]:
     snap = signals if isinstance(signals, dict) else {}
     aff = affect if isinstance(affect, dict) else {}
     return {
@@ -212,5 +210,7 @@ def signals_for_gate(signals: dict[str, Any] | None, affect: dict[str, Any] | No
         ),
         "survival_risk": float(aff.get("survival_risk", snap.get("survival_risk", 0.0)) or 0.0),
         "hunger": float(snap.get("hunger", 0.0) or 0.0),
-        "explore_tendency": float(snap.get("tendency_curiosity", snap.get("curiosity", 0.0)) or 0.0),
+        "explore_tendency": float(
+            snap.get("tendency_curiosity", snap.get("curiosity", 0.0)) or 0.0
+        ),
     }
