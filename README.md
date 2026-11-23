@@ -4,22 +4,26 @@ A controlled 3D simulation in which a virtual fly walks, senses, records synchro
 
 This repository is an **embodied fly-inspired learning simulation**, not a biologically exact digital fly.
 
+## Warning
+
+Do not erase the fly's memory on the Neo4j or the pgvector database; this will be similar to killing a fly. Instead just create a new fly if you want to observe a fresh start behavior. That being said, you can stop and restart the simulation as you like; because Sim time is different then Earth clock. Don't ever give reference to Earch clock in the simulation or else the fly will realize it's being stoped on and off.
+
 ## Status
 
 **Phases 0–9 are complete** (foundation through Architecture B motor layer), plus **one-shot place lessons** and a **one-shot skill registry** (Father + skill cortex). Next goals: **one-shot skill acquisition from demonstration**, then Phase 10 (simplified flight).
 
-| Area             | What’s in                                                                                          |
-| ---------------- | -------------------------------------------------------------------------------------------------- |
-| Simulation       | Unity 6 chamber + outside world, six-leg body, sensors, ML-Agents agent                            |
-| Locomotion       | Balance, tripod gait, root locomotion; mind goals → motor layer every tick                         |
-| Sensing / record | Vision (hex eyes), proprioception, taste, odor, pose; synced episode logs                          |
-| Mind             | Affective embeddings → pgvector STM → async thinking + devil’s advocate                            |
-| Place memory     | Neo4j place graph (walls / senses / lessons) with L1/L2 cache; `route_home` when hungry            |
-| One-shot lessons | Father HITL on stimulus interrupt → `(:Place)-[:HAS_LESSON]->(:Lesson)`; reuse + motor binding     |
-| Skill registry   | Skill cortex Neo4j (`7688`): babble proposes programs; Father promotes once → reusable playback    |
-| Learning         | Curiosity / novelty, homeostasis, next-state world model, visual nav, food search                  |
-| Viz              | Display 1 overview, Display 2 fly-follow cam, Display 3 mind / Father dialog / deep-thought log    |
-| Tooling          | Fake envs, Phase 0–8 deterministic benchmark, CI, standalone player build                          |
+| Area             | What’s in                                                                                       |
+| ---------------- | ----------------------------------------------------------------------------------------------- |
+| Simulation       | Unity 6 chamber + outside world, six-leg body, sensors, ML-Agents agent                         |
+| Locomotion       | Balance, tripod gait, root locomotion; mind goals → motor layer every tick                      |
+| Sensing / record | Vision (hex eyes), proprioception, taste, odor, pose; synced episode logs                       |
+| Mind             | Affective embeddings → pgvector STM → async thinking + devil’s advocate                         |
+| Place memory     | Neo4j place graph (walls / senses / lessons) with L1/L2 cache; `route_home` when hungry         |
+| One-shot lessons | Father HITL on stimulus interrupt → `(:Place)-[:HAS_LESSON]->(:Lesson)`; reuse + motor binding  |
+| Skill registry   | Skill cortex Neo4j (`7688`): babble proposes programs; Father promotes once → reusable playback |
+| Learning         | Curiosity / novelty, homeostasis, next-state world model, visual nav, food search               |
+| Viz              | Display 1 overview, Display 2 fly-follow cam, Display 3 mind / Father dialog / deep-thought log |
+| Tooling          | Fake envs, Phase 0–8 deterministic benchmark, CI, standalone player build                       |
 
 Flight is deferred until walking, sensing, recording, and learning stay stable.
 
@@ -168,7 +172,7 @@ So: **babble invents the body; HITL/Father invents the name** — one promote ev
 - Not **one-shot skill acquisition from demonstration** (no “watch one expert episode → fit a new motor program / residual policy”).
 - Not new Unity joints, IK, or per-skill `MotorPolicyNet` checkpoints.
 
-**Next goal:** one-shot skill acquisition from demonstration — take a single demonstrated trajectory (or Father-guided episode), distill it into a skill-cortex program (and later optionally a small learned residual), then keep the same promote/reuse path. Until then, new skill *bodies* come from babble (generate-and-keep), while Father supplies the one-shot *registry* decision.
+**Next goal:** one-shot skill acquisition from demonstration — take a single demonstrated trajectory (or Father-guided episode), distill it into a skill-cortex program (and later optionally a small learned residual), then keep the same promote/reuse path. Until then, new skill _bodies_ come from babble (generate-and-keep), while Father supplies the one-shot _registry_ decision.
 
 ## Test locally
 
@@ -240,9 +244,9 @@ See [docs/phases.md](docs/phases.md) for exit criteria. Recommended order:
 7. Taste and homeostasis ✅
 8. Curiosity-driven exploration ✅
 9. Learned locomotion (Architecture B) ✅
-9b. One-shot place lessons (Father HITL → `HAS_LESSON` + structured motor bind) ✅
-9c. One-shot skill registry (babble + Father promote on Neo4j `:7688`) ✅
-9d. One-shot skill acquisition from demonstration (next)
+   9b. One-shot place lessons (Father HITL → `HAS_LESSON` + structured motor bind) ✅
+   9c. One-shot skill registry (babble + Father promote on Neo4j `:7688`) ✅
+   9d. One-shot skill acquisition from demonstration (next)
 10. Flight (simplified, then articulated)
 
 Architecture overview, async mind, stimulus interrupt, place graph, Father lessons, and skill cortex: [docs/architecture.md](docs/architecture.md).
