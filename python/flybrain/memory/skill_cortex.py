@@ -89,6 +89,9 @@ class SkillCortexConfig:
     password: str | None = None
     database: str = "neo4j"
     promote_min_score: float = 0.4
+    # When Display 4 is not the focused Game view, auto Ask-LLM after this many
+    # seconds (Unity also auto-sends ask_llm when away). 0 disables Python fallback.
+    auto_llm_away_seconds: float = 0.1
     babble: SkillBabbleConfig = field(default_factory=SkillBabbleConfig)
 
     @classmethod
@@ -102,6 +105,7 @@ class SkillCortexConfig:
             password=data.get("password"),
             database=str(data.get("database", "neo4j")),
             promote_min_score=float(data.get("promote_min_score", 0.4)),
+            auto_llm_away_seconds=float(data.get("auto_llm_away_seconds", 0.1)),
             babble=SkillBabbleConfig.from_dict(
                 data.get("babble") if isinstance(data.get("babble"), dict) else {}
             ),

@@ -1,7 +1,8 @@
 """ML-Agents SideChannel: skill-promote queue UI for Unity Display 4.
 
-HITL: Python SHOWs candidates; Unity replies accept / ask_llm / refuse / test.
+HITL: Python SHOWs candidates; Unity replies accept / ask_llm / refuse / test / view.
 Ask LLM auto-adjudicates accept vs refuse (plus a name) then advances the queue.
+When the user is not on Display 4, Unity (and a Python grace timer) auto Ask-LLM.
 
 Python → Unity SHOW:
   int32 version (=1)
@@ -22,8 +23,12 @@ Python → Unity HIDE:
 
 Unity → Python REPLY:
   int32 version, kind (=1), request_id
-  int32 source (0=accept, 1=ask_llm, 2=refuse)
+  int32 source (0=accept, 1=ask_llm, 2=refuse, 3=test)
   string name
+
+Unity → Python VIEW:
+  int32 version, kind (=3 VIEW), request_id
+  int32 viewing (0/1) — 1 when Game view focuses Display 4
 
 Guid must match ``SkillPromoteDebugChannel.cs``.
 """
@@ -40,6 +45,7 @@ PROTOCOL_VERSION = 1
 KIND_SHOW = 0
 KIND_REPLY = 1
 KIND_HIDE = 2
+KIND_VIEW = 3
 
 SOURCE_ACCEPT = 0
 SOURCE_ASK_LLM = 1
@@ -359,6 +365,8 @@ class SkillPromoteChannel:
         self._OutgoingMessage: Any = None
         self._pending_replies: list[dict[str, Any]] = []
         self.last_show: dict[str, Any] | None = None
+        self.user_on_display4: bool | None = None
+        self._view_request_id: int = 0
         try:
             from mlagents_envs.side_channel.side_channel import (
                 IncomingMessage,
@@ -377,6 +385,11 @@ class SkillPromoteChannel:
                     version = int(msg.read_int32())
                     kind = int(msg.read_int32())
                     request_id = int(msg.read_int32())
+                    if kind == KIND_VIEW:
+                        viewing = int(msg.read_int32())
+                        outer.user_on_display4 = bool(viewing)
+                        outer._view_request_id = int(request_id)
+                        return
                     if kind != KIND_REPLY:
                         return
                     source = int(msg.read_int32())
@@ -484,6 +497,12 @@ class SkillPromoteChannel:
             }
         )
 
+    def inject_view_for_tests(self, *, request_id: int, viewing: bool) -> None:
+        self.user_on_display4 = bool(viewing)
+        self._view_request_id = int(request_id)
+
     def clear(self) -> None:
         self._pending_replies.clear()
         self.last_show = None
+        self.user_on_display4 = None
+        self._view_request_id = 0

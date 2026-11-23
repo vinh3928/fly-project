@@ -253,7 +253,9 @@ no cross-cluster edges). Status flows `candidate` → `promoted`.
 open combos of primitives (forward / turn / pause / extend / crouch / …) —
 anonymous `candidate_move_*` names, no dance/touch hard labels. Candidates are
 upserted into the skill cortex. **HITL (Display 4)** Accept/Refuse, **Ask LLM judge**
-(auto accept/refuse + name), or **Father** promote; promoted skills join L1 as
+(auto accept/refuse + name), or **Father** promote. If the Game view is **not** on
+Display 4, Ask LLM runs automatically after a short grace (`auto_llm_away_seconds`);
+focusing Display 4 keeps the HITL freeze. Promoted skills join L1 as
 dynamic candidates and play back via
 `SkillExecutor` on the Architecture-B motor bus.
 Place `HAS_LESSON.action` / `skill_name` can reference a promoted skill so

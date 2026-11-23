@@ -72,6 +72,8 @@ skill_cortex:
     min_steps: 3
     duration_range: [8, 24]
   promote_min_score: 0.4
+  # Auto Ask-LLM when Display 4 is not focused (Unity also self-triggers when away).
+  auto_llm_away_seconds: 0.1
 
 embedding:
   latent_dim: 256

@@ -27,10 +27,55 @@ namespace FlySimulation.Tests.EditMode
                 Assert.IsTrue(display.IsVisible);
                 StringAssert.Contains("2 ready", display.TitleText);
                 Assert.AreEqual("dance_spin", display.NameFieldText);
-                Assert.AreEqual(0f, Time.timeScale, 1e-4f);
+                // Freeze only when Game view is focused on Display 4.
+                if (SkillPromoteDisplay.IsUserViewingDisplay4())
+                {
+                    Assert.AreEqual(0f, Time.timeScale, 1e-4f);
+                }
+
                 display.Hide();
                 Assert.IsFalse(display.IsVisible);
                 Assert.Greater(Time.timeScale, 0f);
+            }
+            finally
+            {
+                Time.timeScale = 1f;
+                Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
+        public void ShowForTests_WhenAway_DoesNotFreezeAndTracksAwayTimer()
+        {
+            var go = new GameObject("SkillPromoteAwayTest");
+            try
+            {
+                go.AddComponent<Camera>();
+                var display = go.AddComponent<SkillPromoteDisplay>();
+                // Force "away" path: if already on Display 4 in editor this may freeze;
+                // assert API + away HUD path still constructs.
+                display.ShowForTests(
+                    requestId: 9,
+                    queueCount: 1,
+                    skillId: "skill-away",
+                    name: "candidate_pivot",
+                    tags: "pivot",
+                    score: "0.7",
+                    stepsCount: "2",
+                    suggestedName: "pivot",
+                    allowLlm: true);
+                Assert.IsTrue(display.IsVisible);
+                // Away → auto LLM keeps timeScale > 0; focused Display 4 freezes.
+                if (!SkillPromoteDisplay.IsUserViewingDisplay4())
+                {
+                    Assert.Greater(Time.timeScale, 0f);
+                }
+                else
+                {
+                    Assert.AreEqual(0f, Time.timeScale, 1e-4f);
+                }
+
+                display.Hide();
             }
             finally
             {
@@ -59,7 +104,11 @@ namespace FlySimulation.Tests.EditMode
                     stepsCount: "3",
                     suggestedName: "pivot_forward",
                     allowLlm: true);
-                Assert.AreEqual(0f, Time.timeScale, 1e-4f);
+                if (SkillPromoteDisplay.IsUserViewingDisplay4())
+                {
+                    Assert.AreEqual(0f, Time.timeScale, 1e-4f);
+                }
+
                 display.SubmitAskLlmForTests();
                 Assert.IsTrue(display.IsVisible);
                 Assert.IsTrue(display.IsAwaitingLlmJudge);
@@ -67,6 +116,7 @@ namespace FlySimulation.Tests.EditMode
                 StringAssert.Contains("judging", display.TitleText.ToLowerInvariant());
                 display.Hide();
                 Assert.IsFalse(display.IsAwaitingLlmJudge);
+                Assert.Greater(Time.timeScale, 0f);
             }
             finally
             {

@@ -19,6 +19,7 @@ namespace FlySimulation.Fly.DebugViz
         public const int KindShow = 0;
         public const int KindReply = 1;
         public const int KindHide = 2;
+        public const int KindView = 3;
 
         public const int SourceAccept = 0;
         public const int SourceAskLlm = 1;
@@ -113,6 +114,17 @@ namespace FlySimulation.Fly.DebugViz
             msg.WriteInt32(requestId);
             msg.WriteInt32(source);
             msg.WriteString(name ?? "");
+            QueueMessageToSend(msg);
+        }
+
+        /// <summary>Tell Python whether the user is focused on Display 4.</summary>
+        public void SendViewing(int requestId, bool viewing)
+        {
+            using var msg = new OutgoingMessage();
+            msg.WriteInt32(ProtocolVersion);
+            msg.WriteInt32(KindView);
+            msg.WriteInt32(requestId);
+            msg.WriteInt32(viewing ? 1 : 0);
             QueueMessageToSend(msg);
         }
 

@@ -312,6 +312,104 @@ def test_display4_ask_llm_auto_refuses_weak_candidate() -> None:
         pipe.close()
 
 
+def test_display4_auto_ask_llm_when_away() -> None:
+    """No Display 4 focus → Python grace timer auto-adjudicates."""
+    ch = SkillPromoteChannel()
+
+    class _Env(FakeFlyEnv):
+        @property
+        def skill_promote_channel(self):
+            return ch
+
+    cfg = LiveMindConfig(
+        backend="in_memory",
+        llm_mock=True,
+        console_log=False,
+        async_mind=False,
+        mind_interval=4,
+        enable_motor_layer=True,
+        fly_id="fly_promote_auto",
+        stimulus_interrupt=StimulusInterruptConfig(enabled=False),
+        father_advocate=FatherAdvocateConfig(enabled=False),
+        place_graph=PlaceGraphConfig(enabled=False, backend="in_memory"),
+        skill_cortex=SkillCortexConfig(
+            enabled=True,
+            backend="in_memory",
+            promote_min_score=0.3,
+            auto_llm_away_seconds=0.05,
+            babble={"enabled": False},
+        ),
+    )
+    pipe = LiveMindPipeline(_Env(FakeFlyConfig(seed=5)), config=cfg)
+    try:
+        pipe.skill_cortex.upsert_skill(
+            _cand(
+                skill_id="auto-ok",
+                tags=["babble", "combo", "forward", "pivot"],
+                score=0.8,
+                fly_id="fly_promote_auto",
+            )
+        )
+        pipe._enqueue_skill_promote("auto-ok")
+        ch.inject_view_for_tests(request_id=int(pipe._skill_promote_request_id), viewing=False)
+        pipe._skill_promote_shown_at = __import__("time").monotonic() - 1.0
+        pipe._poll_skill_promote_ui()
+        got = pipe.skill_cortex.get_skill("auto-ok")
+        assert got is not None and got.status == "promoted"
+        assert pipe._skill_promote_queue == []
+    finally:
+        pipe.close()
+
+
+def test_display4_no_auto_ask_llm_while_viewing() -> None:
+    ch = SkillPromoteChannel()
+
+    class _Env(FakeFlyEnv):
+        @property
+        def skill_promote_channel(self):
+            return ch
+
+    cfg = LiveMindConfig(
+        backend="in_memory",
+        llm_mock=True,
+        console_log=False,
+        async_mind=False,
+        mind_interval=4,
+        enable_motor_layer=True,
+        fly_id="fly_promote_view",
+        stimulus_interrupt=StimulusInterruptConfig(enabled=False),
+        father_advocate=FatherAdvocateConfig(enabled=False),
+        place_graph=PlaceGraphConfig(enabled=False, backend="in_memory"),
+        skill_cortex=SkillCortexConfig(
+            enabled=True,
+            backend="in_memory",
+            promote_min_score=0.3,
+            auto_llm_away_seconds=0.01,
+            babble={"enabled": False},
+        ),
+    )
+    pipe = LiveMindPipeline(_Env(FakeFlyConfig(seed=6)), config=cfg)
+    try:
+        pipe.skill_cortex.upsert_skill(
+            _cand(
+                skill_id="hold-me",
+                tags=["babble", "combo", "forward"],
+                score=0.8,
+                fly_id="fly_promote_view",
+            )
+        )
+        pipe._enqueue_skill_promote("hold-me")
+        ch.inject_view_for_tests(request_id=int(pipe._skill_promote_request_id), viewing=True)
+        pipe._skill_promote_shown_at = __import__("time").monotonic() - 10.0
+        pipe._poll_skill_promote_ui()
+        got = pipe.skill_cortex.get_skill("hold-me")
+        assert got is not None and got.status == "candidate"
+        assert pipe._skill_promote_queue == ["hold-me"]
+        assert pipe._skill_promote_showing is True
+    finally:
+        pipe.close()
+
+
 def test_display4_refuse_retires_and_test_keeps_head() -> None:
     ch = SkillPromoteChannel()
 

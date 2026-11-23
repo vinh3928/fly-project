@@ -833,6 +833,8 @@ class LiveMindPipeline:
         self._skill_promote_showing = False
         self._skill_promote_request_id = 0
         self._next_skill_promote_request_id = 1
+        self._skill_promote_shown_at: float | None = None
+        self._skill_promote_auto_fired = False
         self._skill_playing_candidate = False
         from flybrain.debug.skill_promote_channel import SkillPromoteChannel
 
@@ -1380,6 +1382,8 @@ class LiveMindPipeline:
             allow_llm=True,
         )
         self._skill_promote_showing = True
+        self._skill_promote_shown_at = time.monotonic()
+        self._skill_promote_auto_fired = False
         if self.config.console_log:
             print(
                 f"skill_promote_show step={self._step} id={program.skill_id} "
@@ -1395,6 +1399,7 @@ class LiveMindPipeline:
         if reply is None:
             reply = self.skill_promote.pop_reply(None)
         if reply is None:
+            self._maybe_auto_ask_llm_when_away()
             return
         source = str(reply.get("source") or "")
         name = str(reply.get("name") or "").strip()
@@ -1403,7 +1408,7 @@ class LiveMindPipeline:
             return
         skill_id = self._skill_promote_queue[0]
         if source == "ask_llm":
-            self._ask_llm_adjudicate_skill(skill_id)
+            self._ask_llm_adjudicate_skill(skill_id, via="display4_llm")
             return
         if source == "test":
             # Replay candidate on the body without dequeue / promote.
@@ -1425,10 +1430,38 @@ class LiveMindPipeline:
             self._resolve_skill_promote_decision(skill_id, source=source, name=name)
             return
 
-    def _ask_llm_adjudicate_skill(self, skill_id: str) -> None:
+    def _maybe_auto_ask_llm_when_away(self) -> None:
+        """If Display 4 is unfocused (or never reported), auto Ask-LLM after grace."""
+        if self._skill_promote_auto_fired or not self._skill_promote_showing:
+            return
+        if not self._skill_promote_queue:
+            return
+        grace = float(getattr(self.skill_cortex_config, "auto_llm_away_seconds", 0.1) or 0.0)
+        if grace <= 0.0:
+            return
+        # Prefer Unity VIEW signal: only auto when explicitly away.
+        # If Unity never reports (fake / no channel), treat as away after grace.
+        viewing = getattr(self.skill_promote, "user_on_display4", None)
+        if viewing is True:
+            return
+        shown_at = float(self._skill_promote_shown_at or time.monotonic())
+        if (time.monotonic() - shown_at) < grace:
+            return
+        skill_id = self._skill_promote_queue[0]
+        self._skill_promote_auto_fired = True
+        if self.config.console_log:
+            why = "away" if viewing is False else "no_view_signal"
+            print(
+                f"skill_promote_auto_llm step={self._step} id={skill_id} reason={why}",
+                flush=True,
+            )
+        self._ask_llm_adjudicate_skill(skill_id, via="display4_llm_auto")
+
+    def _ask_llm_adjudicate_skill(self, skill_id: str, *, via: str = "display4_llm") -> None:
         """Ask LLM (or mock heuristic) to accept/refuse the Display 4 head candidate."""
         from flybrain.debug.skill_promote_channel import adjudicate_skill_promote
 
+        self._skill_promote_auto_fired = True
         program = None
         if self.skill_cortex is not None:
             try:
@@ -1451,14 +1484,14 @@ class LiveMindPipeline:
             print(
                 f"skill_promote_llm step={self._step} id={skill_id} "
                 f"decision={verdict.decision} name={verdict.name or '-'} "
-                f"src={verdict.source} reason={verdict.reason}",
+                f"src={verdict.source} reason={verdict.reason} via={via}",
                 flush=True,
             )
         self._resolve_skill_promote_decision(
             skill_id,
             source=verdict.decision,
             name=verdict.name,
-            via="display4_llm",
+            via=via,
         )
 
     def _resolve_skill_promote_decision(
@@ -1513,6 +1546,7 @@ class LiveMindPipeline:
         else:
             self.skill_promote.send_hide(request_id=int(self._skill_promote_request_id))
             self._skill_promote_showing = False
+            self._skill_promote_shown_at = None
 
     def _handle_father_skill_promote(self, lesson: FatherLesson) -> None:
         """Promote last babble candidate and/or bind skill_name into cortex."""
