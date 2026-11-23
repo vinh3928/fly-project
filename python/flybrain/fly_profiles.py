@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 DEFAULT_PROFILES_PATH = Path(__file__).resolve().parents[2] / "data" / "fly_profiles.json"
 
@@ -65,6 +66,7 @@ class FlyProfileStore:
     path: Path = field(default_factory=lambda: DEFAULT_PROFILES_PATH)
     profiles: list[FlyProfile] = field(default_factory=list)
     active_fly_id: str = "fly_001"
+    session_ready: bool = True
 
     @classmethod
     def load(cls, path: Path | None = None) -> FlyProfileStore:
@@ -77,6 +79,7 @@ class FlyProfileStore:
         if not path.exists():
             self.profiles = [self._default_profile(1)]
             self.active_fly_id = self.profiles[0].fly_id
+            self.session_ready = True
             self.save()
             return
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -91,19 +94,25 @@ class FlyProfileStore:
         profiles.sort(key=lambda p: p.number)
         self.profiles = profiles
         active = ""
+        ready = True
         if isinstance(raw, dict):
             active = str(raw.get("active_fly_id") or "")
+            if "session_ready" in raw:
+                ready = bool(raw.get("session_ready"))
         if not active or self.get(active) is None:
             active = self.profiles[0].fly_id
         self.active_fly_id = active
+        self.session_ready = ready
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "active_fly_id": self.active_fly_id,
+            "session_ready": bool(self.session_ready),
             "profiles": [p.to_dict() for p in sorted(self.profiles, key=lambda x: x.number)],
         }
-        self.path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        self.path.write_text(text, encoding="utf-8")
         # Mirror for Unity StreamingAssets when present.
         unity_mirror = (
             Path(__file__).resolve().parents[2]
@@ -114,11 +123,14 @@ class FlyProfileStore:
         )
         try:
             unity_mirror.parent.mkdir(parents=True, exist_ok=True)
-            unity_mirror.write_text(
-                json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
+            unity_mirror.write_text(text, encoding="utf-8")
         except OSError:
             pass
+
+    def set_session_ready(self, ready: bool, *, persist: bool = True) -> None:
+        self.session_ready = bool(ready)
+        if persist:
+            self.save()
 
     @staticmethod
     def _default_profile(number: int, name: str | None = None) -> FlyProfile:
@@ -172,15 +184,60 @@ class FlyProfileStore:
         self.profiles.sort(key=lambda p: p.number)
         return profile
 
-    def set_active(self, fly_id: str, *, touch: bool = True) -> FlyProfile:
+    def set_active(
+        self, fly_id: str, *, touch: bool = True, session_ready: bool | None = None
+    ) -> FlyProfile:
         profile = self.get(fly_id)
         if profile is None:
             raise KeyError(f"unknown fly_id: {fly_id}")
         self.active_fly_id = profile.fly_id
         if touch:
             profile.last_played_at = _utc_now()
+        if session_ready is not None:
+            self.session_ready = bool(session_ready)
         self.save()
         return profile
+
+    def wait_until_session_ready(
+        self,
+        *,
+        timeout_s: float = 600.0,
+        poll_s: float = 0.25,
+        pump: Callable[[], None] | None = None,
+        print_fn: Callable[..., None] | None = print,
+    ) -> FlyProfile:
+        """Block until Unity writes ``session_ready: true`` after fly selection.
+
+        ``pump`` keeps the ML-Agents communicator alive (zero-action steps) while
+        the profile menu is open with ``timeScale=0``.
+        """
+        deadline = time.monotonic() + max(1.0, float(timeout_s))
+        announced = False
+        while time.monotonic() < deadline:
+            self.reload()
+            if self.session_ready and self.get(self.active_fly_id) is not None:
+                return self.set_active(self.active_fly_id, touch=False, session_ready=True)
+            if not announced and print_fn is not None:
+                print_fn(
+                    "waiting_for_fly_selection "
+                    "(Unity: Choose your fly — nothing runs until you pick one)",
+                    flush=True,
+                )
+                announced = True
+            if pump is not None:
+                try:
+                    pump()
+                except Exception as exc:
+                    if print_fn is not None:
+                        print_fn(f"fly_selection_pump_warn err={exc}", flush=True)
+            else:
+                time.sleep(max(0.05, float(poll_s)))
+            if pump is not None:
+                time.sleep(max(0.0, float(poll_s)))
+        raise TimeoutError(
+            f"timed out after {timeout_s:.0f}s waiting for Unity fly selection "
+            f"(session_ready) at {self.path}"
+        )
 
     def set_active_number(self, number: int, *, touch: bool = True) -> FlyProfile:
         profile = self.ensure(number)

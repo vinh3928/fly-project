@@ -20,9 +20,11 @@ from .layer import (
 )
 from .rewards import compute_locomotion_reward
 from .skill_babble import (
+    PRIMITIVES,
     babble_gate,
     build_candidate_skill,
     sample_babble_program,
+    sample_combo_program,
     score_babble_episode,
 )
 from .skill_executor import SkillExecutor, SkillPlaybackFrame
@@ -38,6 +40,7 @@ __all__ = [
     "MotorPolicyNet",
     "SkillExecutor",
     "SkillPlaybackFrame",
+    "PRIMITIVES",
     "babble_gate",
     "build_candidate_skill",
     "clip_goal",
@@ -48,5 +51,6 @@ __all__ = [
     "mode_for_plan",
     "orient_goal",
     "sample_babble_program",
+    "sample_combo_program",
     "score_babble_episode",
 ]

@@ -42,11 +42,23 @@ namespace FlySimulation.Fly.Brain
         private float _decisionAccumulator;
         private float _previousEnergy;
         private bool _decisionRequested;
+        private bool _actionsSuspended;
         private readonly float[] _motorGoal = { 0f, 0f, 0.5f, 0.5f, 0f };
         private Vector3 _previousPosition;
         private float _previousYaw;
 
         public ExperimentConfiguration Configuration => configuration;
+
+        /// <summary>When true, Python/ML-Agents actions are ignored (fly profile menu).</summary>
+        public void SetActionsSuspended(bool suspended)
+        {
+            _actionsSuspended = suspended;
+            if (suspended && motors != null)
+            {
+                motors.SetHighLevelCommands(0f, 0f, 0.5f, 0.5f);
+                motors.SetProboscisExtension(0f);
+            }
+        }
         public long SimulationStepCount =>
             episodeManager != null ? episodeManager.SimulationStep : 0;
         /// <summary>When true, WalkingDemoDriver owns motors; Python/ML-Agents actions are ignored.</summary>
@@ -212,7 +224,12 @@ namespace FlySimulation.Fly.Brain
 
         public override void OnActionReceived(ActionBuffers actions)
         {
-            // Apply Python/ML-Agents actions unless an enabled WalkingDemoDriver owns motors.
+            // Apply Python/ML-Agents actions unless profile menu / demo owns the body.
+            if (_actionsSuspended || !FlyProfileMenu.IsSessionReady)
+            {
+                return;
+            }
+
             if (!DemoOwnsMotors)
             {
                 ApplyActions(actions.ContinuousActions.Array);
@@ -357,7 +374,7 @@ namespace FlySimulation.Fly.Brain
 
         public void ApplyActions(float[] continuousActions)
         {
-            if (DemoOwnsMotors)
+            if (_actionsSuspended || !FlyProfileMenu.IsSessionReady || DemoOwnsMotors)
             {
                 return;
             }

@@ -14,6 +14,7 @@ namespace FlySimulation.Environment
     /// Pre-play roster: pick Fly 1 / 2 / 3 … or create a new profile before the run starts.
     /// Uses OnGUI so the menu is always visible in the Game view (no uGUI font/canvas issues).
     /// Shares <c>fly_profiles.json</c> with Python (<c>data/</c> + StreamingAssets mirror).
+    /// While visible: timeScale=0, motors ignore actions, <c>session_ready=false</c> so Python waits.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class FlyProfileMenu : MonoBehaviour
@@ -26,6 +27,7 @@ namespace FlySimulation.Environment
         private ExperimentConfiguration _config;
         private bool _ready;
         private bool _visible;
+        private bool _sessionReady;
         private readonly List<Profile> _profiles = new List<Profile>();
         private string _activeFlyId = "fly_001";
         private string _status = "Choose a fly to begin.";
@@ -34,6 +36,8 @@ namespace FlySimulation.Environment
         private GUIStyle _buttonStyle;
         private GUIStyle _statusStyle;
         private bool _stylesReady;
+        private float _savedTimeScale = 1f;
+        private Behaviour[] _decisionRequesters;
 
         [Serializable]
         private sealed class Profile
@@ -46,11 +50,29 @@ namespace FlySimulation.Environment
             public string notes;
         }
 
+        public static FlyProfileMenu Active { get; private set; }
+
+        /// <summary>True when no menu is gating play, or the player has chosen a fly.</summary>
+        public static bool IsSessionReady
+        {
+            get
+            {
+                var menu = Active;
+                if (menu == null)
+                {
+                    menu = UnityEngine.Object.FindFirstObjectByType<FlyProfileMenu>();
+                }
+
+                return menu == null || menu._ready;
+            }
+        }
+
         public bool IsReady => _ready;
         public string ActiveFlyId => _activeFlyId;
 
         private void Awake()
         {
+            Active = this;
             _config = FindExperimentConfig();
             LoadProfiles();
             if (showOnPlay)
@@ -63,12 +85,27 @@ namespace FlySimulation.Environment
             }
         }
 
+        private void OnDestroy()
+        {
+            if (Active == this)
+            {
+                Active = null;
+            }
+
+            if (!_ready && Time.timeScale <= 0.0001f)
+            {
+                Time.timeScale = _savedTimeScale > 0f ? _savedTimeScale : 1f;
+            }
+        }
+
         private void Show()
         {
             _ready = false;
+            _sessionReady = false;
             _visible = true;
             _status = "Choose a fly to begin.";
-            PauseFlyControl(true);
+            FreezeSimulation(true);
+            SaveProfiles();
             Debug.Log($"FlyProfileMenu: showing roster ({_profiles.Count} profiles), active={_activeFlyId}");
         }
 
@@ -81,8 +118,10 @@ namespace FlySimulation.Environment
         {
             ApplyFlyId(_activeFlyId, touch: true);
             _ready = true;
+            _sessionReady = true;
             Hide();
-            PauseFlyControl(false);
+            FreezeSimulation(false);
+            SaveProfiles();
         }
 
         private void SelectProfile(Profile profile)
@@ -114,6 +153,8 @@ namespace FlySimulation.Environment
             };
             _profiles.Add(profile);
             _activeFlyId = profile.fly_id;
+            // Persist the new row before marking the session ready so Python can load it.
+            _sessionReady = false;
             SaveProfiles();
             SelectProfile(profile);
         }
@@ -139,9 +180,38 @@ namespace FlySimulation.Environment
                 }
             }
 
-            SaveProfiles();
             _status = $"Playing as {_activeFlyId}";
             Debug.Log($"FlyProfileMenu: active={_activeFlyId}");
+        }
+
+        private void FreezeSimulation(bool freeze)
+        {
+            if (freeze)
+            {
+                if (Time.timeScale > 0.0001f)
+                {
+                    _savedTimeScale = Time.timeScale;
+                }
+
+                Time.timeScale = 0f;
+            }
+            else
+            {
+                Time.timeScale = _savedTimeScale > 0f ? _savedTimeScale : 1f;
+            }
+
+            PauseFlyControl(freeze);
+            SetDecisionRequestersEnabled(!freeze);
+#if UNITY_MLAGENTS
+            var agents = UnityEngine.Object.FindObjectsByType<FlyAgent>(FindObjectsSortMode.None);
+            for (int i = 0; i < agents.Length; i++)
+            {
+                if (agents[i] != null)
+                {
+                    agents[i].SetActionsSuspended(freeze);
+                }
+            }
+#endif
         }
 
         private void PauseFlyControl(bool pause)
@@ -168,6 +238,42 @@ namespace FlySimulation.Environment
                     bodies[i].angularVelocity = Vector3.zero;
                 }
             }
+        }
+
+        private void SetDecisionRequestersEnabled(bool enabled)
+        {
+#if UNITY_MLAGENTS
+            if (_decisionRequesters == null)
+            {
+                var found = new List<Behaviour>();
+                var behaviours = UnityEngine.Object.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+                for (int i = 0; i < behaviours.Length; i++)
+                {
+                    var mb = behaviours[i];
+                    if (mb == null)
+                    {
+                        continue;
+                    }
+
+                    if (mb.GetType().Name == "DecisionRequester")
+                    {
+                        found.Add(mb);
+                    }
+                }
+
+                _decisionRequesters = found.ToArray();
+            }
+
+            for (int i = 0; i < _decisionRequesters.Length; i++)
+            {
+                if (_decisionRequesters[i] != null)
+                {
+                    _decisionRequesters[i].enabled = enabled;
+                }
+            }
+#else
+            _ = enabled;
+#endif
         }
 
         private static ExperimentConfiguration FindExperimentConfig()
@@ -200,14 +306,15 @@ namespace FlySimulation.Environment
             _profiles.Clear();
             string json = null;
             string streaming = Path.Combine(Application.streamingAssetsPath, FileName);
+            // Prefer shared data/ (Python source of truth), then StreamingAssets mirror.
             string dataPath = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "data", FileName));
-            if (File.Exists(streaming))
-            {
-                json = File.ReadAllText(streaming);
-            }
-            else if (File.Exists(dataPath))
+            if (File.Exists(dataPath))
             {
                 json = File.ReadAllText(dataPath);
+            }
+            else if (File.Exists(streaming))
+            {
+                json = File.ReadAllText(streaming);
             }
 
             if (!string.IsNullOrEmpty(json))
@@ -225,6 +332,7 @@ namespace FlySimulation.Environment
                     created_at = DateTime.UtcNow.ToString("o")
                 });
                 _activeFlyId = "fly_001";
+                _sessionReady = false;
                 SaveProfiles();
             }
         }
@@ -242,6 +350,12 @@ namespace FlySimulation.Environment
                     _activeFlyId = active.Groups[1].Value;
                 }
 
+                Match ready = Regex.Match(json, "\"session_ready\"\\s*:\\s*(true|false)", RegexOptions.IgnoreCase);
+                if (ready.Success)
+                {
+                    _sessionReady = string.Equals(ready.Groups[1].Value, "true", StringComparison.OrdinalIgnoreCase);
+                }
+
                 foreach (Match block in Regex.Matches(
                              json,
                              "\\{[^{}]*\"fly_id\"\\s*:\\s*\"([^\"]+)\"[^{}]*\\}",
@@ -250,6 +364,22 @@ namespace FlySimulation.Environment
                     string body = block.Value;
                     string flyId = MatchGroup(body, "\"fly_id\"\\s*:\\s*\"([^\"]+)\"");
                     if (string.IsNullOrEmpty(flyId))
+                    {
+                        continue;
+                    }
+
+                    // Avoid duplicating if the same id appears twice.
+                    bool exists = false;
+                    for (int i = 0; i < _profiles.Count; i++)
+                    {
+                        if (_profiles[i].fly_id == flyId)
+                        {
+                            exists = true;
+                            break;
+                        }
+                    }
+
+                    if (exists)
                     {
                         continue;
                     }
@@ -263,15 +393,27 @@ namespace FlySimulation.Environment
                         number = numFromId.Success ? int.Parse(numFromId.Groups[1].Value) : _profiles.Count + 1;
                     }
 
+                    string lastPlayed = MatchGroup(body, "\"last_played_at\"\\s*:\\s*\"([^\"]+)\"");
+                    if (string.IsNullOrEmpty(lastPlayed)
+                        && Regex.IsMatch(body, "\"last_played_at\"\\s*:\\s*null"))
+                    {
+                        lastPlayed = null;
+                    }
+
                     _profiles.Add(new Profile
                     {
                         fly_id = flyId,
                         name = string.IsNullOrEmpty(name) ? $"Fly {number}" : name,
                         number = number,
                         created_at = MatchGroup(body, "\"created_at\"\\s*:\\s*\"([^\"]+)\""),
-                        last_played_at = MatchGroup(body, "\"last_played_at\"\\s*:\\s*\"([^\"]+)\""),
+                        last_played_at = lastPlayed,
                         notes = MatchGroup(body, "\"notes\"\\s*:\\s*\"([^\"]*)\"")
                     });
+                }
+
+                if (_profiles.Count > 0 && _profiles.TrueForAll(p => p.fly_id != _activeFlyId))
+                {
+                    _activeFlyId = _profiles[0].fly_id;
                 }
             }
             catch (Exception ex)
@@ -292,6 +434,7 @@ namespace FlySimulation.Environment
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("{");
             sb.AppendLine($"  \"active_fly_id\": \"{_activeFlyId}\",");
+            sb.AppendLine($"  \"session_ready\": {(_sessionReady ? "true" : "false")},");
             sb.AppendLine("  \"profiles\": [");
             for (int i = 0; i < _profiles.Count; i++)
             {
@@ -319,6 +462,19 @@ namespace FlySimulation.Environment
             sb.AppendLine("}");
             string json = sb.ToString();
 
+            // Write data/ first (Python source of truth), then StreamingAssets mirror.
+            string dataDir = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "data"));
+            string dataFile = Path.Combine(dataDir, FileName);
+            try
+            {
+                Directory.CreateDirectory(dataDir);
+                File.WriteAllText(dataFile, json);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"FlyProfileMenu: could not write data/: {ex.Message}");
+            }
+
             try
             {
                 Directory.CreateDirectory(Application.streamingAssetsPath);
@@ -329,15 +485,11 @@ namespace FlySimulation.Environment
                 Debug.LogWarning($"FlyProfileMenu: could not write StreamingAssets: {ex.Message}");
             }
 
-            try
+            if (!File.Exists(dataFile))
             {
-                string dataDir = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "data"));
-                Directory.CreateDirectory(dataDir);
-                File.WriteAllText(Path.Combine(dataDir, FileName), json);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"FlyProfileMenu: could not write data/: {ex.Message}");
+                Debug.LogError(
+                    $"FlyProfileMenu: profile save failed — missing {dataFile}. " +
+                    "Python will not see the selected fly.");
             }
         }
 

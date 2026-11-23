@@ -829,7 +829,15 @@ class LiveMindPipeline:
         self._last_babble_step = -10_000
         self._last_babble_skill_id: str | None = None
         self._pending_skill_promote_id: str | None = None
+        self._skill_promote_queue: list[str] = []
+        self._skill_promote_showing = False
+        self._skill_promote_request_id = 0
+        self._next_skill_promote_request_id = 1
         self._skill_playing_candidate = False
+        from flybrain.debug.skill_promote_channel import SkillPromoteChannel
+
+        promote_ch = getattr(env, "skill_promote_channel", None)
+        self.skill_promote = promote_ch if promote_ch is not None else SkillPromoteChannel()
         if sc_cfg.enabled:
             self.skill_cortex = open_skill_cortex(
                 backend=sc_cfg.backend,
@@ -1327,6 +1335,185 @@ class LiveMindPipeline:
         self._start_skill_playback(program, candidate=False)
         return True
 
+    def _enqueue_skill_promote(self, skill_id: str) -> None:
+        """Queue a scored babble candidate for non-blocking Display 4 HITL."""
+        sid = str(skill_id or "").strip()
+        if not sid or sid in self._skill_promote_queue:
+            return
+        self._skill_promote_queue.append(sid)
+        self._pending_skill_promote_id = sid
+        self._show_skill_promote_ui()
+
+    def _show_skill_promote_ui(self, *, suggested_name: str = "") -> None:
+        if self.skill_cortex is None or not self._skill_promote_queue:
+            if self._skill_promote_showing:
+                self.skill_promote.send_hide(request_id=int(self._skill_promote_request_id))
+                self._skill_promote_showing = False
+            return
+        skill_id = self._skill_promote_queue[0]
+        try:
+            program = self.skill_cortex.get_skill(skill_id)
+        except Exception:
+            program = None
+        if program is None:
+            self._skill_promote_queue.pop(0)
+            self._show_skill_promote_ui(suggested_name=suggested_name)
+            return
+        from flybrain.debug.skill_promote_channel import suggest_skill_name
+
+        request_id = int(self._next_skill_promote_request_id)
+        self._next_skill_promote_request_id = request_id + 1
+        self._skill_promote_request_id = request_id
+        suggestion = suggested_name or suggest_skill_name(
+            tags=list(program.tags), current_name=program.name
+        )
+        self.skill_promote.send_show(
+            request_id=request_id,
+            step=int(self._step),
+            queue_count=len(self._skill_promote_queue),
+            skill_id=program.skill_id,
+            name=program.name,
+            tags=",".join(program.tags),
+            score=f"{float(program.score):.2f}",
+            steps_count=str(len(program.steps)),
+            suggested_name=suggestion,
+            allow_llm=True,
+        )
+        self._skill_promote_showing = True
+        if self.config.console_log:
+            print(
+                f"skill_promote_show step={self._step} id={program.skill_id} "
+                f"queue={len(self._skill_promote_queue)} name={program.name}",
+                flush=True,
+            )
+
+    def _poll_skill_promote_ui(self) -> None:
+        """Non-blocking: accept / ask_llm / refuse on Display 4; motor keeps running."""
+        if not self._skill_promote_showing and not self._skill_promote_queue:
+            return
+        reply = self.skill_promote.pop_reply(self._skill_promote_request_id)
+        if reply is None:
+            reply = self.skill_promote.pop_reply(None)
+        if reply is None:
+            return
+        source = str(reply.get("source") or "")
+        name = str(reply.get("name") or "").strip()
+        if not self._skill_promote_queue:
+            self._skill_promote_showing = False
+            return
+        skill_id = self._skill_promote_queue[0]
+        if source == "ask_llm":
+            self._ask_llm_adjudicate_skill(skill_id)
+            return
+        if source == "test":
+            # Replay candidate on the body without dequeue / promote.
+            if self.skill_cortex is not None:
+                try:
+                    program = self.skill_cortex.get_skill(skill_id)
+                except Exception:
+                    program = None
+                if program is not None:
+                    self._start_skill_playback(program, candidate=True)
+                    if self.config.console_log:
+                        print(
+                            f"skill_promote_test step={self._step} id={program.skill_id} "
+                            f"name={program.name}",
+                            flush=True,
+                        )
+            return
+        if source in ("accept", "refuse"):
+            self._resolve_skill_promote_decision(skill_id, source=source, name=name)
+            return
+
+    def _ask_llm_adjudicate_skill(self, skill_id: str) -> None:
+        """Ask LLM (or mock heuristic) to accept/refuse the Display 4 head candidate."""
+        from flybrain.debug.skill_promote_channel import adjudicate_skill_promote
+
+        program = None
+        if self.skill_cortex is not None:
+            try:
+                program = self.skill_cortex.get_skill(skill_id)
+            except Exception:
+                program = None
+        if program is None:
+            self._resolve_skill_promote_decision(skill_id, source="refuse", name="")
+            return
+        min_score = float(getattr(self.skill_cortex_config, "promote_min_score", 0.4) or 0.4)
+        # Prefer live father/LLM client; fall back to heuristic when mock.
+        mock = bool(self.config.llm_mock)
+        verdict = adjudicate_skill_promote(
+            program,
+            client=None if mock else getattr(self, "father_client", None),
+            min_score=min_score,
+            mock=mock,
+        )
+        if self.config.console_log:
+            print(
+                f"skill_promote_llm step={self._step} id={skill_id} "
+                f"decision={verdict.decision} name={verdict.name or '-'} "
+                f"src={verdict.source} reason={verdict.reason}",
+                flush=True,
+            )
+        self._resolve_skill_promote_decision(
+            skill_id,
+            source=verdict.decision,
+            name=verdict.name,
+            via="display4_llm",
+        )
+
+    def _resolve_skill_promote_decision(
+        self,
+        skill_id: str,
+        *,
+        source: str,
+        name: str = "",
+        via: str = "display4",
+    ) -> None:
+        """Accept or refuse the queue head, then show next / hide."""
+        if self._skill_promote_queue and self._skill_promote_queue[0] == skill_id:
+            self._skill_promote_queue.pop(0)
+        elif skill_id in self._skill_promote_queue:
+            self._skill_promote_queue = [s for s in self._skill_promote_queue if s != skill_id]
+        if source == "accept" and self.skill_cortex is not None:
+            from flybrain.thinking.father_advocate import normalize_skill_name
+
+            clean = normalize_skill_name(name) or name or None
+            try:
+                promoted = self.skill_cortex.promote_skill(
+                    skill_id, name=clean, tags=["display4", "llm"] if "llm" in via else ["display4"]
+                )
+            except Exception as exc:
+                promoted = None
+                if self.config.console_log:
+                    print(f"skill_promote_error step={self._step} err={exc}", flush=True)
+            if promoted is not None:
+                if self._pending_skill_promote_id == skill_id:
+                    self._pending_skill_promote_id = None
+                self._refresh_skill_candidates()
+                if self.config.console_log:
+                    print(
+                        f"skill_promoted step={self._step} id={promoted.skill_id} "
+                        f"name={promoted.name} via={via}",
+                        flush=True,
+                    )
+        elif source == "refuse" and self.skill_cortex is not None:
+            try:
+                self.skill_cortex.retire_skill(skill_id)
+            except Exception:
+                pass
+            if self._pending_skill_promote_id == skill_id:
+                self._pending_skill_promote_id = None
+            if self.config.console_log:
+                print(
+                    f"skill_promote_refuse step={self._step} id={skill_id} via={via}",
+                    flush=True,
+                )
+        if self._skill_promote_queue:
+            self._show_skill_promote_ui()
+        else:
+            self.skill_promote.send_hide(request_id=int(self._skill_promote_request_id))
+            self._skill_promote_showing = False
+
     def _handle_father_skill_promote(self, lesson: FatherLesson) -> None:
         """Promote last babble candidate and/or bind skill_name into cortex."""
         if self.skill_cortex is None:
@@ -1349,6 +1536,17 @@ class LiveMindPipeline:
                     promoted = None
                 if promoted is not None:
                     self._pending_skill_promote_id = None
+                    if skill_id in self._skill_promote_queue:
+                        self._skill_promote_queue = [
+                            s for s in self._skill_promote_queue if s != skill_id
+                        ]
+                        if self._skill_promote_queue:
+                            self._show_skill_promote_ui()
+                        elif self._skill_promote_showing:
+                            self.skill_promote.send_hide(
+                                request_id=int(self._skill_promote_request_id)
+                            )
+                            self._skill_promote_showing = False
                     self._refresh_skill_candidates()
                     if self.config.console_log:
                         print(
@@ -1388,6 +1586,7 @@ class LiveMindPipeline:
             self.skill_cortex_config.promote_min_score
         ):
             self._pending_skill_promote_id = skill_id
+            self._enqueue_skill_promote(skill_id)
         self._skill_playing_candidate = False
         self.skill_executor.clear()
 
@@ -1455,6 +1654,13 @@ class LiveMindPipeline:
             return False
         snap = info if isinstance(info, dict) else {}
         motion = abs(float(snap.get("speed", snap.get("pose_delta", 0.0)) or 0.0))
+        if motion <= 1e-6:
+            speed_fn = getattr(self.env, "agent_speed", None)
+            if callable(speed_fn):
+                try:
+                    motion = abs(float(speed_fn() or 0.0))
+                except Exception:
+                    motion = 0.0
         novelty = float(snap.get("visual_novelty", snap.get("novelty", 0.0)) or 0.0)
         damage = float(snap.get("damage", snap.get("bitter", 0.0)) or 0.0)
         self.skill_executor.observe(motion=motion, novelty=novelty, damage=damage)
@@ -2031,6 +2237,7 @@ class LiveMindPipeline:
             "devil_critique": thought.devil_critique,
             "intent": thought.intent,
             "affect": affect_payload,
+            "signals": signal_payload,
             "vision_cues": (
                 place_info.get("vision_cues")
                 if place_info.get("vision_cues") is not None
@@ -2742,6 +2949,7 @@ class LiveMindPipeline:
         left_eye: np.ndarray | None = None,
         right_eye: np.ndarray | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        self._poll_skill_promote_ui()
         if self._interrupt_pending and self._interrupt_remaining > 0:
             if self._poll_father_advocate() or self._father_waiting:
                 info: dict[str, Any] = {
@@ -2950,6 +3158,7 @@ class LiveMindPipeline:
             "devil_critique": thought.devil_critique,
             "intent": thought.intent,
             "affect": affect_payload,
+            "signals": signal_payload,
             "vision_cues": (
                 place_info.get("vision_cues")
                 if place_info.get("vision_cues") is not None
@@ -3136,6 +3345,7 @@ class LiveMindPipeline:
         embed, curiosity, place map, or explore replan. Cheap SI cue arming may
         still push ``idle`` onto the same mind→motor bus.
         """
+        self._poll_skill_promote_ui()
         info = dict(self._last_mind_info)
         info["mind_tick"] = False
         left_eye = getattr(self.env, "left_eye", None)

@@ -210,6 +210,7 @@ namespace FlySimulation.EditorTools
             EnsureFlyFollowCamera(fly.transform);
             EnsureMindLogDisplay();
             EnsureFatherDialogDisplay();
+            EnsureSkillPromoteDisplay(fly.transform);
             EnsureFlyProfileMenu();
 
             DirectoryEnsure("Assets/Scenes");
@@ -225,7 +226,8 @@ namespace FlySimulation.EditorTools
                 $"Arena {config.ChamberSize}, BodyScale={config.BodyScale}, " +
                 $"spawn Y={config.FlySpawnPosition.y:F4} (feet on floor). " +
                 "Display 1 = Overview + Fly profile picker; Display 2 = FlyFollowCamera; " +
-                "Display 3 = MindLogDisplay + Father dialog on interrupt.");
+                "Display 3 = MindLogDisplay + Father dialog on interrupt; " +
+                "Display 4 = SkillPromoteDisplay (fly + promote queue).");
         }
 
         /// <summary>Third-person chase cam on Unity Display 2, always centered on the fly.</summary>
@@ -280,6 +282,12 @@ namespace FlySimulation.EditorTools
             {
                 logGo.AddComponent<FatherDialogDisplay>();
             }
+        }
+
+        /// <summary>Skill-promote queue + fly chase cam on Unity Display 4.</summary>
+        private static void EnsureSkillPromoteDisplay(Transform fly)
+        {
+            SkillPromoteDisplay.EnsureInScene(fly);
         }
 
         /// <summary>Pre-play fly roster (Fly 1 / 2 / 3 …) on Display 1.</summary>
@@ -454,10 +462,11 @@ namespace FlySimulation.EditorTools
             EnsureFlyFollowCamera(flyBody != null ? flyBody.transform : null);
             EnsureMindLogDisplay();
             EnsureFatherDialogDisplay();
+            EnsureSkillPromoteDisplay(flyBody != null ? flyBody.transform : null);
             EnsureFlyProfileMenu();
 
             // Disable fly-eye cameras in Game view if they were left enabled.
-            // Keep Overview (1), FlyFollow (2), and MindLog (3) enabled.
+            // Keep Overview (1), FlyFollow (2), MindLog (3), SkillPromote (4) enabled.
             foreach (var eye in UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
             {
                 if (eye == null)
@@ -467,7 +476,8 @@ namespace FlySimulation.EditorTools
 
                 if (eye.gameObject.name == "OverviewCamera"
                     || FlyFollowCamera.IsFollowCamera(eye)
-                    || MindLogDisplay.IsLogCamera(eye))
+                    || MindLogDisplay.IsLogCamera(eye)
+                    || SkillPromoteDisplay.IsPromoteCamera(eye))
                 {
                     eye.enabled = true;
                     continue;

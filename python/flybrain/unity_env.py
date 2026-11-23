@@ -277,10 +277,12 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
         from flybrain.debug.father_dialog_channel import FatherDialogChannel
         from flybrain.debug.mind_log_channel import MindLogDebugChannel
         from flybrain.debug.route_path_channel import RoutePathDebugChannel
+        from flybrain.debug.skill_promote_channel import SkillPromoteChannel
 
         self._route_path = RoutePathDebugChannel()
         self._mind_log = MindLogDebugChannel()
         self._father_dialog = FatherDialogChannel()
+        self._skill_promote = SkillPromoteChannel()
         side_channels = [self._engine_channel]
         if self._route_path.side_channel is not None:
             side_channels.append(self._route_path.side_channel)
@@ -288,6 +290,8 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
             side_channels.append(self._mind_log.side_channel)
         if self._father_dialog.side_channel is not None:
             side_channels.append(self._father_dialog.side_channel)
+        if self._skill_promote.side_channel is not None:
+            side_channels.append(self._skill_promote.side_channel)
         self._env = UnityEnvironment(
             file_name=file_name,
             worker_id=self.config.worker_id,
@@ -444,6 +448,11 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
     def father_dialog_channel(self):
         """SideChannel for Father-advocate ask/reply on Display 3."""
         return getattr(self, "_father_dialog", None)
+
+    @property
+    def skill_promote_channel(self):
+        """SideChannel for skill-promote queue on Display 4."""
+        return getattr(self, "_skill_promote", None)
 
     def agent_position(self) -> np.ndarray | None:
         """Latest fly world XYZ from Unity (RoutePathDebugChannel pose)."""

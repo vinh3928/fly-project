@@ -8,18 +8,22 @@ from flybrain.memory.skill_cortex import InMemorySkillCortex, SkillBabbleConfig
 from flybrain.motor.skill_babble import (
     MOTIF_DANCE,
     MOTIF_TOUCH,
+    PRIMITIVES,
     babble_gate,
     build_candidate_skill,
     sample_babble_program,
+    sample_combo_program,
     score_babble_episode,
 )
 
 
-def test_sample_babble_bounds_and_motifs() -> None:
+def test_sample_babble_open_combo() -> None:
     rng = np.random.default_rng(0)
     cfg = SkillBabbleConfig(min_steps=3, max_steps=6, duration_range=(8, 16))
-    name, steps, tags = sample_babble_program(rng, config=cfg, motif=MOTIF_TOUCH)
-    assert "touch" in name or MOTIF_TOUCH in tags
+    name, steps, tags = sample_babble_program(rng, config=cfg)
+    assert name.startswith("candidate_move_")
+    assert "babble" in tags and "combo" in tags
+    assert not any(t in ("dance", "touch_self", "groom") for t in tags)
     assert 3 <= len(steps) <= 6
     for step in steps:
         g = np.asarray(step.goal, dtype=np.float32)
@@ -29,10 +33,35 @@ def test_sample_babble_bounds_and_motifs() -> None:
         assert 0.0 <= float(g[2]) <= 1.0
         assert 0.0 <= float(g[4]) <= 1.0
         assert 8 <= int(step.duration_steps) <= 16
+    # Primitive tags should be drawn from the open set.
+    prim_tags = [t for t in tags if t in PRIMITIVES]
+    assert prim_tags
+
+
+def test_sample_babble_optional_bias_still_anonymous() -> None:
+    rng = np.random.default_rng(1)
+    cfg = SkillBabbleConfig(min_steps=3, max_steps=5, duration_range=(8, 12))
+    name, steps, tags = sample_babble_program(rng, config=cfg, motif=MOTIF_TOUCH)
+    assert name.startswith("candidate_move_")
+    assert "touch_self" not in name
+    assert len(steps) >= 3
+    # Soft bias should enrich pause/extend-ish primitives without hard labels.
+    assert "babble" in tags
 
     name2, steps2, tags2 = sample_babble_program(rng, config=cfg, motif=MOTIF_DANCE)
-    assert MOTIF_DANCE in tags2
-    assert len(steps2) >= 4
+    assert name2.startswith("candidate_move_")
+    assert "dance" not in tags2
+    assert len(steps2) >= 3
+
+
+def test_sample_combo_program_varies() -> None:
+    rng = np.random.default_rng(2)
+    a, tags_a = sample_combo_program(rng, min_steps=4, max_steps=4, duration_range=(8, 8))
+    b, tags_b = sample_combo_program(rng, min_steps=4, max_steps=4, duration_range=(8, 8))
+    assert len(a) == 4 and len(b) == 4
+    goals_a = [tuple(np.round(s.goal, 3)) for s in a]
+    goals_b = [tuple(np.round(s.goal, 3)) for s in b]
+    assert goals_a != goals_b or tags_a != tags_b
 
 
 def test_babble_gate_conditions() -> None:
@@ -111,7 +140,7 @@ def test_score_and_candidate_write() -> None:
         < 0.1
     )
     rng = np.random.default_rng(1)
-    name, steps, tags = sample_babble_program(rng, motif=MOTIF_DANCE)
+    name, steps, tags = sample_babble_program(rng)
     program = build_candidate_skill(
         fly_id="fly_b",
         steps=steps,
@@ -125,4 +154,5 @@ def test_score_and_candidate_write() -> None:
     stored = store.upsert_skill(program)
     assert stored.status == "candidate"
     assert stored.source == "babble"
+    assert stored.name.startswith("candidate_move_")
     assert store.get_skill(stored.skill_id) is not None

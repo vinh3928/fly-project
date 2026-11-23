@@ -254,6 +254,8 @@ class SkillCortexStore(Protocol):
         tags: list[str] | None = None,
     ) -> SkillProgram | None: ...
 
+    def retire_skill(self, skill_id: str) -> SkillProgram | None: ...
+
     def set_score(self, skill_id: str, score: float) -> SkillProgram | None: ...
 
     def close(self) -> None: ...
@@ -328,6 +330,13 @@ class InMemorySkillCortex:
         if tags:
             merged = list(dict.fromkeys([*row.tags, *[str(t) for t in tags]]))
             row.tags = merged
+        return SkillProgram.from_dict(row.to_dict())
+
+    def retire_skill(self, skill_id: str) -> SkillProgram | None:
+        row = self._skills.get(str(skill_id))
+        if row is None:
+            return None
+        row.status = "retired"
         return SkillProgram.from_dict(row.to_dict())
 
     def set_score(self, skill_id: str, score: float) -> SkillProgram | None:
@@ -661,6 +670,13 @@ class Neo4jSkillCortex:
             existing.name = str(name).strip()
         if tags:
             existing.tags = list(dict.fromkeys([*existing.tags, *[str(t) for t in tags]]))
+        return self.upsert_skill(existing)
+
+    def retire_skill(self, skill_id: str) -> SkillProgram | None:
+        existing = self.get_skill(str(skill_id))
+        if existing is None:
+            return None
+        existing.status = "retired"
         return self.upsert_skill(existing)
 
     def set_score(self, skill_id: str, score: float) -> SkillProgram | None:

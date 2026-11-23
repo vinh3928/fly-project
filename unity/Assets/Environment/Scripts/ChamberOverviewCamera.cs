@@ -100,8 +100,10 @@ namespace FlySimulation.Environment
                     continue;
                 }
 
-                // Display 2 chase + Display 3 mind-log must stay enabled.
-                if (FlyFollowCamera.IsFollowCamera(other) || MindLogDisplay.IsLogCamera(other))
+                // Display 2 chase + Display 3 mind-log + Display 4 promote must stay enabled.
+                if (FlyFollowCamera.IsFollowCamera(other)
+                    || MindLogDisplay.IsLogCamera(other)
+                    || SkillPromoteDisplay.IsPromoteCamera(other))
                 {
                     other.enabled = true;
                     if (other.CompareTag("MainCamera"))

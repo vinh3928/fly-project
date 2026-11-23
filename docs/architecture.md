@@ -249,10 +249,13 @@ Graph shape: `(:Skill)-[:HAS_STEP]->(:SkillStep)` with optional
 `(:Skill)-[:DISCOVERED_AT]->(:Context)` (`place_id` is a soft string only —
 no cross-cluster edges). Status flows `candidate` → `promoted`.
 
-**Discovery:** low-load motor babbling samples short timed 5-d goal sequences
-(groom/touch and dance motifs). Candidates are upserted into the skill cortex.
-**Father** promotes (or names) a candidate; promoted skills join L1 as dynamic
-candidates and play back via `SkillExecutor` on the Architecture-B motor bus.
+**Discovery:** low-load motor babbling samples short timed 5-d goal sequences as
+open combos of primitives (forward / turn / pause / extend / crouch / …) —
+anonymous `candidate_move_*` names, no dance/touch hard labels. Candidates are
+upserted into the skill cortex. **HITL (Display 4)** Accept/Refuse, **Ask LLM judge**
+(auto accept/refuse + name), or **Father** promote; promoted skills join L1 as
+dynamic candidates and play back via
+`SkillExecutor` on the Architecture-B motor bus.
 Place `HAS_LESSON.action` / `skill_name` can reference a promoted skill so
 one-shot place reuse triggers playback. Config: `skill_cortex` in
 `python/configs/mind.yaml`.

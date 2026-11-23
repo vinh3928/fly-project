@@ -26,6 +26,13 @@ from flybrain.debug.route_path_channel import (
     parse_path_message,
     parse_pose_message,
 )
+from flybrain.debug.skill_promote_channel import (
+    SKILL_PROMOTE_CHANNEL_ID,
+    SkillAdjudication,
+    SkillPromoteChannel,
+    adjudicate_skill_promote,
+    suggest_skill_name,
+)
 
 __all__ = [
     "FATHER_DIALOG_CHANNEL_ID",
@@ -36,6 +43,10 @@ __all__ = [
     "MindLogDebugChannel",
     "ROUTE_PATH_CHANNEL_ID",
     "RoutePathDebugChannel",
+    "SKILL_PROMOTE_CHANNEL_ID",
+    "SkillAdjudication",
+    "SkillPromoteChannel",
+    "adjudicate_skill_promote",
     "build_graph_snapshot",
     "format_mind_panel",
     "pack_ask_message",
@@ -48,4 +59,5 @@ __all__ = [
     "parse_path_message",
     "parse_pose_message",
     "parse_reply_message",
+    "suggest_skill_name",
 ]

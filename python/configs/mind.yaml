@@ -54,7 +54,7 @@ place_graph:
     neo4j_flush_every: 5.0 # seconds; durable save of the place the fly keeps revisiting
 
 # Skill cortex: separate Neo4j (Bolt 7688) for discovered motor programs
-# (touch/dance-style goal sequences). Babble proposes candidates; Father promotes.
+# (open primitive combos). Babble proposes anonymous candidates; HITL/Father names.
 skill_cortex:
   enabled: true
   backend: neo4j # in_memory | neo4j

@@ -156,12 +156,12 @@ Motor primitives live in a **separate Neo4j partition** (Bolt `7688`, compose se
 
 **What exists today (one-shot skill registry + Father learning):**
 
-1. **Babble** samples short timed 5-d goal sequences (touch/groom and dance-style motifs) when novelty/curiosity is high and survival load is low.
+1. **Babble** samples short timed 5-d goal sequences as **open combos of primitives** (forward / turn / pause / extend / crouch / …) when novelty/curiosity is high and survival load is low. Names stay anonymous (`candidate_move_*`) — no dance/touch hard labels.
 2. Candidates are written to the skill cortex as `(:Skill)-[:HAS_STEP]->(:SkillStep)` with status `candidate`.
-3. **Father promotes once** (“keep this move as `dance_spin`” / promote last candidate) → status `promoted`, name bound, skill listed into L1 as a dynamic candidate.
+3. **HITL (Display 4)** or **Father** names and promotes once (Accept with a description, or “keep this move as `wiggle_probe`”) → status `promoted`, name bound, skill listed into L1 as a dynamic candidate.
 4. Later mind commits / place lessons that reference that name **play the full sequence back** via `SkillExecutor` on the Architecture-B motor bus (same 5-d gait interface).
 
-So: **one teaching or promote event → lasting reusable skill**. Place lessons can point at a promoted skill name the same way they point at `approach` / `avoid`.
+So: **babble invents the body; HITL/Father invents the name** — one promote event → lasting reusable skill. Place lessons can point at a promoted skill name the same way they point at `approach` / `avoid`.
 
 **What this is not yet:**
 

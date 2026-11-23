@@ -253,22 +253,35 @@ def main(argv: list[str] | None = None) -> int:
 
     profiles = FlyProfileStore.load()
     profiles.ensure(1, name="Fly 1")  # current default fly
+    wait_unity_fly_menu = bool(args.editor or args.build) and not (
+        args.new_fly is not None or args.select_fly or args.fly_id or args.fly
+    )
+    profile = None
     if args.new_fly is not None:
         created = profiles.create(name=str(args.new_fly).strip() or None)
-        profile = profiles.set_active(created.fly_id)
+        profile = profiles.set_active(created.fly_id, session_ready=True)
     elif args.select_fly:
         profile = profiles.interactive_select()
+        profiles.set_session_ready(True)
     elif args.fly_id or args.fly:
         profile = profiles.resolve(fly=args.fly, fly_id=args.fly_id)
+        profiles.set_session_ready(True)
+    elif wait_unity_fly_menu:
+        # fly_id binds after Unity Choose-your-fly sets session_ready=true.
+        print(
+            "fly_profile will follow Unity selection screen after connect",
+            flush=True,
+        )
     else:
-        # Prefer the shared active profile (Unity menu or last Python run).
         profiles.reload()
-        profile = profiles.set_active(profiles.active_fly_id)
-    cfg.fly_id = profile.fly_id
-    print(
-        f"fly_profile selected name={profile.name!r} id={profile.fly_id} " f"(#{profile.number})",
-        flush=True,
-    )
+        profile = profiles.set_active(profiles.active_fly_id, session_ready=True)
+    if profile is not None:
+        cfg.fly_id = profile.fly_id
+        print(
+            f"fly_profile selected name={profile.name!r} id={profile.fly_id} "
+            f"(#{profile.number})",
+            flush=True,
+        )
 
     if args.pgvector:
         cfg.backend = "pgvector"
@@ -360,6 +373,24 @@ def main(argv: list[str] | None = None) -> int:
             and getattr(env, "right_eye", None) is not None
         )
         print(f"unity_connected has_eyes={has_eyes}", flush=True)
+
+    if wait_unity_fly_menu:
+        import numpy as np
+
+        idle = np.asarray([0.0, 0.0, 0.5, 0.5, 0.0], dtype=np.float32)
+
+        def _pump() -> None:
+            step = getattr(env, "step", None)
+            if callable(step):
+                step(idle)
+
+        profile = profiles.wait_until_session_ready(timeout_s=900.0, poll_s=0.2, pump=_pump)
+        cfg.fly_id = profile.fly_id
+        print(
+            f"fly_profile selected name={profile.name!r} id={profile.fly_id} "
+            f"(#{profile.number}) via=unity_menu",
+            flush=True,
+        )
 
     pipeline = LiveMindPipeline(env, config=cfg)
     result: dict = {}
