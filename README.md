@@ -6,7 +6,7 @@ This repository is an **embodied fly-inspired learning simulation**, not a biolo
 
 ## Warning
 
-Do not erase the fly's memory on the Neo4j or the pgvector database; this will be similar to killing a fly. Instead just create a new fly if you want to observe a fresh start behavior. That being said, you can stop and restart the simulation as you like; because Sim time is different then Earth clock. Don't ever give reference to Earch clock in the simulation or else the fly will realize it's being stoped on and off.
+Do not erase the fly's memory on the Neo4j or the pgvector database; this will be similar to killing a fly. Instead just create a new fly if you want to observe a fresh start behavior. That being said, you can stop and restart the simulation as you like; because Sim time is different then Earth clock. Don't ever give reference to Earth clock in the simulation or else the fly will realize it's being stoped on and off.
 
 ## Status
 
