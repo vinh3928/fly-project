@@ -41,9 +41,7 @@ def _cand(
         skill_id=skill_id,
         name=f"candidate_move_{skill_id}",
         status="candidate",
-        steps=[
-            SkillStep(goal=np.asarray(g, dtype=np.float32), duration_steps=2) for g in seq
-        ],
+        steps=[SkillStep(goal=np.asarray(g, dtype=np.float32), duration_steps=2) for g in seq],
         tags=tags,
         source="babble",
         fly_id=fly_id,

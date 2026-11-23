@@ -60,9 +60,7 @@ def _goal(
     freq: float = 0.5,
     proboscis: float = 0.0,
 ) -> np.ndarray:
-    return clip_goal(
-        np.asarray([forward, turn, height, freq, proboscis], dtype=np.float32)
-    )
+    return clip_goal(np.asarray([forward, turn, height, freq, proboscis], dtype=np.float32))
 
 
 def primitive_goal(name: str, rng: np.random.Generator) -> np.ndarray:
@@ -73,9 +71,13 @@ def primitive_goal(name: str, rng: np.random.Generator) -> np.ndarray:
     if key == PRIMITIVE_FORWARD:
         return _goal(float(rng.uniform(0.35, 0.85)), float(rng.uniform(-0.2, 0.2)), 0.5, 0.7, 0.0)
     if key == PRIMITIVE_BACK:
-        return _goal(float(rng.uniform(-0.55, -0.2)), float(rng.uniform(-0.15, 0.15)), 0.5, 0.55, 0.0)
+        return _goal(
+            float(rng.uniform(-0.55, -0.2)), float(rng.uniform(-0.15, 0.15)), 0.5, 0.55, 0.0
+        )
     if key == PRIMITIVE_TURN_L:
-        return _goal(float(rng.uniform(0.05, 0.35)), float(rng.uniform(-0.95, -0.45)), 0.5, 0.65, 0.0)
+        return _goal(
+            float(rng.uniform(0.05, 0.35)), float(rng.uniform(-0.95, -0.45)), 0.5, 0.65, 0.0
+        )
     if key == PRIMITIVE_TURN_R:
         return _goal(float(rng.uniform(0.05, 0.35)), float(rng.uniform(0.45, 0.95)), 0.5, 0.65, 0.0)
     if key == PRIMITIVE_PIVOT:

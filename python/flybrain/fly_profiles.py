@@ -9,10 +9,11 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 DEFAULT_PROFILES_PATH = Path(__file__).resolve().parents[2] / "data" / "fly_profiles.json"
 

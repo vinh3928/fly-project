@@ -87,8 +87,6 @@ def test_wait_until_session_ready(tmp_path: Path) -> None:
             other = FlyProfileStore.load(path)
             other.set_active("fly_003", touch=True, session_ready=True)
 
-    profile = store.wait_until_session_ready(
-        timeout_s=5.0, poll_s=0.01, pump=pump, print_fn=None
-    )
+    profile = store.wait_until_session_ready(timeout_s=5.0, poll_s=0.01, pump=pump, print_fn=None)
     assert profile.fly_id == "fly_003"
     assert store.session_ready is True
