@@ -111,6 +111,25 @@ def test_motor_locomotion_floor_enforces_walk() -> None:
     assert float(spun[0]) >= 0.4
     stopped = ensure_locomotion_floor(np.asarray([0.0, 0.0, 0.5, 0.3, 0.0], dtype=np.float32))
     assert abs(float(stopped[0])) < 1e-5
+    # Near-still explore/inspect leftovers must walk — not hold a mind-interval pause.
+    near_still = ensure_locomotion_floor(
+        np.asarray([-0.03, -0.00, 0.5, 0.5, 0.0], dtype=np.float32)
+    )
+    assert float(near_still[0]) >= 0.4
+    near_still_turn = ensure_locomotion_floor(
+        np.asarray([0.02, -0.05, 0.5, 0.5, 0.0], dtype=np.float32)
+    )
+    assert float(near_still_turn[0]) >= 0.4
+
+
+def test_motor_layer_floors_near_still_act_anything_goal() -> None:
+    layer = MotorLayer(MotorLayerConfig(mode="heuristic", min_forward=0.4))
+    layer.set_goal(np.asarray([-0.03, 0.0, 0.5, 0.5, 0.0], dtype=np.float32))
+    assert float(layer.goal[0]) >= 0.4
+    # Exact stop (still/idle) still allowed.
+    layer.set_goal(np.asarray([0.0, 0.0, 0.5, 0.5, 0.0], dtype=np.float32))
+    assert abs(float(layer.goal[0])) < 1e-5
+    assert abs(float(layer.goal[1])) < 1e-5
 
 
 def test_calm_layer1_prefers_locomotion() -> None:

@@ -1431,28 +1431,35 @@ class LiveMindPipeline:
             return
 
     def _maybe_auto_ask_llm_when_away(self) -> None:
-        """If Display 4 is unfocused (or never reported), auto Ask-LLM after grace."""
+        """Python fallback Ask-LLM when Unity never reports Display 4 focus.
+
+        When Unity reports away (``user_on_display4 is False``), Unity owns the
+        immediate ask_llm send so we do not double-adjudicate. When focus is
+        unknown (fake env / no VIEW), auto after ``auto_llm_away_seconds``
+        (``0`` = immediate, ``<0`` = disabled). Does not interrupt motor flow —
+        only Unity HITL freeze on Display 4 stops the fly.
+        """
         if self._skill_promote_auto_fired or not self._skill_promote_showing:
             return
         if not self._skill_promote_queue:
             return
-        grace = float(getattr(self.skill_cortex_config, "auto_llm_away_seconds", 0.1) or 0.0)
-        if grace <= 0.0:
+        grace = float(getattr(self.skill_cortex_config, "auto_llm_away_seconds", 0.0))
+        if grace < 0.0:
             return
-        # Prefer Unity VIEW signal: only auto when explicitly away.
-        # If Unity never reports (fake / no channel), treat as away after grace.
         viewing = getattr(self.skill_promote, "user_on_display4", None)
         if viewing is True:
             return
+        if viewing is False:
+            # Unity TickAwayAutoJudge will SendReply(ask_llm); wait for that.
+            return
         shown_at = float(self._skill_promote_shown_at or time.monotonic())
-        if (time.monotonic() - shown_at) < grace:
+        if grace > 0.0 and (time.monotonic() - shown_at) < grace:
             return
         skill_id = self._skill_promote_queue[0]
         self._skill_promote_auto_fired = True
         if self.config.console_log:
-            why = "away" if viewing is False else "no_view_signal"
             print(
-                f"skill_promote_auto_llm step={self._step} id={skill_id} reason={why}",
+                f"skill_promote_auto_llm step={self._step} id={skill_id} reason=no_view_signal",
                 flush=True,
             )
         self._ask_llm_adjudicate_skill(skill_id, via="display4_llm_auto")

@@ -312,8 +312,8 @@ def test_display4_ask_llm_auto_refuses_weak_candidate() -> None:
         pipe.close()
 
 
-def test_display4_auto_ask_llm_when_away() -> None:
-    """No Display 4 focus → Python grace timer auto-adjudicates."""
+def test_display4_auto_ask_llm_when_no_view_signal() -> None:
+    """No Unity VIEW → Python immediate auto-adjudicate (grace 0)."""
     ch = SkillPromoteChannel()
 
     class _Env(FakeFlyEnv):
@@ -336,7 +336,7 @@ def test_display4_auto_ask_llm_when_away() -> None:
             enabled=True,
             backend="in_memory",
             promote_min_score=0.3,
-            auto_llm_away_seconds=0.05,
+            auto_llm_away_seconds=0.0,
             babble={"enabled": False},
         ),
     )
@@ -351,12 +351,111 @@ def test_display4_auto_ask_llm_when_away() -> None:
             )
         )
         pipe._enqueue_skill_promote("auto-ok")
-        ch.inject_view_for_tests(request_id=int(pipe._skill_promote_request_id), viewing=False)
-        pipe._skill_promote_shown_at = __import__("time").monotonic() - 1.0
+        # Do not inject VIEW — Python owns fallback when focus is unknown.
         pipe._poll_skill_promote_ui()
         got = pipe.skill_cortex.get_skill("auto-ok")
         assert got is not None and got.status == "promoted"
         assert pipe._skill_promote_queue == []
+    finally:
+        pipe.close()
+
+
+def test_display4_python_defers_when_unity_reports_away() -> None:
+    """Unity reported away → wait for Unity ask_llm; do not double-fire."""
+    ch = SkillPromoteChannel()
+
+    class _Env(FakeFlyEnv):
+        @property
+        def skill_promote_channel(self):
+            return ch
+
+    cfg = LiveMindConfig(
+        backend="in_memory",
+        llm_mock=True,
+        console_log=False,
+        async_mind=False,
+        mind_interval=4,
+        enable_motor_layer=True,
+        fly_id="fly_promote_defer",
+        stimulus_interrupt=StimulusInterruptConfig(enabled=False),
+        father_advocate=FatherAdvocateConfig(enabled=False),
+        place_graph=PlaceGraphConfig(enabled=False, backend="in_memory"),
+        skill_cortex=SkillCortexConfig(
+            enabled=True,
+            backend="in_memory",
+            promote_min_score=0.3,
+            auto_llm_away_seconds=0.0,
+            babble={"enabled": False},
+        ),
+    )
+    pipe = LiveMindPipeline(_Env(FakeFlyConfig(seed=8)), config=cfg)
+    try:
+        pipe.skill_cortex.upsert_skill(
+            _cand(
+                skill_id="wait-unity",
+                tags=["babble", "combo", "forward", "pivot"],
+                score=0.8,
+                fly_id="fly_promote_defer",
+            )
+        )
+        pipe._enqueue_skill_promote("wait-unity")
+        req = int(pipe._skill_promote_request_id)
+        ch.inject_view_for_tests(request_id=req, viewing=False)
+        pipe._poll_skill_promote_ui()
+        got = pipe.skill_cortex.get_skill("wait-unity")
+        assert got is not None and got.status == "candidate"
+        assert pipe._skill_promote_queue == ["wait-unity"]
+        # Unity-style ask_llm then resolves.
+        ch.inject_reply_for_tests(request_id=req, source="ask_llm", name="")
+        pipe._poll_skill_promote_ui()
+        got = pipe.skill_cortex.get_skill("wait-unity")
+        assert got is not None and got.status == "promoted"
+    finally:
+        pipe.close()
+
+
+def test_display4_auto_ask_llm_disabled_when_grace_negative() -> None:
+    ch = SkillPromoteChannel()
+
+    class _Env(FakeFlyEnv):
+        @property
+        def skill_promote_channel(self):
+            return ch
+
+    cfg = LiveMindConfig(
+        backend="in_memory",
+        llm_mock=True,
+        console_log=False,
+        async_mind=False,
+        mind_interval=4,
+        enable_motor_layer=True,
+        fly_id="fly_promote_off",
+        stimulus_interrupt=StimulusInterruptConfig(enabled=False),
+        father_advocate=FatherAdvocateConfig(enabled=False),
+        place_graph=PlaceGraphConfig(enabled=False, backend="in_memory"),
+        skill_cortex=SkillCortexConfig(
+            enabled=True,
+            backend="in_memory",
+            promote_min_score=0.3,
+            auto_llm_away_seconds=-1.0,
+            babble={"enabled": False},
+        ),
+    )
+    pipe = LiveMindPipeline(_Env(FakeFlyConfig(seed=7)), config=cfg)
+    try:
+        pipe.skill_cortex.upsert_skill(
+            _cand(
+                skill_id="stay-cand",
+                tags=["babble", "combo", "forward"],
+                score=0.8,
+                fly_id="fly_promote_off",
+            )
+        )
+        pipe._enqueue_skill_promote("stay-cand")
+        pipe._poll_skill_promote_ui()
+        got = pipe.skill_cortex.get_skill("stay-cand")
+        assert got is not None and got.status == "candidate"
+        assert pipe._skill_promote_queue == ["stay-cand"]
     finally:
         pipe.close()
 

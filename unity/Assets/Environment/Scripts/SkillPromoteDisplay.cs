@@ -11,11 +11,12 @@ using FlySimulation.Fly.DebugViz;
 namespace FlySimulation.Environment
 {
     /// <summary>
-    /// Display 4: frozen, fly-centered review cam + promote queue panel
-    /// (Accept / Test / Ask LLM / Refuse). World freezes while the panel is open;
-    /// <c>T</c> briefly unfreezes for a motor preview, then freezes again.
-    /// Ask LLM thaws <c>timeScale</c> (ML-Agents SideChannels need FixedUpdate)
-    /// while keeping the fly kinematic until Python SHOWs/HIDEs again.
+    /// Display 4: fly-centered review cam + promote queue panel
+    /// (Accept / Test / Ask LLM / Refuse). World freezes only while the user is
+    /// viewing Display 4 for HITL categorization. Away from Display 4, the sim
+    /// keeps running and Ask LLM auto-fires immediately with no motion interrupt.
+    /// Manual Ask LLM thaws <c>timeScale</c> (SideChannels need FixedUpdate) while
+    /// keeping the fly locked until Python SHOWs/HIDEs again.
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Camera))]
@@ -33,7 +34,8 @@ namespace FlySimulation.Environment
         [SerializeField] private float positionLerp = 22f;
         [SerializeField] private bool activateDisplay4 = true;
         [SerializeField] private float motorTestSeconds = 2.5f;
-        [SerializeField] private float autoJudgeAwaySeconds = 0.1f;
+        [Tooltip("Seconds away from Display 4 before auto Ask LLM. 0 = immediate.")]
+        [SerializeField] private float autoJudgeAwaySeconds = 0f;
         [SerializeField] private Color panelColor = new Color(0.07f, 0.09f, 0.12f, 0.94f);
         [SerializeField] private Color textColor = new Color(0.92f, 0.94f, 0.88f, 1f);
         [SerializeField] private Color accentColor = new Color(0.7f, 0.85f, 0.55f, 1f);
@@ -55,6 +57,7 @@ namespace FlySimulation.Environment
         private bool _displayActivated;
         private bool _reviewFrozen;
         private bool _awaitingLlmJudge;
+        private bool _lockMotionForJudge;
         private bool _allowLlm = true;
         private bool _lastViewingReported;
         private bool _hasViewingReport;
@@ -210,14 +213,14 @@ namespace FlySimulation.Environment
                 return;
             }
 
-            // Away from Display 4: keep sim running and auto Ask LLM after grace.
+            // Away from Display 4: keep sim running and auto Ask LLM (default: immediate).
             if (_reviewFrozen)
             {
                 SetReviewFrozen(false);
             }
 
             _awaySeconds += Mathf.Max(0f, dt);
-            float grace = Mathf.Max(0.01f, autoJudgeAwaySeconds);
+            float grace = Mathf.Max(0f, autoJudgeAwaySeconds);
             if (_awaySeconds >= grace)
             {
                 if (_title != null)
@@ -225,7 +228,8 @@ namespace FlySimulation.Environment
                     _title.text = "Away → Ask LLM judge…";
                 }
 
-                SubmitAskLlm();
+                // Do not freeze / suspend motors — only HITL on Display 4 stops the fly.
+                SubmitAskLlm(lockMotion: false);
             }
         }
 
@@ -260,8 +264,9 @@ namespace FlySimulation.Environment
                 }
             }
 
-            // Frozen / judging: lock a centered portrait. Live/test: smooth follow.
-            if ((_reviewFrozen || _awaitingLlmJudge) && _motorTestRemaining <= 0f)
+            // HITL freeze / locked judge: centered portrait. Away auto-judge: keep following.
+            if ((_reviewFrozen || (_awaitingLlmJudge && _lockMotionForJudge))
+                && _motorTestRemaining <= 0f)
             {
                 SnapToTarget();
                 _hadTarget = true;
@@ -357,6 +362,7 @@ namespace FlySimulation.Environment
             EnsureUi();
             _visible = true;
             _awaitingLlmJudge = false;
+            _lockMotionForJudge = false;
             _allowLlm = allowLlm;
             _awaySeconds = 0f;
             _hasViewingReport = false;
@@ -366,7 +372,7 @@ namespace FlySimulation.Environment
             bool viewing = IsUserViewingDisplay4();
             ReportViewingIfChanged(viewing);
             // Freeze only when the user is on Display 4 for HITL; otherwise keep sim live
-            // and TickAwayAutoJudge will Ask LLM after grace.
+            // and TickAwayAutoJudge fires Ask LLM immediately (no motion interrupt).
             SetReviewFrozen(viewing);
             if (!viewing)
             {
@@ -381,7 +387,7 @@ namespace FlySimulation.Environment
             {
                 _title.text = viewing
                     ? $"Skill promote · {Mathf.Max(0, queueCount)} ready"
-                    : $"Skill promote · {Mathf.Max(0, queueCount)} ready (auto LLM if away)";
+                    : $"Skill promote · {Mathf.Max(0, queueCount)} ready (auto LLM)";
             }
 
             if (_meta != null)
@@ -424,6 +430,7 @@ namespace FlySimulation.Environment
         {
             _visible = false;
             _awaitingLlmJudge = false;
+            _lockMotionForJudge = false;
             _awaySeconds = 0f;
             _motorTestRemaining = 0f;
             if (_panelRoot != null)
@@ -604,7 +611,7 @@ namespace FlySimulation.Environment
             SendReply(SkillPromoteSource.Accept, name);
         }
 
-        private void SubmitAskLlm()
+        private void SubmitAskLlm(bool lockMotion = true)
         {
             if (_awaitingLlmJudge)
             {
@@ -613,25 +620,28 @@ namespace FlySimulation.Environment
 
             string name = _nameInput != null ? _nameInput.text : "";
             SendReply(SkillPromoteSource.AskLlm, name);
-            BeginAwaitingLlmJudge();
+            BeginAwaitingLlmJudge(lockMotion);
         }
 
         /// <summary>EditMode: mirror Ask LLM click (thaw clock, keep panel).</summary>
         public void SubmitAskLlmForTests()
         {
-            SubmitAskLlm();
+            SubmitAskLlm(lockMotion: true);
         }
 
         /// <summary>
         /// timeScale=0 stops FixedUpdate, so ML-Agents never flushes SideChannel
-        /// replies. Thaw the clock for Ask LLM while keeping the fly locked.
+        /// replies. Thaw the clock for Ask LLM. When <paramref name="lockMotion"/> is
+        /// true (HITL on Display 4), keep the fly kinematic until Hide/Show.
+        /// Away auto-judge passes false so walking continues.
         /// </summary>
-        private void BeginAwaitingLlmJudge()
+        private void BeginAwaitingLlmJudge(bool lockMotion)
         {
             _awaitingLlmJudge = true;
+            _lockMotionForJudge = lockMotion;
             if (_title != null)
             {
-                _title.text = "Ask LLM judging…";
+                _title.text = lockMotion ? "Ask LLM judging…" : "Away → Ask LLM judging…";
             }
 
             if (_askLlm != null)
@@ -639,19 +649,24 @@ namespace FlySimulation.Environment
                 _askLlm.interactable = false;
             }
 
-            // Thaw the clock so SideChannels flush, but do NOT leave actions suspended
-            // after the verdict — Hide/Show call ReleaseMotorGate.
+            // Thaw the clock so SideChannels flush.
             _reviewFrozen = false;
             if (Time.timeScale <= 0.0001f)
             {
                 Time.timeScale = _savedTimeScale > 0f ? _savedTimeScale : 1f;
             }
 
-            // Keep pose stable during the brief judge round-trip; actions resume on Hide/Show.
-            SetBodiesKinematic(true);
-            ZeroVelocities();
-            SuspendPythonActions(true);
-            SnapToTarget();
+            if (lockMotion)
+            {
+                SetBodiesKinematic(true);
+                ZeroVelocities();
+                SuspendPythonActions(true);
+                SnapToTarget();
+            }
+            else
+            {
+                ReleaseMotorGate();
+            }
         }
 
         private void SubmitRefuse()
@@ -757,9 +772,13 @@ namespace FlySimulation.Environment
                 ? $"fly centered · {target.name}"
                 : "no fly target — waiting…";
             string freeze = _reviewFrozen && _motorTestRemaining <= 0f ? " · FROZEN" : "";
-            string judge = _awaitingLlmJudge ? " · LLM JUDGING" : "";
+            string judge = _awaitingLlmJudge
+                ? (_lockMotionForJudge ? " · LLM JUDGING" : " · AUTO LLM")
+                : "";
             string away = !_awaitingLlmJudge && _visible && !IsUserViewingDisplay4()
-                ? $" · AWAY auto-LLM {Mathf.Max(0f, autoJudgeAwaySeconds - _awaySeconds):0.0}s"
+                ? (autoJudgeAwaySeconds <= 0f
+                    ? " · AWAY auto-LLM"
+                    : $" · AWAY auto-LLM {Mathf.Max(0f, autoJudgeAwaySeconds - _awaySeconds):0.0}s")
                 : "";
             string test = _motorTestRemaining > 0f
                 ? $" · TEST {_motorTestRemaining:0.0}s"
@@ -1002,7 +1021,7 @@ namespace FlySimulation.Environment
             _test.onClick.AddListener(SubmitTest);
 
             _askLlm = CreateButton(_panelRoot.transform, "AskLlm", "Ask LLM judge", new Vector2(0.50f, 0.04f), new Vector2(0.74f, 0.18f));
-            _askLlm.onClick.AddListener(SubmitAskLlm);
+            _askLlm.onClick.AddListener(() => SubmitAskLlm(lockMotion: true));
 
             _refuse = CreateButton(_panelRoot.transform, "Refuse", "Refuse", new Vector2(0.76f, 0.04f), new Vector2(0.98f, 0.18f));
             _refuse.onClick.AddListener(SubmitRefuse);

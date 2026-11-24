@@ -30,11 +30,18 @@ def ensure_locomotion_floor(
     goal: np.ndarray,
     *,
     min_forward: float = 0.4,
-    stop_forward_eps: float = 0.08,
+    stop_forward_eps: float = 1e-5,
 ) -> np.ndarray:
-    """Keep non-stop goals walking so mind+motor produce visible gait."""
+    """Keep non-stop goals walking so mind+motor produce visible gait.
+
+    Exact stops (``still`` / ``idle`` → ``STOP_GOAL`` ≈ ``[0, 0, …]``) are left
+    alone. Near-still leftovers from stacked inspect/investigate/devil damping
+    (e.g. ``[-0.03, 0]`` with ``plan=explore``) are floored to ``min_forward`` so
+    Architecture B does not hold a motionless goal for a full mind interval.
+    In-place pivots use ``MotorLayer.set_goal(..., allow_pivot=True)`` instead.
+    """
     g = clip_goal(goal)
-    # Explicit stop / near-zero command: leave alone.
+    # Exact stop only — do not treat the old ±0.08 "near still" band as intentional.
     if (
         abs(float(g[0])) <= stop_forward_eps
         and abs(float(g[1])) <= stop_forward_eps

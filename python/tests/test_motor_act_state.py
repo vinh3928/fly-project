@@ -56,6 +56,25 @@ def test_controller_push_replaces_goal_and_mode() -> None:
     assert abs(float(stopped[0])) <= 0.08
 
 
+def test_near_still_explore_directive_gets_locomotion_floor() -> None:
+    """Inspect/investigate damping must not leave act_anything stuck near zero."""
+    motor = MotorLayer(MotorLayerConfig(mode="heuristic", smoothing=1.0, max_delta=1.0))
+    ctrl = MotorActController(motor)
+    ctrl.push(
+        make_directive(
+            mode="act_anything",
+            plan_name="explore",
+            goal=np.asarray([-0.03, -0.00, 0.5, 0.5, 0.0], dtype=np.float32),
+            reason="damped_explore",
+            step=1,
+        )
+    )
+    assert ctrl.mode == "act_anything"
+    assert float(motor.goal[0]) >= 0.4
+    action = ctrl.apply_tick(None)
+    assert float(action[0]) >= 0.2
+
+
 def test_idle_and_still_emit_stop_goal() -> None:
     motor = MotorLayer(MotorLayerConfig(mode="heuristic", smoothing=1.0, max_delta=1.0))
     ctrl = MotorActController(motor)
