@@ -76,6 +76,36 @@ skill_cortex:
   # Does not freeze the fly; only Display 4 HITL focus stops motion.
   auto_llm_away_seconds: 0.0
 
+# Speech cortex: listen (Unity audio bands) + articulatory babble → alphabet + eye image.
+# Separate Neo4j CE instance (7689). No ML speech model — deterministic phoneme/letter table.
+speech_cortex:
+  enabled: true
+  backend: in_memory # in_memory | neo4j
+  uri: "bolt://127.0.0.1:7689"
+  user: neo4j
+  password: flymindspeech # override with NEO4J_SPEECH_PASSWORD
+  database: neo4j
+  promote_min_score: 0.4
+  # Parallel process: hear / start-babble every N motor steps (mouth plays every tick).
+  speech_interval: 4
+  hear_rms_min: 0.08
+  hear_cooldown_steps: 28
+  image_dir: data/speech_images
+  # Word-like babble (vowel+consonant token) reinforces Word.weight in speech memory.
+  word_min_len: 2
+  word_weight_delta: 0.1
+  babble:
+    enabled: true
+    min_novelty: 0.25
+    max_survival_risk: 0.45
+    max_hunger: 0.55
+    cooldown_steps: 160
+    max_steps: 6
+    min_steps: 2
+    duration_range: [4, 16]
+    # Chance to ignore Word.weight and sample pure random primitives.
+    word_bias_explore: 0.35
+
 embedding:
   latent_dim: 256
   affect_dim: 16
@@ -166,7 +196,7 @@ live:
   max_steps: 200
   use_fake_env: false
   console_log: true
-  console_log_every: 1 # every decision step; mind text is included on motor ticks too
+  console_log_every: 20 # every N motor steps; mind text is included on those ticks too
   console_log_verbose: false # set true or pass -v for full MIND* DETAIL JSON lines
 
 # Phase 9 architecture B: mind pushes act directives; motor tracks until next push.
@@ -428,8 +458,11 @@ father_advocate:
   enabled: true
   # human_or_llm = Unity popup; llm = auto-answer (fake/headless / CI)
   mode: human_or_llm
-  # Motor hard-stops until Reply / Ask LLM / Skip, or this many seconds → auto LLM.
-  timeout_seconds: 60
+  # Novelty ask: wait this long for user to move to Display 3; then auto Ask LLM.
+  # While focused on Display 3, unlimited time for the UI (Reply / Ask LLM / Skip).
+  auto_llm_away_seconds: 5.0
+  # Absolute fallback only when auto_llm_away_seconds < 0 (legacy). 0 = off.
+  timeout_seconds: 0
   max_question_chars: 220
   max_answer_chars: 420
   mock: null # null = inherit llm.mock; true/false overrides

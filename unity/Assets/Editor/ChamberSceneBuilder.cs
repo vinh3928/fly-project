@@ -96,6 +96,7 @@ namespace FlySimulation.EditorTools
                 ExperimentConfiguration.SugarPlumeRadius,
                 ExperimentConfiguration.SugarPlumeEdgeFraction);
             EnsureSurface(sugar, new ChemicalChannels { Sugar = 1f });
+            sugar.AddComponent<EnvAudioCue>().Configure(523f, 0.55f, 1.8f);
 
             var bitter = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             bitter.name = "BitterSource";
@@ -113,6 +114,14 @@ namespace FlySimulation.EditorTools
                 1f,
                 ExperimentConfiguration.DefaultChemicalSpread);
             EnsureSurface(bitter, new ChemicalChannels { Bitter = 1f });
+            bitter.AddComponent<EnvAudioCue>().Configure(311f, 0.5f, 2.2f);
+
+            // Soft "song on a radio" inside the chamber (procedural pentatonic loop).
+            var chamberSong = new GameObject("ChamberSong");
+            chamberSong.transform.SetParent(chamberRoot.transform, false);
+            chamberSong.transform.localPosition = new Vector3(0f, 0.04f, 0f);
+            chamberSong.AddComponent<EnvAmbientSynth>().Configure(
+                EnvAmbientSynth.Kind.Song, amp: 0.3f, blend: 0.55f);
 
             // Phase 5: high-contrast floor patches for visual landmarking (walls stay mesh-hidden).
             for (int i = 0; i < 4; i++)
@@ -327,7 +336,7 @@ namespace FlySimulation.EditorTools
                 UnityEngine.Object.DestroyImmediate(existing);
             }
 
-            var chamber = UnityEngine.Object.FindFirstObjectByType<ChamberController>();
+            var chamber = UnityEngine.Object.FindAnyObjectByType<ChamberController>();
             var config = chamber != null && chamber.Configuration != null
                 ? chamber.Configuration
                 : ExperimentConfiguration.Default();
@@ -426,7 +435,7 @@ namespace FlySimulation.EditorTools
             var wallMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/Fly/Materials/WallMat.mat");
             var overview = GameObject.Find("OverviewCamera");
             Vector3 chamberSize = ExperimentConfiguration.Default().ChamberSize;
-            var chamber = UnityEngine.Object.FindFirstObjectByType<ChamberController>();
+            var chamber = UnityEngine.Object.FindAnyObjectByType<ChamberController>();
             if (chamber != null && chamber.Configuration != null)
             {
                 chamberSize = chamber.Configuration.ChamberSize;
@@ -458,7 +467,7 @@ namespace FlySimulation.EditorTools
             rig.Configure(chamberSize);
             ChamberOverviewCamera.Place(cam, overview.transform, chamberSize);
 
-            var flyBody = UnityEngine.Object.FindFirstObjectByType<FlySimulation.Fly.Body.FlyBodyController>();
+            var flyBody = UnityEngine.Object.FindAnyObjectByType<FlySimulation.Fly.Body.FlyBodyController>();
             EnsureFlyFollowCamera(flyBody != null ? flyBody.transform : null);
             EnsureMindLogDisplay();
             EnsureFatherDialogDisplay();
@@ -467,7 +476,7 @@ namespace FlySimulation.EditorTools
 
             // Disable fly-eye cameras in Game view if they were left enabled.
             // Keep Overview (1), FlyFollow (2), MindLog (3), SkillPromote (4) enabled.
-            foreach (var eye in UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
+            foreach (var eye in UnityEngine.Object.FindObjectsByType<Camera>())
             {
                 if (eye == null)
                 {
@@ -492,7 +501,7 @@ namespace FlySimulation.EditorTools
 
             overview.tag = "MainCamera";
             // Phase 5: keep a few visible dark obstacles for navigation.
-            var randomizer = UnityEngine.Object.FindFirstObjectByType<EnvironmentRandomizer>();
+            var randomizer = UnityEngine.Object.FindAnyObjectByType<EnvironmentRandomizer>();
             if (randomizer != null)
             {
                 var obstacleMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/Fly/Materials/ObstacleMat.mat");
@@ -533,7 +542,7 @@ namespace FlySimulation.EditorTools
             }
 
             ChamberWallHider.HideWalls();
-            if (UnityEngine.Object.FindFirstObjectByType<ChamberWallHider>() == null)
+            if (UnityEngine.Object.FindAnyObjectByType<ChamberWallHider>() == null)
             {
                 var chamberGo = GameObject.Find("Chamber");
                 if (chamberGo != null)
@@ -544,6 +553,7 @@ namespace FlySimulation.EditorTools
 
             EnsureRoutePathVisualizer();
             EnsurePlaceGraphVisualizer();
+            EnsureSpeechStatusLabel();
 
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
             Debug.Log(
@@ -583,6 +593,57 @@ namespace FlySimulation.EditorTools
             viz.Bind(fly.transform);
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
             Debug.Log("PlaceGraphVisualizer bound on Fly (latent place map + edges).");
+        }
+
+        [MenuItem("Tools/Fly/Ensure Speech Status Label", priority = 14)]
+        [MenuItem("Fly/Ensure Speech Status Label", priority = 14)]
+        public static void EnsureSpeechStatusLabel()
+        {
+            var fly = GameObject.Find("Fly");
+            if (fly == null)
+            {
+                Debug.LogWarning("No Fly GameObject found — run Setup Chamber Scene first.");
+                return;
+            }
+
+            // Drop duplicate overhead roots left from earlier play-mode saves.
+            CullNamedChildren(fly.transform, SpeechStatusLabel.ObjectName, keepOne: true);
+            var label = fly.GetComponent<SpeechStatusLabel>() ?? fly.AddComponent<SpeechStatusLabel>();
+            label.Bind(fly.transform);
+            var placeViz = fly.GetComponent<PlaceGraphVisualizer>();
+            if (placeViz != null)
+            {
+                placeViz.ShowLabels = false;
+            }
+
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            Debug.Log("SpeechStatusLabel bound on Fly (speech_hear / speech_babble overhead).");
+        }
+
+        private static void CullNamedChildren(Transform parent, string name, bool keepOne)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            bool kept = false;
+            for (int i = parent.childCount - 1; i >= 0; i--)
+            {
+                Transform child = parent.GetChild(i);
+                if (child == null || child.name != name)
+                {
+                    continue;
+                }
+
+                if (keepOne && !kept)
+                {
+                    kept = true;
+                    continue;
+                }
+
+                UnityEngine.Object.DestroyImmediate(child.gameObject);
+            }
         }
 
         [MenuItem("Tools/Fly/Fix Pink Materials", priority = 1)]
@@ -744,6 +805,29 @@ namespace FlySimulation.EditorTools
             var motors = fly.AddComponent<FlyMotorController>();
             motors.Bind(body, proboscisActuator);
             motors.BindHead(headPose);
+
+            // Speech cortex: ears + mouth (articulatory babble / env listen).
+            var ears = fly.GetComponent<FlyAudioCapture>();
+            if (ears == null)
+            {
+                ears = fly.AddComponent<FlyAudioCapture>();
+            }
+
+            var mouth = head.GetComponent<FlyMouthActuator>();
+            if (mouth == null)
+            {
+                mouth = head.AddComponent<FlyMouthActuator>();
+            }
+
+            if (fly.GetComponent<SpeechAudioBridge>() == null)
+            {
+                var bridge = fly.AddComponent<SpeechAudioBridge>();
+                SetPrivate(bridge, "ears", ears);
+                SetPrivate(bridge, "mouth", mouth);
+            }
+
+            var speechLabel = fly.GetComponent<SpeechStatusLabel>() ?? fly.AddComponent<SpeechStatusLabel>();
+            speechLabel.Bind(fly.transform);
 
             var demo = fly.AddComponent<WalkingDemoDriver>();
             demo.Bind(motors);

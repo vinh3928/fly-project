@@ -176,7 +176,7 @@ namespace FlySimulation.Fly.Sensors
 
             _left = null;
             _right = null;
-            var eyes = FindObjectsByType<FlyEyeCamera>(FindObjectsSortMode.None);
+            var eyes = FindObjectsByType<FlyEyeCamera>();
             foreach (var eye in eyes)
             {
                 if (eye == null)

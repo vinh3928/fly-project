@@ -192,7 +192,11 @@ def test_live_mind_father_human_reply_via_channel() -> None:
         console_log=False,
         async_mind=False,
         father_advocate=FatherAdvocateConfig(
-            enabled=True, mode="human_or_llm", mock=True, timeout_seconds=60.0
+            enabled=True,
+            mode="human_or_llm",
+            mock=True,
+            auto_llm_away_seconds=5.0,
+            timeout_seconds=0.0,
         ),
     )
     pipe = LiveMindPipeline(_Env(FakeFlyConfig(seed=2)), config=cfg)
@@ -212,8 +216,8 @@ def test_live_mind_father_human_reply_via_channel() -> None:
     pipe.close()
 
 
-def test_father_timeout_auto_llm(monkeypatch) -> None:
-    """After timeout_seconds with no human reply, Father auto-answers via LLM."""
+def test_father_away_auto_llm_after_grace() -> None:
+    """If user never focuses Display 3, auto Ask LLM after auto_llm_away_seconds."""
     import time as time_mod
 
     from flybrain.debug.father_dialog_channel import FatherDialogChannel
@@ -235,7 +239,11 @@ def test_father_timeout_auto_llm(monkeypatch) -> None:
         console_log=False,
         async_mind=False,
         father_advocate=FatherAdvocateConfig(
-            enabled=True, mode="human_or_llm", mock=True, timeout_seconds=60.0
+            enabled=True,
+            mode="human_or_llm",
+            mock=True,
+            auto_llm_away_seconds=5.0,
+            timeout_seconds=0.0,
         ),
     )
     pipe = LiveMindPipeline(_Env(FakeFlyConfig(seed=3)), config=cfg)
@@ -243,13 +251,61 @@ def test_father_timeout_auto_llm(monkeypatch) -> None:
     pipe._interrupt_meta = {"cue": "smell_novelty"}
     pipe._begin_father_advocate({"odor": 0.5})
     assert pipe._father_waiting is True
-    # Pretend 61s elapsed without a Unity reply.
-    pipe._father_wait_started = time_mod.monotonic() - 61.0
+    ch.inject_view_for_tests(request_id=pipe._father_request_id, viewing=False)
+    # Still inside grace → keep waiting.
+    pipe._father_wait_started = time_mod.monotonic() - 2.0
+    pipe._father_polled_step = -1
+    assert pipe._poll_father_advocate() is True
+    assert pipe._father_waiting is True
+    # Past 5s away → auto LLM.
+    pipe._father_wait_started = time_mod.monotonic() - 5.5
     pipe._father_polled_step = -1
     assert pipe._poll_father_advocate() is False
     assert pipe._father_waiting is False
     assert pipe._father_lesson is not None
     assert pipe._father_lesson.source == "timeout_llm"
+    pipe.close()
+
+
+def test_father_display3_focus_never_times_out() -> None:
+    """While user_on_display3, wait forever for human / Ask LLM / Skip."""
+    import time as time_mod
+
+    from flybrain.debug.father_dialog_channel import FatherDialogChannel
+    from flybrain.env import FakeFlyConfig, FakeFlyEnv
+    from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline
+
+    ch = FatherDialogChannel()
+    ch._impl = object()  # type: ignore[attr-defined]
+    ch._OutgoingMessage = None
+
+    class _Env(FakeFlyEnv):
+        @property
+        def father_dialog_channel(self):
+            return ch
+
+    cfg = LiveMindConfig(
+        backend="in_memory",
+        llm_mock=True,
+        console_log=False,
+        async_mind=False,
+        father_advocate=FatherAdvocateConfig(
+            enabled=True,
+            mode="human_or_llm",
+            mock=True,
+            auto_llm_away_seconds=5.0,
+        ),
+    )
+    pipe = LiveMindPipeline(_Env(FakeFlyConfig(seed=4)), config=cfg)
+    pipe._interrupt_reason = "novel"
+    pipe._interrupt_meta = {"cue": "visual_novelty"}
+    pipe._begin_father_advocate({"visual_novelty": 0.9})
+    ch.inject_view_for_tests(request_id=pipe._father_request_id, viewing=True)
+    pipe._father_wait_started = time_mod.monotonic() - 120.0
+    pipe._father_polled_step = -1
+    assert pipe._poll_father_advocate() is True
+    assert pipe._father_waiting is True
+    assert pipe._father_lesson is None
     pipe.close()
 
 

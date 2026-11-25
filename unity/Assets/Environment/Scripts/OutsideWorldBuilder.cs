@@ -127,7 +127,55 @@ namespace FlySimulation.Environment
                 }
             }
 
+            AttachOutsideAmbientAudio(root.transform, flowers, exitZ);
             return root;
+        }
+
+        /// <summary>Wind over the meadow + bee buzz on a subset of flowers (procedural).</summary>
+        private static void AttachOutsideAmbientAudio(Transform outsideRoot, Transform flowers, float exitZ)
+        {
+            if (outsideRoot == null)
+            {
+                return;
+            }
+
+            var windGo = new GameObject("AmbientWind");
+            windGo.transform.SetParent(outsideRoot, false);
+            // Just past the tunnel mouth so the fly hears breeze when exiting.
+            windGo.transform.localPosition = new Vector3(
+                0f,
+                0.08f,
+                exitZ + OutsideWorldLayout.MeadowClearance + 0.15f);
+            var wind = windGo.AddComponent<EnvAmbientSynth>();
+            wind.Configure(EnvAmbientSynth.Kind.Wind, amp: 0.24f, blend: 0.5f);
+
+            if (flowers == null || flowers.childCount == 0)
+            {
+                return;
+            }
+
+            // Buzz on every 3rd flower (enough presence without dozens of sources).
+            for (int i = 0; i < flowers.childCount; i++)
+            {
+                if (i % 3 != 0)
+                {
+                    continue;
+                }
+
+                Transform flower = flowers.GetChild(i);
+                if (flower == null)
+                {
+                    continue;
+                }
+
+                var bees = flower.gameObject.GetComponent<EnvAmbientSynth>();
+                if (bees == null)
+                {
+                    bees = flower.gameObject.AddComponent<EnvAmbientSynth>();
+                }
+
+                bees.Configure(EnvAmbientSynth.Kind.Bees, amp: 0.26f, blend: 0.92f);
+            }
         }
 
         /// <summary>Double-sided blades (both windings share vertices) so Unlit back-face culling never hides them.</summary>

@@ -43,7 +43,7 @@ namespace FlySimulation.Environment
 
         private static void EnsureEyeOverlay()
         {
-            if (FindFirstObjectByType<FlyEyeViewOverlay>() != null)
+            if (FindAnyObjectByType<FlyEyeViewOverlay>() != null)
             {
                 return;
             }
@@ -64,7 +64,7 @@ namespace FlySimulation.Environment
 
         private void ResolveChamberSize()
         {
-            var chamber = FindFirstObjectByType<ChamberController>();
+            var chamber = FindAnyObjectByType<ChamberController>();
             if (chamber != null && chamber.Configuration != null)
             {
                 chamberSize = chamber.Configuration.ChamberSize;
@@ -93,7 +93,7 @@ namespace FlySimulation.Environment
                 _camera = GetComponent<Camera>();
             }
 
-            foreach (var other in FindObjectsByType<Camera>(FindObjectsSortMode.None))
+            foreach (var other in FindObjectsByType<Camera>())
             {
                 if (other == null || other == _camera)
                 {

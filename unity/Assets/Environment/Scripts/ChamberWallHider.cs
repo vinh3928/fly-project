@@ -37,7 +37,7 @@ namespace FlySimulation.Environment
 
         public static void HideWalls()
         {
-            var chamber = FindFirstObjectByType<ChamberController>();
+            var chamber = FindAnyObjectByType<ChamberController>();
             Transform root = chamber != null ? chamber.transform : null;
             if (root == null)
             {

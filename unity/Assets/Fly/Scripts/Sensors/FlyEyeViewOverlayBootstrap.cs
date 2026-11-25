@@ -10,7 +10,7 @@ namespace FlySimulation.Fly.Sensors
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureOverlay()
         {
-            if (Object.FindFirstObjectByType<FlyEyeViewOverlay>() != null)
+            if (Object.FindAnyObjectByType<FlyEyeViewOverlay>() != null)
             {
                 return;
             }

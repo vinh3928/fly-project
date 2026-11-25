@@ -32,6 +32,13 @@ namespace FlySimulation.Environment
         private Button _askLlm;
         private Button _skip;
         private bool _visible;
+        private bool _allowLlm = true;
+        private int _pendingRequestId;
+        private float _awaySeconds;
+        private bool _lastViewingReported;
+        private bool _hasViewingReport;
+        // Match mind.yaml father_advocate.auto_llm_away_seconds.
+        [SerializeField] private float autoLlmAwaySeconds = 5f;
 
 #if UNITY_MLAGENTS
         private FatherDialogDebugChannel _channel;
@@ -45,6 +52,17 @@ namespace FlySimulation.Environment
             EnsureEventSystem();
             EnsureUi();
             Hide();
+        }
+
+        private void Update()
+        {
+            if (!_visible)
+            {
+                _awaySeconds = 0f;
+                return;
+            }
+
+            TickAwayAutoAskLlm(Time.unscaledDeltaTime);
         }
 
         private void OnEnable()
@@ -125,6 +143,9 @@ namespace FlySimulation.Environment
         {
             EnsureUi();
             _visible = true;
+            _allowLlm = allowLlm;
+            _awaySeconds = 0f;
+            _hasViewingReport = false;
             if (_panelRoot != null)
             {
                 _panelRoot.SetActive(true);
@@ -157,18 +178,77 @@ namespace FlySimulation.Environment
             }
 
             _pendingRequestId = requestId;
+            ReportViewingIfChanged(IsUserViewingDisplay3());
         }
 
         public void Hide()
         {
             _visible = false;
+            _awaySeconds = 0f;
             if (_panelRoot != null)
             {
                 _panelRoot.SetActive(false);
             }
         }
 
-        private int _pendingRequestId;
+        private bool IsUserViewingDisplay3()
+        {
+#if UNITY_EDITOR
+            // 0 = Display 1 … 2 = Display 3 (Game view Display dropdown).
+            return Display.activeEditorGameViewTarget == TargetDisplayIndex;
+#else
+            return Display.displays.Length > TargetDisplayIndex;
+#endif
+        }
+
+        private void TickAwayAutoAskLlm(float dt)
+        {
+            if (!_visible || !_allowLlm)
+            {
+                _awaySeconds = 0f;
+                return;
+            }
+
+            bool viewing = IsUserViewingDisplay3();
+            ReportViewingIfChanged(viewing);
+            if (viewing)
+            {
+                // User on Display 3 — unlimited time for the UI.
+                _awaySeconds = 0f;
+                return;
+            }
+
+            if (autoLlmAwaySeconds < 0f)
+            {
+                return;
+            }
+
+            _awaySeconds += Mathf.Max(0f, dt);
+            if (_awaySeconds < autoLlmAwaySeconds)
+            {
+                return;
+            }
+
+            SubmitAskLlm();
+        }
+
+        private void ReportViewingIfChanged(bool viewing)
+        {
+            if (_hasViewingReport && viewing == _lastViewingReported)
+            {
+                return;
+            }
+
+            _hasViewingReport = true;
+            _lastViewingReported = viewing;
+#if UNITY_MLAGENTS
+            EnsureChannel();
+            if (_channel != null)
+            {
+                _channel.SendViewing(_pendingRequestId, viewing);
+            }
+#endif
+        }
 
         private void SubmitHuman()
         {

@@ -178,7 +178,7 @@ namespace FlySimulation.Tests.EditMode
         [Test]
         public void EnsureInScene_CreatesCameraOnDisplay4()
         {
-            var existing = Object.FindFirstObjectByType<SkillPromoteDisplay>();
+            var existing = Object.FindAnyObjectByType<SkillPromoteDisplay>();
             if (existing != null)
             {
                 Object.DestroyImmediate(existing.gameObject);

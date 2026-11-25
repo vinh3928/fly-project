@@ -78,7 +78,7 @@ namespace FlySimulation.Environment
                 return;
             }
 
-            var body = FindFirstObjectByType<FlyBodyController>();
+            var body = FindAnyObjectByType<FlyBodyController>();
             if (body != null)
             {
                 target = body.transform;

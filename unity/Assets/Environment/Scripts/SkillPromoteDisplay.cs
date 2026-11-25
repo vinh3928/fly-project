@@ -91,7 +91,7 @@ namespace FlySimulation.Environment
         /// <summary>Find-or-create Display 4 fly camera + promote UI host.</summary>
         public static SkillPromoteDisplay EnsureInScene(Transform fly = null)
         {
-            var existing = Object.FindFirstObjectByType<SkillPromoteDisplay>();
+            var existing = Object.FindAnyObjectByType<SkillPromoteDisplay>();
             if (existing != null)
             {
                 if (fly != null)
@@ -556,7 +556,7 @@ namespace FlySimulation.Environment
 
         private void SetBodiesKinematic(bool kinematic)
         {
-            var bodies = FindObjectsByType<Rigidbody>(FindObjectsSortMode.None);
+            var bodies = FindObjectsByType<Rigidbody>();
             for (int i = 0; i < bodies.Length; i++)
             {
                 if (bodies[i] == null)
@@ -570,7 +570,7 @@ namespace FlySimulation.Environment
 
         private void ZeroVelocities()
         {
-            var bodies = FindObjectsByType<Rigidbody>(FindObjectsSortMode.None);
+            var bodies = FindObjectsByType<Rigidbody>();
             for (int i = 0; i < bodies.Length; i++)
             {
                 if (bodies[i] == null)
@@ -592,7 +592,7 @@ namespace FlySimulation.Environment
         private static void SuspendPythonActions(bool suspend)
         {
 #if UNITY_MLAGENTS
-            var agents = FindObjectsByType<FlyAgent>(FindObjectsSortMode.None);
+            var agents = FindObjectsByType<FlyAgent>();
             for (int i = 0; i < agents.Length; i++)
             {
                 if (agents[i] != null)
@@ -710,7 +710,7 @@ namespace FlySimulation.Environment
 
             if (_motors == null)
             {
-                _motors = FindFirstObjectByType<FlyMotorController>();
+                _motors = FindAnyObjectByType<FlyMotorController>();
             }
         }
 
@@ -793,7 +793,7 @@ namespace FlySimulation.Environment
                 return;
             }
 
-            var body = FindFirstObjectByType<FlyBodyController>();
+            var body = FindAnyObjectByType<FlyBodyController>();
             if (body != null)
             {
                 target = body.transform;

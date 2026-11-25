@@ -14,6 +14,7 @@ namespace FlySimulation.Tests.EditMode
             try
             {
                 var viz = go.AddComponent<PlaceGraphVisualizer>();
+                viz.ShowLabels = true;
                 var nodes = new List<PlaceGraphVisualizer.NodeSnap>
                 {
                     new PlaceGraphVisualizer.NodeSnap(
@@ -60,6 +61,7 @@ namespace FlySimulation.Tests.EditMode
             try
             {
                 var viz = go.AddComponent<PlaceGraphVisualizer>();
+                viz.ShowLabels = true;
                 viz.ApplySnapshot(
                     new List<PlaceGraphVisualizer.NodeSnap>
                     {

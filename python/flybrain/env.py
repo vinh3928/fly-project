@@ -41,6 +41,7 @@ class FakeFlyEnv(gym.Env if gym is not None else object):
         self._step = 0
         self._energy = 1.0
         self._obs = np.zeros(self.config.observation_dim, dtype=np.float32)
+        self._mouth = np.zeros(7, dtype=np.float32)
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         if seed is not None:
@@ -63,8 +64,36 @@ class FakeFlyEnv(gym.Env if gym is not None else object):
         reward = -0.05 * effort + (0.01 if action[0] > 0 else 0.0)
         terminated = self._energy <= 0.0
         truncated = self._step >= self.config.max_steps
-        info = {"effort": effort, "delta": delta, "energy": self._energy}
+        # Stub ear features for speech cortex (Unity supplies real bands via capture).
+        bands = np.clip(np.abs(self._rng.normal(0.05, 0.08, size=16)), 0.0, 1.0).astype(
+            np.float32
+        )
+        # Occasional louder “env cue” burst so hear-path tests can fire.
+        rms = float(np.mean(bands))
+        if self._step % 40 == 5:
+            bands = np.clip(bands + 0.45, 0.0, 1.0)
+            rms = float(np.mean(bands))
+        info = {
+            "effort": effort,
+            "delta": delta,
+            "energy": self._energy,
+            "audio_bands": bands.tolist(),
+            "audio_rms": rms,
+            "audio_voiced": 1.0 if rms >= 0.08 else 0.0,
+        }
         return self._obs.copy(), float(reward), terminated, truncated, info
+
+    def set_mouth_articulatory(self, control) -> None:
+        """Parallel speech mouth bus (Architecture B leaves 5-d locomotion untouched)."""
+        raw = np.asarray(control if control is not None else np.zeros(7), dtype=np.float32)
+        out = np.zeros(7, dtype=np.float32)
+        n = min(7, int(raw.size))
+        out[:n] = raw[:n]
+        self._mouth = out
+
+    @property
+    def mouth_articulatory(self) -> np.ndarray:
+        return self._mouth.copy()
 
     def _write_internal(self) -> None:
         """Pack homeostasis into the Unity SensorManager layout (energy at index 176)."""

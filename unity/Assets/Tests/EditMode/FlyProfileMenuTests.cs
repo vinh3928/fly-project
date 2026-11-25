@@ -29,7 +29,7 @@ namespace FlySimulation.Tests.EditMode
         [Test]
         public void IsSessionReady_TrueWhenNoMenuPresent()
         {
-            var existing = Object.FindFirstObjectByType<FlyProfileMenu>();
+            var existing = Object.FindAnyObjectByType<FlyProfileMenu>();
             if (existing != null)
             {
                 Object.DestroyImmediate(existing.gameObject);

@@ -129,7 +129,19 @@ namespace FlySimulation.Fly.DebugViz
                 markerGo.transform.SetParent(transform, false);
                 ApplyDebugLayer(markerGo);
                 markerGo.transform.localScale = Vector3.one * (markerRadius * 2f);
-                Object.Destroy(markerGo.GetComponent<Collider>());
+                var markerCollider = markerGo.GetComponent<Collider>();
+                if (markerCollider != null)
+                {
+                    if (Application.isPlaying)
+                    {
+                        Object.Destroy(markerCollider);
+                    }
+                    else
+                    {
+                        Object.DestroyImmediate(markerCollider);
+                    }
+                }
+
                 _marker = markerGo.transform;
                 _markerRenderer = markerGo.GetComponent<MeshRenderer>();
                 _markerRenderer.sharedMaterial = CreateUnlit(currentColor);

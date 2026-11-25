@@ -278,11 +278,13 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
         from flybrain.debug.mind_log_channel import MindLogDebugChannel
         from flybrain.debug.route_path_channel import RoutePathDebugChannel
         from flybrain.debug.skill_promote_channel import SkillPromoteChannel
+        from flybrain.debug.speech_channel import SpeechChannel
 
         self._route_path = RoutePathDebugChannel()
         self._mind_log = MindLogDebugChannel()
         self._father_dialog = FatherDialogChannel()
         self._skill_promote = SkillPromoteChannel()
+        self._speech = SpeechChannel()
         side_channels = [self._engine_channel]
         if self._route_path.side_channel is not None:
             side_channels.append(self._route_path.side_channel)
@@ -292,6 +294,8 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
             side_channels.append(self._father_dialog.side_channel)
         if self._skill_promote.side_channel is not None:
             side_channels.append(self._skill_promote.side_channel)
+        if self._speech.side_channel is not None:
+            side_channels.append(self._speech.side_channel)
         self._env = UnityEnvironment(
             file_name=file_name,
             worker_id=self.config.worker_id,
@@ -373,32 +377,24 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
         if len(terminal) > 0:
             obs = self._unpack_obs(terminal)
             reward = float(terminal.reward[0])
-            return (
-                obs,
-                reward,
-                True,
-                False,
-                {
-                    "steps": self._steps,
-                    "has_eyes": self._left_eye is not None and self._right_eye is not None,
-                },
-            )
+            info = {
+                "steps": self._steps,
+                "has_eyes": self._left_eye is not None and self._right_eye is not None,
+            }
+            info.update(self._speech.audio_info())
+            return (obs, reward, True, False, info)
 
         if len(decision) == 0:
             raise RuntimeError("Unity returned no decision or terminal steps")
 
         obs = self._unpack_obs(decision)
         reward = float(decision.reward[0])
-        return (
-            obs,
-            reward,
-            False,
-            False,
-            {
-                "steps": self._steps,
-                "has_eyes": self._left_eye is not None and self._right_eye is not None,
-            },
-        )
+        info = {
+            "steps": self._steps,
+            "has_eyes": self._left_eye is not None and self._right_eye is not None,
+        }
+        info.update(self._speech.audio_info())
+        return (obs, reward, False, False, info)
 
     def _current_obs(self) -> np.ndarray:
         decision, terminal = self._env.get_steps(self._behavior)
@@ -453,6 +449,17 @@ class UnityFlyEnv(gym.Env if gym is not None else object):
     def skill_promote_channel(self):
         """SideChannel for skill-promote queue on Display 4."""
         return getattr(self, "_skill_promote", None)
+
+    @property
+    def speech_channel(self):
+        """SideChannel for ear bands in / mouth articulatory out."""
+        return getattr(self, "_speech", None)
+
+    def set_mouth_articulatory(self, control) -> None:
+        """Push 7-d articulatory command to Unity FlyMouthActuator."""
+        ch = getattr(self, "_speech", None)
+        if ch is not None:
+            ch.send_mouth(control)
 
     def agent_position(self) -> np.ndarray | None:
         """Latest fly world XYZ from Unity (RoutePathDebugChannel pose)."""

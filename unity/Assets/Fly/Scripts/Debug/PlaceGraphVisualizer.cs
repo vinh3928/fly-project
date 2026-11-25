@@ -45,7 +45,15 @@ namespace FlySimulation.Fly.DebugViz
 
         [SerializeField] private Transform flyRoot;
         [SerializeField] private float yLift = DefaultYLift;
-        [SerializeField] private bool showLabels = true;
+        // Off by default: overhead speech_hear / speech_babble replaces plume/s text.
+        [SerializeField] private bool showLabels = false;
+
+        /// <summary>EditMode / tools: toggle the legacy place-kind overhead label.</summary>
+        public bool ShowLabels
+        {
+            get => showLabels;
+            set => showLabels = value;
+        }
 
         private GameObject _labelRoot;
         private TextMesh _label;
@@ -76,7 +84,7 @@ namespace FlySimulation.Fly.DebugViz
         {
             if (flyRoot == null)
             {
-                var body = Object.FindFirstObjectByType<FlySimulation.Fly.Body.FlyBodyController>();
+                var body = Object.FindAnyObjectByType<FlySimulation.Fly.Body.FlyBodyController>();
                 if (body != null)
                 {
                     flyRoot = body.transform;
@@ -259,21 +267,44 @@ namespace FlySimulation.Fly.DebugViz
             if (_labelRoot != null && _label != null)
             {
                 ApplyDebugLayer(_labelRoot);
+                if (!showLabels)
+                {
+                    _labelRoot.SetActive(false);
+                }
+
                 return;
             }
 
-            _labelRoot = new GameObject("PlaceGraphLabel");
-            _labelRoot.transform.SetParent(transform, false);
+            Transform existing = transform.Find("PlaceGraphLabel");
+            if (existing != null)
+            {
+                _labelRoot = existing.gameObject;
+                _label = _labelRoot.GetComponentInChildren<TextMesh>(true);
+            }
+
+            if (_labelRoot == null)
+            {
+                _labelRoot = new GameObject("PlaceGraphLabel");
+                _labelRoot.transform.SetParent(transform, false);
+                _labelRoot.hideFlags = HideFlags.DontSave;
+            }
+
             ApplyDebugLayer(_labelRoot);
-            var labelGo = new GameObject("Label");
-            labelGo.transform.SetParent(_labelRoot.transform, false);
-            ApplyDebugLayer(labelGo);
-            _label = labelGo.AddComponent<TextMesh>();
-            _label.characterSize = 0.035f;
-            _label.fontSize = 48;
-            _label.anchor = TextAnchor.MiddleCenter;
-            _label.alignment = TextAlignment.Center;
-            _label.color = Color.white;
+            if (_label == null)
+            {
+                var labelGo = new GameObject("Label");
+                labelGo.hideFlags = HideFlags.DontSave;
+                labelGo.transform.SetParent(_labelRoot.transform, false);
+                ApplyDebugLayer(labelGo);
+                _label = labelGo.AddComponent<TextMesh>();
+                _label.characterSize = 0.035f;
+                _label.fontSize = 48;
+                _label.anchor = TextAnchor.MiddleCenter;
+                _label.alignment = TextAlignment.Center;
+                _label.color = Color.white;
+            }
+
+            // Plume/s text stays off unless explicitly re-enabled.
             _labelRoot.SetActive(false);
         }
 

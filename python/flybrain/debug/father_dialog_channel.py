@@ -21,6 +21,10 @@ Unity → Python REPLY:
   int32 source (0=human, 1=ask_llm, 2=skip)
   string answer
 
+Unity → Python VIEW:
+  int32 version, kind (=3 VIEW), request_id
+  int32 viewing (0/1) — 1 when Game view focuses Display 3
+
 Guid must match ``FatherDialogDebugChannel.cs``.
 """
 
@@ -35,6 +39,7 @@ PROTOCOL_VERSION = 1
 KIND_ASK = 0
 KIND_REPLY = 1
 KIND_HIDE = 2
+KIND_VIEW = 3
 
 SOURCE_HUMAN = 0
 SOURCE_ASK_LLM = 1
@@ -116,6 +121,8 @@ class FatherDialogChannel:
         self._OutgoingMessage: Any = None
         self._pending_replies: list[dict[str, Any]] = []
         self.last_ask: dict[str, Any] | None = None
+        # None = no VIEW yet; True/False from Unity Display 3 focus.
+        self.user_on_display3: bool | None = None
         try:
             from mlagents_envs.side_channel.side_channel import (
                 IncomingMessage,
@@ -134,6 +141,10 @@ class FatherDialogChannel:
                     version = int(msg.read_int32())
                     kind = int(msg.read_int32())
                     request_id = int(msg.read_int32())
+                    if kind == KIND_VIEW:
+                        viewing = int(msg.read_int32())
+                        outer.user_on_display3 = bool(viewing)
+                        return
                     if kind != KIND_REPLY:
                         return
                     source = int(msg.read_int32())
@@ -175,6 +186,7 @@ class FatherDialogChannel:
             "allow_llm": bool(allow_llm),
         }
         self.last_ask = payload
+        self.user_on_display3 = None
         if self._impl is None or self._OutgoingMessage is None:
             return
         msg = self._OutgoingMessage()
@@ -224,6 +236,11 @@ class FatherDialogChannel:
             }
         )
 
+    def inject_view_for_tests(self, *, request_id: int, viewing: bool) -> None:
+        _ = request_id
+        self.user_on_display3 = bool(viewing)
+
     def clear(self) -> None:
         self._pending_replies.clear()
         self.last_ask = None
+        self.user_on_display3 = None

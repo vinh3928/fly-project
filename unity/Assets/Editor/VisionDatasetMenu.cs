@@ -20,8 +20,8 @@ namespace FlySimulation.EditorTools
                 return;
             }
 
-            var body = Object.FindFirstObjectByType<FlyBodyController>();
-            var chamber = Object.FindFirstObjectByType<ChamberController>();
+            var body = Object.FindAnyObjectByType<FlyBodyController>();
+            var chamber = Object.FindAnyObjectByType<ChamberController>();
             if (body == null || chamber == null || chamber.Configuration == null)
             {
                 EditorUtility.DisplayDialog(

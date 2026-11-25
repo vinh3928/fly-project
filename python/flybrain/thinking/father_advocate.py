@@ -108,8 +108,13 @@ class FatherAdvocateConfig:
     enabled: bool = False
     # human_or_llm: Unity textbox + Ask-LLM button; llm: auto-answer (fake / headless)
     mode: str = "human_or_llm"
-    # Wall-clock wait for human reply; then auto-answer via LLM. Motor stays STOP until then.
-    timeout_seconds: float = 60.0
+    # Seconds to wait for the user to focus Display 3 after a novelty ask.
+    # If still away (or no VIEW signal), auto Ask LLM. While focused on Display 3,
+    # wait forever for human / Ask LLM / Skip. Set <0 to disable away-auto.
+    auto_llm_away_seconds: float = 5.0
+    # Absolute wall-clock fallback when auto_llm_away_seconds < 0 (legacy).
+    # Ignored while user_on_display3 is True. 0 = no absolute timeout.
+    timeout_seconds: float = 0.0
     # Deprecated step-based timeout (ignored when timeout_seconds > 0).
     timeout_steps: int = 0
     max_question_chars: int = 220
@@ -122,7 +127,8 @@ class FatherAdvocateConfig:
     def from_dict(cls, raw: dict[str, Any] | None) -> FatherAdvocateConfig:
         data = dict(raw or {})
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
-        return cls(**{k: v for k, v in data.items() if k in known})
+        filtered = {k: v for k, v in data.items() if k in known}
+        return cls(**filtered)
 
 
 @dataclass

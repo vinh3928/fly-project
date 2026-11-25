@@ -60,7 +60,7 @@ namespace FlySimulation.Environment
                 var menu = Active;
                 if (menu == null)
                 {
-                    menu = UnityEngine.Object.FindFirstObjectByType<FlyProfileMenu>();
+                    menu = UnityEngine.Object.FindAnyObjectByType<FlyProfileMenu>();
                 }
 
                 return menu == null || menu._ready;
@@ -203,7 +203,7 @@ namespace FlySimulation.Environment
             PauseFlyControl(freeze);
             SetDecisionRequestersEnabled(!freeze);
 #if UNITY_MLAGENTS
-            var agents = UnityEngine.Object.FindObjectsByType<FlyAgent>(FindObjectsSortMode.None);
+            var agents = UnityEngine.Object.FindObjectsByType<FlyAgent>();
             for (int i = 0; i < agents.Length; i++)
             {
                 if (agents[i] != null)
@@ -217,13 +217,13 @@ namespace FlySimulation.Environment
         private void PauseFlyControl(bool pause)
         {
 #if UNITY_MLAGENTS
-            var demo = UnityEngine.Object.FindFirstObjectByType<WalkingDemoDriver>();
+            var demo = UnityEngine.Object.FindAnyObjectByType<WalkingDemoDriver>();
             if (demo != null)
             {
                 demo.enabled = !pause;
             }
 #endif
-            var bodies = UnityEngine.Object.FindObjectsByType<Rigidbody>(FindObjectsSortMode.None);
+            var bodies = UnityEngine.Object.FindObjectsByType<Rigidbody>();
             for (int i = 0; i < bodies.Length; i++)
             {
                 if (bodies[i] == null)
@@ -246,7 +246,7 @@ namespace FlySimulation.Environment
             if (_decisionRequesters == null)
             {
                 var found = new List<Behaviour>();
-                var behaviours = UnityEngine.Object.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+                var behaviours = UnityEngine.Object.FindObjectsByType<MonoBehaviour>();
                 for (int i = 0; i < behaviours.Length; i++)
                 {
                     var mb = behaviours[i];
@@ -278,7 +278,7 @@ namespace FlySimulation.Environment
 
         private static ExperimentConfiguration FindExperimentConfig()
         {
-            var behaviours = UnityEngine.Object.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+            var behaviours = UnityEngine.Object.FindObjectsByType<MonoBehaviour>();
             for (int i = 0; i < behaviours.Length; i++)
             {
                 var mb = behaviours[i];

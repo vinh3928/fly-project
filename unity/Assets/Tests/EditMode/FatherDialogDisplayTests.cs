@@ -24,5 +24,12 @@ namespace FlySimulation.Tests.EditMode
                 Object.DestroyImmediate(go);
             }
         }
+
+        [Test]
+        public void TargetDisplay_IsDisplay3()
+        {
+            Assert.AreEqual(MindLogDisplay.TargetDisplayIndex, FatherDialogDisplay.TargetDisplayIndex);
+            Assert.AreEqual(2, FatherDialogDisplay.TargetDisplayIndex);
+        }
     }
 }

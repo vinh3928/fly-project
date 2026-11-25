@@ -237,13 +237,13 @@ Place-graph Neo4j Browser is at `http://127.0.0.1:7474`; Bolt is
 Community Edition cannot host two logical DBs on one server, so discovered
 motor programs live on a **second** Neo4j container:
 
-| | Place graph | Skill cortex |
-|---|---|---|
-| Compose service | `neo4j` | `neo4j-skill` |
-| Browser | `http://127.0.0.1:7474` | `http://127.0.0.1:7475` |
-| Bolt | `7687` | `7688` |
-| Auth default | `neo4j` / `flymindgraph` | `neo4j` / `flymindskill` |
-| Env override | `NEO4J_PASSWORD` | `NEO4J_SKILL_PASSWORD` |
+| | Place graph | Skill cortex | Speech cortex |
+|---|---|---|---|
+| Compose service | `neo4j` | `neo4j-skill` | `neo4j-speech` |
+| Browser | `http://127.0.0.1:7474` | `http://127.0.0.1:7475` | `http://127.0.0.1:7476` |
+| Bolt | `7687` | `7688` | `7689` |
+| Auth default | `neo4j` / `flymindgraph` | `neo4j` / `flymindskill` | `neo4j` / `flymindspeech` |
+| Env override | `NEO4J_PASSWORD` | `NEO4J_SKILL_PASSWORD` | `NEO4J_SPEECH_PASSWORD` |
 
 Graph shape: `(:Skill)-[:HAS_STEP]->(:SkillStep)` with optional
 `(:Skill)-[:DISCOVERED_AT]->(:Context)` (`place_id` is a soft string only —
@@ -262,3 +262,35 @@ dynamic candidates and play back via
 Place `HAS_LESSON.action` / `skill_name` can reference a promoted skill so
 one-shot place reuse triggers playback. Config: `skill_cortex` in
 `python/configs/mind.yaml`.
+
+### Speech cortex (listen → babble → alphabet + image)
+
+A **third** Neo4j CE instance (`neo4j-speech`, Bolt `7689` / Browser `7476`)
+stores utterances separately from place and skill graphs. There is **no**
+Whisper/TTS/LLM speech model: Unity chamber `AudioSource` cues +
+`FlyAudioCapture` band energies feed a hear path, and a parallel 7-d
+articulatory mouth bus (`FlyMouthActuator`: jaw, lip, tongue, voicing, pitch,
+amplitude) is driven by speech babble / `SpeechExecutor`. Hear / start-babble
+run on their own cadence (`speech_interval: 4` motor steps) alongside mind/motor;
+mouth playback still advances every tick so sequences stay smooth.
+
+**Env audio (procedural, no clip assets):** sugar/bitter pads beep (`EnvAudioCue`);
+outside meadow has wind + bee buzz on flowers (`EnvAmbientSynth`); inside the
+chamber a looping procedural “We Wish You a Merry Christmas” plays. All feed
+`FlyAudioCapture` for the hear path.
+
+Graph shape:
+`(:Utterance)-[:HAS_LETTER {ord, phoneme}]->(:Letter)`,
+`(:Utterance)-[:SAW]->(:SpeechImage)` (eye `patch_vec` / thumb at hear/utter
+time), optional `(:Utterance)-[:HEARD_AT]->(:SpeechContext)` with soft
+`place_id` only, and lexical
+`(:Word {fly_id, word, weight, hits})` linked by `(:Utterance)-[:UTTERS]->(:Word)`
+when babble alphabet looks word-like (length ≥ `word_min_len`, mixed
+vowel+consonant, not a mono-letter stutter). Each such babble bumps
+`Word.weight` by `word_weight_delta` (and the utterance `score`). Later
+babble samples those words with probability ∝ weight (unless
+`babble.word_bias_explore` fires), mapping letters back to articulatory
+primitives. Alphabet comes from a deterministic articulatory/spectral →
+phoneme → letter table.
+Status mirrors skills (`candidate` → `promoted` / `retired`); v1 auto-upserts
+candidates. Config: `speech_cortex` in `python/configs/mind.yaml`.

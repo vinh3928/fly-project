@@ -30,6 +30,20 @@ from flybrain.memory.skill_cortex import (
     SkillProgram,
     open_skill_cortex,
 )
+from flybrain.memory.speech_cortex import (
+    SpeechContext,
+    SpeechCortexConfig,
+    SpeechImage,
+    build_babble_utterance,
+    build_hear_utterance,
+    open_speech_cortex,
+    reinforce_wordlike_babble,
+)
+from flybrain.speech.articulatory import clip_audio_bands
+from flybrain.speech.babble import expand_controls, sample_babble_utterance
+from flybrain.speech import babble as speech_babble
+from flybrain.speech.executor import SpeechExecutor
+from uuid import uuid4
 from flybrain.motor import (
     MotorActController,
     MotorLayer,
@@ -277,6 +291,18 @@ def format_live_step_log(
         nb_s = f",nb={float(nb):+.2f}" if nb is not None else ""
         new = "!" if info.get("new_stimulus") else ""
         viz_s = f" viz={float(viz):.2f}{nb_s}{new}"
+    speech_s = ""
+    if info.get("speech_hear") or info.get("speech_babble") or info.get("speech_playback"):
+        parts = []
+        if info.get("speech_hear"):
+            parts.append(f"hear={info.get('speech_alphabet') or '?'}")
+        if info.get("speech_babble"):
+            parts.append(f"babble={info.get('speech_alphabet') or info.get('speech_name') or '?'}")
+        elif info.get("speech_playback"):
+            parts.append(f"mouth={info.get('speech_name') or 'play'}")
+        if info.get("audio_rms") is not None:
+            parts.append(f"rms={float(info['audio_rms']):.2f}")
+        speech_s = f" speech[{','.join(parts)}]"
     antenna_s = ""
     antenna = info.get("antenna_debug")
     if verbose and isinstance(antenna, dict):
@@ -344,7 +370,7 @@ def format_live_step_log(
 
     return (
         f"[live {step:04d} {tag}] {goal_s} act=[{fwd:+.2f},{turn:+.2f}]"
-        f"{track_s}{energy_s}{hunger_s}{sniff_s}{surv_s}{fear_s}{wall_s}{place_s}{bearing_s}{cur_s}{bore_s}{tend_s}{viz_s}{antenna_s}{vthink_s}{judge_s}"
+        f"{track_s}{energy_s}{hunger_s}{sniff_s}{surv_s}{fear_s}{wall_s}{place_s}{bearing_s}{cur_s}{bore_s}{tend_s}{viz_s}{speech_s}{antenna_s}{vthink_s}{judge_s}"
         f"{si_s}{cov_s}{chosen}{l1_s}{thought_s}{critique_s}"
     )
 
@@ -433,6 +459,18 @@ def _load_live_vision_head(path: Path) -> RecurrentVisionHead | None:
     return None
 
 
+def log_console_line(line: str, *, log_path: str | Path | None = None) -> None:
+    """Print a console event to stdout + stderr and optionally append to the live log file."""
+    print(line, flush=True)
+    print(line, file=sys.stderr, flush=True)
+    if log_path is not None:
+        path = Path(log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+            handle.flush()
+
+
 def log_live_step(
     step: int,
     action: np.ndarray,
@@ -444,21 +482,10 @@ def log_live_step(
     """Print a live step line to the console and optionally append to a file."""
     line = format_live_step_log(step, action, info, verbose=verbose)
     # stdout + stderr: some IDE/Unity-adjacent terminals only surface one stream.
-    print(line, flush=True)
-    print(line, file=sys.stderr, flush=True)
-    detail = ""
+    log_console_line(line, log_path=log_path)
     if verbose and bool(info.get("mind_tick")):
         detail = format_live_mind_detail(step, info)
-        print(detail, flush=True)
-        print(detail, file=sys.stderr, flush=True)
-    if log_path is not None:
-        path = Path(log_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-            if detail:
-                handle.write(detail + "\n")
-            handle.flush()
+        log_console_line(detail, log_path=log_path)
 
 
 def load_mind_config(path: str | Path | None = None) -> dict[str, Any]:
@@ -520,6 +547,7 @@ class LiveMindConfig:
     father_advocate: FatherAdvocateConfig | None = None
     place_graph: PlaceGraphConfig | None = None
     skill_cortex: SkillCortexConfig | None = None
+    speech_cortex: SpeechCortexConfig | None = None
     sugar_search: SugarSearchConfig | None = None
     route_home: RouteHomeConfig | None = None
 
@@ -546,6 +574,7 @@ class LiveMindConfig:
         father_raw = data.get("father_advocate") or {}
         place_raw = data.get("place_graph") or {}
         skill_raw = data.get("skill_cortex") or {}
+        speech_raw = data.get("speech_cortex") or {}
         clamps = dict(thinking.get("action_clamps") or {})
         if "wall_hazard_forward_scale" in vn_live:
             clamps["wall_hazard_forward_scale"] = vn_live["wall_hazard_forward_scale"]
@@ -612,6 +641,7 @@ class LiveMindConfig:
             father_advocate=FatherAdvocateConfig.from_dict(father_raw),
             place_graph=PlaceGraphConfig.from_dict(place_raw),
             skill_cortex=SkillCortexConfig.from_dict(skill_raw),
+            speech_cortex=SpeechCortexConfig.from_dict(speech_raw),
             sugar_search=SugarSearchConfig.from_dict(data.get("sugar_search") or {}),
             route_home=RouteHomeConfig.from_dict(data.get("route_home") or {}),
         )
@@ -849,6 +879,24 @@ class LiveMindPipeline:
                 database=sc_cfg.database,
             )
             self._refresh_skill_candidates()
+        sp_cfg = self.config.speech_cortex or SpeechCortexConfig(enabled=False, backend="in_memory")
+        self.speech_cortex_config = sp_cfg
+        self.speech_cortex = None
+        self.speech_executor = SpeechExecutor()
+        self._last_speech_babble_step = -10_000
+        self._last_hear_step = -10_000
+        self._last_env_audio: dict[str, Any] = {}
+        self._last_speech_babble_meta: dict[str, Any] = {}
+        self._last_speech_hear_alphabet: str = ""
+        self._last_speech_babble_alphabet: str = ""
+        if sp_cfg.enabled:
+            self.speech_cortex = open_speech_cortex(
+                backend=sp_cfg.backend,
+                uri=sp_cfg.uri,
+                user=sp_cfg.user,
+                password=sp_cfg.password,
+                database=sp_cfg.database,
+            )
         self._interrupt_pending = False
         self._interrupt_remaining = 0
         self._interrupt_reason = ""
@@ -1188,9 +1236,10 @@ class LiveMindPipeline:
                 if callable(set_goal):
                     set_goal(STOP_GOAL.copy())
         if self.config.console_log:
+            away = float(getattr(cfg, "auto_llm_away_seconds", 5.0))
             print(
                 f"father_ask step={self._step} id={request_id} cue={cue} "
-                f"timeout_s={float(cfg.timeout_seconds):.0f} q={question.question}",
+                f"away_llm_s={away:.1f} q={question.question}",
                 flush=True,
             )
 
@@ -1682,6 +1731,326 @@ class LiveMindPipeline:
             )
         return True
 
+    def _speech_eye_image(self) -> SpeechImage:
+        """Bind current eye embedding (or empty) to an utterance."""
+        place_id = getattr(self._last_place_node, "id", None)
+        left = getattr(self.env, "left_eye", None)
+        right = getattr(self.env, "right_eye", None)
+        patch: list[float] = []
+        if left is not None and right is not None:
+            try:
+                emb = stereo_patch_embedding(left, right)
+                patch = [float(x) for x in np.asarray(emb, dtype=np.float32).reshape(-1)]
+            except Exception:
+                patch = []
+        return SpeechImage(
+            image_id=str(uuid4()),
+            path_or_b64_thumb="",
+            place_id=str(place_id) if place_id is not None else None,
+            step=int(self._step),
+            patch_vec=patch,
+        )
+
+    def _cache_env_audio(self, step_info: dict[str, Any] | None) -> None:
+        if not isinstance(step_info, dict):
+            return
+        bands = step_info.get("audio_bands")
+        if bands is None:
+            return
+        self._last_env_audio = {
+            "audio_bands": list(bands),
+            "audio_rms": float(step_info.get("audio_rms", 0.0) or 0.0),
+            "audio_voiced": float(step_info.get("audio_voiced", 0.0) or 0.0),
+        }
+
+    def _push_mouth(self, control: np.ndarray) -> None:
+        setter = getattr(self.env, "set_mouth_articulatory", None)
+        if callable(setter):
+            setter(control)
+        ch = getattr(self.env, "speech_channel", None)
+        send = getattr(ch, "send_mouth", None) if ch is not None else None
+        if callable(send) and setter is None:
+            send(control)
+
+    def _push_speech_status(
+        self,
+        *,
+        hear: str | None = None,
+        babble: str | None = None,
+    ) -> None:
+        """Mirror latest hear/babble alphabets to the Unity overhead label."""
+        if hear is not None:
+            self._last_speech_hear_alphabet = str(hear)
+        if babble is not None:
+            self._last_speech_babble_alphabet = str(babble)
+        ch = getattr(self.env, "speech_channel", None)
+        send = getattr(ch, "send_status", None) if ch is not None else None
+        if callable(send):
+            send(
+                hear=self._last_speech_hear_alphabet,
+                babble=self._last_speech_babble_alphabet,
+            )
+
+    def _speech_gate_signals(
+        self, info: dict[str, Any] | None, affect: dict[str, Any] | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build babble-gate inputs from mind snapshot + top-level live fields."""
+        snap = info if isinstance(info, dict) else {}
+        senses: dict[str, Any] = {}
+        raw_signals = snap.get("signals")
+        if isinstance(raw_signals, dict):
+            senses.update(raw_signals)
+        for key in ("visual_novelty", "hunger", "novelty", "experience_novelty"):
+            if key in snap and key not in senses:
+                senses[key] = snap[key]
+        if "tendency_curiosity" not in senses:
+            tend = snap.get("tendency")
+            if isinstance(tend, dict):
+                senses["tendency_curiosity"] = float(
+                    tend.get("curiosity", tend.get("c", 0.0)) or 0.0
+                )
+        aff = affect if isinstance(affect, dict) else {}
+        if not aff and isinstance(snap.get("affect"), dict):
+            aff = snap["affect"]
+        return senses, aff
+
+    def _speech_parallel_tick(self, info: dict[str, Any] | None = None) -> None:
+        """Independent speech process: mouth every tick; hear/babble every speech_interval.
+
+        Does not own locomotion — runs alongside mind/motor.
+        """
+        if self.speech_cortex is None or not self.speech_cortex_config.enabled:
+            return
+        snap = info if isinstance(info, dict) else {}
+        # Pull latest ear features from Unity channel when present.
+        ch = getattr(self.env, "speech_channel", None)
+        if ch is not None:
+            try:
+                self._cache_env_audio(ch.audio_info())
+            except Exception:
+                pass
+        if self._last_env_audio:
+            snap.setdefault("audio_rms", self._last_env_audio.get("audio_rms"))
+            snap.setdefault("audio_voiced", self._last_env_audio.get("audio_voiced"))
+
+        # Mouth playback advances every motor tick (smooth articulatory sequence).
+        self._tick_speech_executor(snap)
+
+        interval = max(1, int(getattr(self.speech_cortex_config, "speech_interval", 4) or 4))
+        if int(self._step) % interval != 0:
+            if isinstance(info, dict):
+                if snap.get("speech_playback"):
+                    info["speech_playback"] = True
+                    info["speech_name"] = snap.get("speech_name")
+                    info["speech_utterance_id"] = snap.get("speech_utterance_id")
+                if "audio_rms" in snap:
+                    info["audio_rms"] = snap["audio_rms"]
+            return
+
+        snap["speech_tick"] = True
+        heard = self._maybe_hear_utterance(snap)
+        babbled = False
+        if not self.speech_executor.active:
+            senses, aff = self._speech_gate_signals(snap)
+            babbled = self._maybe_babble_speech(senses, aff)
+            if babbled:
+                self._tick_speech_executor(snap)
+        if isinstance(info, dict):
+            info["speech_tick"] = True
+            if heard:
+                info["speech_hear"] = True
+                info["speech_alphabet"] = snap.get("speech_alphabet")
+                info["speech_utterance_id"] = snap.get("speech_utterance_id")
+            if babbled:
+                info.update(self._last_speech_babble_meta)
+            if snap.get("speech_playback"):
+                info["speech_playback"] = True
+                info["speech_name"] = snap.get("speech_name") or info.get("speech_name")
+            if "audio_rms" in snap:
+                info["audio_rms"] = snap["audio_rms"]
+
+    def _maybe_hear_utterance(self, info: dict[str, Any] | None = None) -> bool:
+        """Upsert a hear-candidate when env audio energy spikes."""
+        if self.speech_cortex is None or not self.speech_cortex_config.enabled:
+            return False
+        audio = self._last_env_audio
+        if not audio:
+            return False
+        rms = float(audio.get("audio_rms", 0.0) or 0.0)
+        if rms < float(self.speech_cortex_config.hear_rms_min):
+            return False
+        cooldown = int(self.speech_cortex_config.hear_cooldown_steps)
+        if int(self._step) - int(self._last_hear_step) < cooldown:
+            return False
+        bands = clip_audio_bands(audio.get("audio_bands"))
+        place_id = getattr(self._last_place_node, "id", None)
+        cue = "env_audio"
+        if isinstance(info, dict):
+            cue = str(info.get("interrupt_cue") or info.get("cue") or cue)
+        program = build_hear_utterance(
+            fly_id=self.config.fly_id,
+            spectrogram=[bands],
+            rms=rms,
+            voiced=float(audio.get("audio_voiced", 0.0) or 0.0),
+            image=self._speech_eye_image(),
+            context=SpeechContext(
+                cue=cue,
+                place_id=str(place_id) if place_id is not None else None,
+                step=int(self._step),
+            ),
+        )
+        try:
+            stored = self.speech_cortex.upsert_utterance(program)
+        except Exception as exc:
+            if self.config.console_log:
+                log_console_line(
+                    f"speech_hear_error step={self._step} err={exc}",
+                    log_path=self.config.log_path,
+                )
+            return False
+        self._last_hear_step = int(self._step)
+        if isinstance(info, dict):
+            info["speech_hear"] = True
+            info["speech_alphabet"] = stored.alphabet
+            info["speech_utterance_id"] = stored.utterance_id
+        self._push_speech_status(hear=stored.alphabet)
+        if self.config.console_log:
+            log_console_line(
+                f"speech_hear step={self._step} id={stored.utterance_id} "
+                f"alphabet={stored.alphabet!r} rms={rms:.3f}",
+                log_path=self.config.log_path,
+            )
+        return True
+
+    def _maybe_babble_speech(self, signals: dict[str, Any], affect: dict[str, Any]) -> bool:
+        """Start articulatory babble on the parallel mouth bus."""
+        if self.speech_cortex is None or not self.speech_cortex_config.enabled:
+            return False
+        if self.speech_executor.active:
+            return False
+        if self._interrupt_pending or self._father_waiting:
+            return False
+        gate_vals = signals_for_gate(signals, affect)
+        gate = speech_babble.babble_gate(
+            config=self.speech_cortex_config.babble,
+            step=int(self._step),
+            last_babble_step=int(self._last_speech_babble_step),
+            executor_active=self.speech_executor.active,
+            novelty=gate_vals["novelty"],
+            survival_risk=gate_vals["survival_risk"],
+            hunger=gate_vals["hunger"],
+            explore_tendency=gate_vals["explore_tendency"],
+        )
+        if not gate.ok:
+            return False
+        rng = np.random.default_rng((int(self._step) * 9973) ^ (hash(self.config.fly_id) & 0xFFFFFFFF))
+        word_weights: list[tuple[str, float]] = []
+        try:
+            for row in self.speech_cortex.list_words(fly_id=self.config.fly_id, limit=64):
+                word_weights.append((str(row.word), float(row.weight)))
+        except Exception:
+            word_weights = []
+        name, steps, tags = sample_babble_utterance(
+            rng,
+            config=self.speech_cortex_config.babble,
+            word_weights=word_weights,
+        )
+        controls = expand_controls(steps)
+        place_id = getattr(self._last_place_node, "id", None)
+        program = build_babble_utterance(
+            fly_id=self.config.fly_id,
+            articulatory=controls,
+            image=self._speech_eye_image(),
+            context=SpeechContext(
+                cue=str(signals.get("interrupt_cue") or signals.get("cue") or "speech_babble"),
+                place_id=str(place_id) if place_id is not None else None,
+                step=int(self._step),
+            ),
+        )
+        try:
+            stored = self.speech_cortex.upsert_utterance(program)
+        except Exception as exc:
+            if self.config.console_log:
+                log_console_line(
+                    f"speech_babble_error step={self._step} err={exc}",
+                    log_path=self.config.log_path,
+                )
+            return False
+        word_hit = None
+        try:
+            stored, word_hit = reinforce_wordlike_babble(
+                self.speech_cortex,
+                stored,
+                min_len=int(self.speech_cortex_config.word_min_len),
+                delta=float(self.speech_cortex_config.word_weight_delta),
+            )
+        except Exception as exc:
+            if self.config.console_log:
+                log_console_line(
+                    f"speech_word_reinforce_error step={self._step} err={exc}",
+                    log_path=self.config.log_path,
+                )
+        self._last_speech_babble_step = int(self._step)
+        self.speech_executor.start(steps, utterance_id=stored.utterance_id, name=name)
+        bias_word = next(
+            (t.split(":", 1)[1] for t in tags if str(t).startswith("word:")),
+            None,
+        )
+        self._last_speech_babble_meta = {
+            "speech_babble": True,
+            "speech_alphabet": stored.alphabet,
+            "speech_utterance_id": stored.utterance_id,
+            "speech_name": name,
+            "speech_score": float(stored.score),
+        }
+        if bias_word:
+            self._last_speech_babble_meta["speech_word_bias"] = bias_word
+        if word_hit is not None:
+            self._last_speech_babble_meta.update(
+                {
+                    "speech_word": word_hit.word,
+                    "speech_word_weight": float(word_hit.weight),
+                    "speech_word_hits": int(word_hit.hits),
+                }
+            )
+        self._push_speech_status(babble=stored.alphabet)
+        if self.config.console_log:
+            extra = ""
+            if bias_word:
+                extra += f" bias={bias_word!r}"
+            if word_hit is not None:
+                extra += (
+                    f" word={word_hit.word!r} weight={float(word_hit.weight):.2f}"
+                    f" hits={int(word_hit.hits)}"
+                )
+            log_console_line(
+                f"speech_babble step={self._step} id={stored.utterance_id} "
+                f"name={name} alphabet={stored.alphabet!r} steps={len(steps)}{extra}",
+                log_path=self.config.log_path,
+            )
+        return True
+
+    def _tick_speech_executor(self, info: dict[str, Any] | None = None) -> None:
+        """Advance mouth playback; locomotion bus stays independent."""
+        if self._interrupt_pending or self._father_waiting:
+            if self.speech_executor.active:
+                self.speech_executor.preempt("interrupt")
+                self.speech_executor.clear()
+                self._push_mouth(np.zeros(7, dtype=np.float32))
+            return
+        if not self.speech_executor.active:
+            return
+        frame = self.speech_executor.tick()
+        if frame.active:
+            self._push_mouth(frame.control)
+            if isinstance(info, dict):
+                info["speech_playback"] = True
+                info["speech_name"] = frame.name
+                info["speech_utterance_id"] = frame.utterance_id
+        if frame.finished or not frame.active:
+            self.speech_executor.clear()
+            self._push_mouth(np.zeros(7, dtype=np.float32))
+
     def _tick_skill_executor(self, info: dict[str, Any] | None = None) -> bool:
         """Advance active skill playback; return True if skill owns the motor."""
         if not self.skill_executor.active and not (
@@ -1752,8 +2121,10 @@ class LiveMindPipeline:
     def _poll_father_advocate(self) -> bool:
         """Return True when Father is still waiting on a human/LLM reply.
 
-        Motor stays hard-stopped until a reply arrives or ``timeout_seconds``
-        elapses (then auto-LLM). Safe to call multiple times per step.
+        Motor stays hard-stopped until a reply arrives. If the user focuses
+        Display 3, wait forever. If they stay away for
+        ``auto_llm_away_seconds`` (default 5), auto Ask LLM. Safe to call
+        multiple times per step.
         """
         if not self._father_waiting or self._father_question is None:
             return False
@@ -1796,21 +2167,33 @@ class LiveMindPipeline:
             )
             return False
         self._father_wait_steps += 1
+        viewing = getattr(self.father_dialog, "user_on_display3", None)
+        # User on Display 3 → unlimited time for the UI.
+        if viewing is True:
+            return True
+        away_s = float(getattr(cfg, "auto_llm_away_seconds", 5.0))
+        started = float(self._father_wait_started or time.monotonic())
+        elapsed = time.monotonic() - started
         timed_out = False
-        timeout_s = float(getattr(cfg, "timeout_seconds", 0.0) or 0.0)
-        if timeout_s > 0.0:
-            started = float(self._father_wait_started or time.monotonic())
-            timed_out = (time.monotonic() - started) >= timeout_s
-        elif int(getattr(cfg, "timeout_steps", 0) or 0) > 0:
-            timed_out = self._father_wait_steps >= max(1, int(cfg.timeout_steps))
+        reason = "away"
+        if away_s >= 0.0:
+            # Away or unknown VIEW: auto Ask LLM after the grace window.
+            timed_out = elapsed >= away_s
+            reason = "away" if viewing is False else "no_view_signal"
         else:
-            timed_out = (
-                time.monotonic() - float(self._father_wait_started or time.monotonic())
-            ) >= 60.0
+            # Legacy absolute timeout when away-auto is disabled.
+            timeout_s = float(getattr(cfg, "timeout_seconds", 0.0) or 0.0)
+            if timeout_s > 0.0:
+                timed_out = elapsed >= timeout_s
+                reason = "timeout"
+            elif int(getattr(cfg, "timeout_steps", 0) or 0) > 0:
+                timed_out = self._father_wait_steps >= max(1, int(cfg.timeout_steps))
+                reason = "timeout_steps"
         if timed_out:
             if self.config.console_log:
                 print(
-                    f"father_timeout step={self._step} " f"auto_llm after {timeout_s or 60.0:.0f}s",
+                    f"father_timeout step={self._step} auto_llm reason={reason} "
+                    f"after {elapsed:.1f}s",
                     flush=True,
                 )
             reply = answer_father_question(
@@ -2510,6 +2893,9 @@ class LiveMindPipeline:
         sc_close = getattr(self.skill_cortex, "close", None)
         if callable(sc_close):
             sc_close()
+        sp_close = getattr(self.speech_cortex, "close", None)
+        if callable(sp_close):
+            sp_close()
         close = getattr(self.env, "close", None)
         if callable(close):
             close()
@@ -3698,6 +4084,9 @@ class LiveMindPipeline:
             obs, _reward, terminated, truncated, step_info = self.env.step(action)
             if isinstance(step_info, dict):
                 last_info = {**last_info, **step_info}
+                self._cache_env_audio(step_info)
+            # Parallel speech process (hear/babble every speech_interval; mouth every tick).
+            self._speech_parallel_tick(last_info)
             with self._lock:
                 self._step += 1
                 self._tick_interrupt_freeze()
