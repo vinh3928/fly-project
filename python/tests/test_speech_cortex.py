@@ -96,9 +96,7 @@ def test_hear_utterance_spectral_letters() -> None:
 def test_promote_and_retire() -> None:
     store = InMemorySpeechCortex()
     ctrl = clip_articulatory([0.85, 0.7, 0.4, 0.35, 0.9, 0.0, 0.85])
-    row = store.upsert_utterance(
-        build_babble_utterance(fly_id="fly_a", articulatory=[ctrl])
-    )
+    row = store.upsert_utterance(build_babble_utterance(fly_id="fly_a", articulatory=[ctrl]))
     promoted = store.promote_utterance(row.utterance_id, alphabet="ab")
     assert promoted is not None
     assert promoted.status == "promoted"

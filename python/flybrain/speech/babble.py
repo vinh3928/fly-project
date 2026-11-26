@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -171,9 +172,7 @@ def _normalize_word_weights(
     return out
 
 
-def _pick_weighted_word(
-    rng: np.random.Generator, words: list[tuple[str, float]]
-) -> str | None:
+def _pick_weighted_word(rng: np.random.Generator, words: list[tuple[str, float]]) -> str | None:
     if not words:
         return None
     weights = np.asarray([w for _, w in words], dtype=np.float64)
@@ -222,9 +221,7 @@ def _steps_from_word(
     return steps
 
 
-def _steps_random(
-    rng: np.random.Generator, config: SpeechBabbleConfig
-) -> list[BabbleStep]:
+def _steps_random(rng: np.random.Generator, config: SpeechBabbleConfig) -> list[BabbleStep]:
     n = int(rng.integers(config.min_steps, config.max_steps + 1))
     steps: list[BabbleStep] = []
     for _ in range(n):

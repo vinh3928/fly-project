@@ -91,17 +91,26 @@ _CONSONANTS = frozenset("bcdfghjklmnpqrstvwxyz")
 
 
 def normalize_speech_word(alphabet: str | None) -> str:
-    """Lowercase a-z only; drop silence markers."""
+    """Lowercase letters; keep spaces for multi-word phrases; drop other marks."""
     raw = str(alphabet or "").lower()
-    return "".join(ch for ch in raw if ch.isalpha())
+    cleaned = "".join(ch if ch.isalpha() or ch.isspace() else " " for ch in raw)
+    return " ".join(cleaned.split())
 
 
 def looks_like_word(alphabet: str | None, *, min_len: int = 2) -> bool:
-    """True when babble alphabet looks like a pronounceable word token.
+    """True when babble alphabet looks like a pronounceable word/phrase.
 
-    Requires length, mixed vowel+consonant, and not a single repeated letter.
+    Single token: length, mixed vowel+consonant, not a mono-letter stutter.
+    Multi-word: every token must look word-like (or be length≥min_len with
+    mixed vowels/consonants as a whole).
     """
-    word = normalize_speech_word(alphabet)
+    phrase = normalize_speech_word(alphabet)
+    if not phrase:
+        return False
+    tokens = phrase.split()
+    if len(tokens) >= 2:
+        return all(looks_like_word(tok, min_len=min_len) for tok in tokens)
+    word = tokens[0]
     if len(word) < max(1, int(min_len)):
         return False
     if len(set(word)) < 2:
@@ -355,9 +364,7 @@ class SpeechCortexStore(Protocol):
 
     def get_word(self, *, fly_id: str, word: str) -> SpeechWord | None: ...
 
-    def list_words(
-        self, *, fly_id: str = "fly_001", limit: int = 64
-    ) -> list[SpeechWord]: ...
+    def list_words(self, *, fly_id: str = "fly_001", limit: int = 64) -> list[SpeechWord]: ...
 
     def close(self) -> None: ...
 
@@ -463,9 +470,7 @@ class InMemorySpeechCortex:
         row = self._words.get((str(fly_id), normalize_speech_word(word)))
         return SpeechWord.from_dict(row.to_dict()) if row else None
 
-    def list_words(
-        self, *, fly_id: str = "fly_001", limit: int = 64
-    ) -> list[SpeechWord]:
+    def list_words(self, *, fly_id: str = "fly_001", limit: int = 64) -> list[SpeechWord]:
         rows = [
             SpeechWord.from_dict(w.to_dict())
             for (fid, _), w in self._words.items()
@@ -588,11 +593,7 @@ class Neo4jSpeechCortex:
         )
         alphabet = row.alphabet or "#"
         for ord_i, ch in enumerate(alphabet):
-            ph = (
-                row.phonemes[min(ord_i, len(row.phonemes) - 1)]
-                if row.phonemes
-                else "#"
-            )
+            ph = row.phonemes[min(ord_i, len(row.phonemes) - 1)] if row.phonemes else "#"
             self._query(
                 """
                 MATCH (u:Utterance {utterance_id: $utterance_id})
@@ -785,9 +786,7 @@ class Neo4jSpeechCortex:
             updated_at=str(node.get("updated_at") or ""),
         )
 
-    def list_words(
-        self, *, fly_id: str = "fly_001", limit: int = 64
-    ) -> list[SpeechWord]:
+    def list_words(self, *, fly_id: str = "fly_001", limit: int = 64) -> list[SpeechWord]:
         rows = self._query(
             """
             MATCH (w:Word {fly_id: $fly_id})
@@ -879,7 +878,11 @@ def open_speech_cortex(
     kind = str(backend or "in_memory").strip().lower()
     if kind in ("", "in_memory", "memory", "ram"):
         return InMemorySpeechCortex()
-    pwd = password if password is not None else os.environ.get("NEO4J_SPEECH_PASSWORD", "flymindspeech")
+    pwd = (
+        password
+        if password is not None
+        else os.environ.get("NEO4J_SPEECH_PASSWORD", "flymindspeech")
+    )
     return Neo4jSpeechCortex(uri=uri, user=user, password=str(pwd), database=database)
 
 

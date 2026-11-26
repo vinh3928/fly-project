@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import torch
@@ -23,6 +24,15 @@ from flybrain.curiosity.boredom import (
 )
 from flybrain.env import FakeFlyEnv
 from flybrain.memory.embedder import MindEmbedder
+from flybrain.memory.grounded_phrase import (
+    GroundedPhrase,
+    GroundedPhraseConfig,
+    GroundedSentence,
+    match_grounded_phrase,
+    match_grounded_sentence,
+    match_top_grounded_phrases,
+    open_grounded_phrase_store,
+)
 from flybrain.memory.pgvector import ShortTermMemory, open_short_term_memory
 from flybrain.memory.place_graph import PlaceGraphConfig, open_place_graph
 from flybrain.memory.skill_cortex import (
@@ -39,11 +49,6 @@ from flybrain.memory.speech_cortex import (
     open_speech_cortex,
     reinforce_wordlike_babble,
 )
-from flybrain.speech.articulatory import clip_audio_bands
-from flybrain.speech.babble import expand_controls, sample_babble_utterance
-from flybrain.speech import babble as speech_babble
-from flybrain.speech.executor import SpeechExecutor
-from uuid import uuid4
 from flybrain.motor import (
     MotorActController,
     MotorLayer,
@@ -70,6 +75,10 @@ from flybrain.pipeline.async_mind import (
 )
 from flybrain.sensors.mapped_feedback import MappedSensorFeedback, MappedSensorReport
 from flybrain.signals.builder import SignalBuilder
+from flybrain.speech import babble as speech_babble
+from flybrain.speech.articulatory import clip_audio_bands
+from flybrain.speech.babble import expand_controls, sample_babble_utterance
+from flybrain.speech.executor import SpeechExecutor
 from flybrain.thinking.composer import FEEDING_UNTIL_SATED_KEY
 from flybrain.thinking.conditioning import (
     ConditioningConfig,
@@ -105,8 +114,13 @@ from flybrain.thinking.judgement import (
     blend_goals,
 )
 from flybrain.thinking.personality import PersonalityState
+from flybrain.thinking.phrase_labeler import PhraseGroundingService, make_phrase_client
 from flybrain.thinking.retrospective import RetrospectiveConfig
 from flybrain.thinking.route_home import RouteHomeConfig, RouteHomeTracker
+from flybrain.thinking.sentence_composer import (
+    SentenceComposeService,
+    drive_snapshot,
+)
 from flybrain.thinking.service import ThinkingConfig, ThinkingService
 from flybrain.thinking.stimulus_interrupt import (
     STATUS_REFRAME_CUES,
@@ -548,6 +562,7 @@ class LiveMindConfig:
     place_graph: PlaceGraphConfig | None = None
     skill_cortex: SkillCortexConfig | None = None
     speech_cortex: SpeechCortexConfig | None = None
+    phrase_grounding: GroundedPhraseConfig | None = None
     sugar_search: SugarSearchConfig | None = None
     route_home: RouteHomeConfig | None = None
 
@@ -575,6 +590,7 @@ class LiveMindConfig:
         place_raw = data.get("place_graph") or {}
         skill_raw = data.get("skill_cortex") or {}
         speech_raw = data.get("speech_cortex") or {}
+        phrase_raw = data.get("phrase_grounding") or {}
         clamps = dict(thinking.get("action_clamps") or {})
         if "wall_hazard_forward_scale" in vn_live:
             clamps["wall_hazard_forward_scale"] = vn_live["wall_hazard_forward_scale"]
@@ -642,6 +658,7 @@ class LiveMindConfig:
             place_graph=PlaceGraphConfig.from_dict(place_raw),
             skill_cortex=SkillCortexConfig.from_dict(skill_raw),
             speech_cortex=SpeechCortexConfig.from_dict(speech_raw),
+            phrase_grounding=GroundedPhraseConfig.from_dict(phrase_raw),
             sugar_search=SugarSearchConfig.from_dict(data.get("sugar_search") or {}),
             route_home=RouteHomeConfig.from_dict(data.get("route_home") or {}),
         )
@@ -889,6 +906,7 @@ class LiveMindPipeline:
         self._last_speech_babble_meta: dict[str, Any] = {}
         self._last_speech_hear_alphabet: str = ""
         self._last_speech_babble_alphabet: str = ""
+        self._last_ground_phrase: str = ""
         if sp_cfg.enabled:
             self.speech_cortex = open_speech_cortex(
                 backend=sp_cfg.backend,
@@ -897,6 +915,51 @@ class LiveMindPipeline:
                 password=sp_cfg.password,
                 database=sp_cfg.database,
             )
+        # Grounded phrases live on the skill Neo4j cluster (same Bolt as skills).
+        pg_phrase = self.config.phrase_grounding or GroundedPhraseConfig(enabled=False)
+        self.phrase_grounding_config = pg_phrase
+        self.phrase_store = None
+        self.phrase_grounding: PhraseGroundingService | None = None
+        self.sentence_compose: SentenceComposeService | None = None
+        if pg_phrase.enabled:
+            mock = pg_phrase.mock
+            if mock is None:
+                vt = self.config.visual_thinker or VisualThinkerConfig()
+                mock = bool(vt.mock) if vt is not None else bool(self.config.llm_mock)
+            backend = str(pg_phrase.backend or "in_memory")
+            uri = pg_phrase.uri
+            user = pg_phrase.user
+            password = pg_phrase.password
+            database = pg_phrase.database
+            if backend == "neo4j" and sc_cfg.enabled:
+                uri = sc_cfg.uri
+                user = sc_cfg.user
+                password = sc_cfg.password
+                database = sc_cfg.database
+            self.phrase_store = open_grounded_phrase_store(
+                backend=backend,
+                uri=uri,
+                user=user,
+                password=password,
+                database=database,
+            )
+            phrase_client = make_phrase_client(
+                mock=bool(mock),
+                visual_cfg=self.config.visual_thinker or VisualThinkerConfig(),
+            )
+            self.phrase_grounding = PhraseGroundingService(
+                pg_phrase,
+                self.phrase_store,
+                client=phrase_client,
+                visual_cfg=self.config.visual_thinker or VisualThinkerConfig(),
+            )
+            if pg_phrase.sentence_compose:
+                self.sentence_compose = SentenceComposeService(
+                    pg_phrase,
+                    self.phrase_store,
+                    client=phrase_client,
+                    visual_cfg=self.config.visual_thinker or VisualThinkerConfig(),
+                )
         self._interrupt_pending = False
         self._interrupt_remaining = 0
         self._interrupt_reason = ""
@@ -1236,7 +1299,7 @@ class LiveMindPipeline:
                 if callable(set_goal):
                     set_goal(STOP_GOAL.copy())
         if self.config.console_log:
-            away = float(getattr(cfg, "auto_llm_away_seconds", 5.0))
+            away = float(getattr(cfg, "auto_llm_away_seconds", 0.0))
             print(
                 f"father_ask step={self._step} id={request_id} cue={cue} "
                 f"away_llm_s={away:.1f} q={question.question}",
@@ -1777,19 +1840,236 @@ class LiveMindPipeline:
         *,
         hear: str | None = None,
         babble: str | None = None,
+        phrase: str | None = None,
     ) -> None:
-        """Mirror latest hear/babble alphabets to the Unity overhead label."""
+        """Mirror hear / babble / ground_phrase to the Unity overhead label."""
         if hear is not None:
             self._last_speech_hear_alphabet = str(hear)
         if babble is not None:
             self._last_speech_babble_alphabet = str(babble)
+        if phrase is not None:
+            self._last_ground_phrase = str(phrase)
         ch = getattr(self.env, "speech_channel", None)
         send = getattr(ch, "send_status", None) if ch is not None else None
         if callable(send):
             send(
                 hear=self._last_speech_hear_alphabet,
                 babble=self._last_speech_babble_alphabet,
+                phrase=self._last_ground_phrase,
             )
+
+    def _poll_phrase_grounding(self, info: dict[str, Any] | None = None) -> None:
+        """Commit async LLM phrase/sentence labels into skill Neo4j; reinforce words."""
+        svc = self.phrase_grounding
+        if svc is not None:
+            stored = svc.poll()
+            if stored is not None:
+                if isinstance(info, dict):
+                    info["phrase_grounded"] = stored.phrase
+                    info["phrase_confidence"] = float(stored.confidence)
+                    info["phrase_id"] = stored.phrase_id
+                self._reinforce_phrase_tokens(stored.phrase)
+                self._push_speech_status(phrase=stored.phrase)
+                if self.config.console_log:
+                    log_console_line(
+                        f"phrase_grounded step={self._step} phrase={stored.phrase!r} "
+                        f"conf={float(stored.confidence):.2f} id={stored.phrase_id}",
+                        log_path=self.config.log_path,
+                    )
+        compose = self.sentence_compose
+        if compose is None:
+            return
+        sent = compose.poll()
+        if sent is None:
+            return
+        if isinstance(info, dict):
+            info["sentence_composed"] = sent.sentence
+            info["sentence_confidence"] = float(sent.confidence)
+            info["sentence_id"] = sent.sentence_id
+        self._reinforce_phrase_tokens(sent.sentence)
+        # Prefer showing the composed sentence on the ground_phrase line.
+        self._push_speech_status(phrase=sent.sentence)
+        if self.config.console_log:
+            log_console_line(
+                f"sentence_composed step={self._step} sentence={sent.sentence!r} "
+                f"conf={float(sent.confidence):.2f} id={sent.sentence_id}",
+                log_path=self.config.log_path,
+            )
+
+    def _reinforce_phrase_tokens(self, phrase: str) -> None:
+        cfg = self.phrase_grounding_config
+        if not cfg.reinforce_speech_words or self.speech_cortex is None:
+            return
+        tokens = [t for t in str(phrase or "").lower().split() if t]
+        if not tokens:
+            return
+        delta = float(cfg.word_weight_delta)
+        # Full phrase + each token so multi-word and parts both gain weight.
+        for token in [str(phrase).lower().strip(), *tokens]:
+            if not token:
+                continue
+            try:
+                self.speech_cortex.reinforce_word(
+                    fly_id=self.config.fly_id,
+                    word=token,
+                    delta=delta,
+                )
+            except Exception:
+                continue
+
+    def _ground_or_recall_phrase(
+        self,
+        *,
+        alphabet: str,
+        spectrogram: list[list[float]],
+        rms: float,
+        voiced: float,
+        utterance_id: str | None,
+        place_id: str | None,
+        cue: str,
+        source: str,
+        info: dict[str, Any] | None,
+    ) -> None:
+        """Recall matching image+sound phrase/sentence, else queue LLM grounding."""
+        svc = self.phrase_grounding
+        store = self.phrase_store
+        cfg = self.phrase_grounding_config
+        if svc is None or store is None or not cfg.enabled:
+            return
+        eye = self._speech_eye_image()
+        patch = list(eye.patch_vec or [])
+        hit = match_grounded_phrase(
+            store,
+            fly_id=self.config.fly_id,
+            patch_vec=patch,
+            spectrogram=spectrogram,
+            config=cfg,
+        )
+        if hit is not None:
+            bumped = store.bump_hit(hit.phrase.phrase_id, delta_score=0.05)
+            row = bumped or hit.phrase
+            if isinstance(info, dict):
+                info["phrase_recall"] = row.phrase
+                info["phrase_recall_score"] = float(hit.combined)
+                info["phrase_id"] = row.phrase_id
+            self._reinforce_phrase_tokens(row.phrase)
+            self._push_speech_status(phrase=row.phrase)
+            if self.config.console_log:
+                log_console_line(
+                    f"phrase_recall step={self._step} phrase={row.phrase!r} "
+                    f"sim={float(hit.combined):.2f} hits={int(row.hits)}",
+                    log_path=self.config.log_path,
+                )
+            self._maybe_recall_or_compose_sentence(
+                patch_vec=patch,
+                spectrogram=spectrogram,
+                place_id=place_id,
+                info=info,
+            )
+            return
+        draft = GroundedPhrase(
+            phrase_id=str(uuid4()),
+            phrase="",
+            alphabet=str(alphabet or ""),
+            fly_id=self.config.fly_id,
+            source=str(source or "hear"),
+            patch_vec=patch,
+            spectrogram=[list(r) for r in spectrogram],
+            rms=float(rms),
+            voiced=float(voiced),
+            utterance_id=utterance_id,
+            place_id=place_id,
+            step=int(self._step),
+        )
+        bands = list(spectrogram[0]) if spectrogram else []
+        left = getattr(self.env, "left_eye", None)
+        right = getattr(self.env, "right_eye", None)
+        svc.maybe_submit(
+            step=int(self._step),
+            draft=draft,
+            left_eye=left,
+            right_eye=right,
+            bands=bands,
+            cue=cue,
+        )
+        # Still try sentence compose from near-matching phrases for this scene.
+        self._maybe_recall_or_compose_sentence(
+            patch_vec=patch,
+            spectrogram=spectrogram,
+            place_id=place_id,
+            info=info,
+        )
+
+    def _maybe_recall_or_compose_sentence(
+        self,
+        *,
+        patch_vec: list[float],
+        spectrogram: list[list[float]],
+        place_id: str | None,
+        info: dict[str, Any] | None,
+    ) -> None:
+        """Recall a stored sentence for this scene, else compose from top phrases + drives."""
+        store = self.phrase_store
+        cfg = self.phrase_grounding_config
+        compose = self.sentence_compose
+        if store is None or not cfg.enabled or not cfg.sentence_compose:
+            return
+        sent_hit = match_grounded_sentence(
+            store,
+            fly_id=self.config.fly_id,
+            patch_vec=patch_vec,
+            spectrogram=spectrogram,
+            config=cfg,
+        )
+        if sent_hit is not None:
+            bumped = store.bump_sentence_hit(sent_hit.sentence.sentence_id, delta_score=0.05)
+            row = bumped or sent_hit.sentence
+            if isinstance(info, dict):
+                info["sentence_recall"] = row.sentence
+                info["sentence_recall_score"] = float(sent_hit.combined)
+                info["sentence_id"] = row.sentence_id
+            self._reinforce_phrase_tokens(row.sentence)
+            self._push_speech_status(phrase=row.sentence)
+            if self.config.console_log:
+                log_console_line(
+                    f"sentence_recall step={self._step} sentence={row.sentence!r} "
+                    f"sim={float(sent_hit.combined):.2f} hits={int(row.hits)}",
+                    log_path=self.config.log_path,
+                )
+            return
+        if compose is None:
+            return
+        top = match_top_grounded_phrases(
+            store,
+            fly_id=self.config.fly_id,
+            patch_vec=patch_vec,
+            spectrogram=spectrogram,
+            config=cfg,
+        )
+        if len(top) < int(cfg.sentence_min_phrases):
+            return
+        senses, aff = self._speech_gate_signals(info)
+        drive = drive_snapshot(senses, aff)
+        draft = GroundedSentence(
+            sentence_id=str(uuid4()),
+            sentence="",
+            phrases=[m.phrase.phrase for m in top],
+            phrase_ids=[m.phrase.phrase_id for m in top],
+            fly_id=self.config.fly_id,
+            drive=drive,
+            patch_vec=list(patch_vec),
+            spectrogram=[list(r) for r in spectrogram],
+            place_id=place_id,
+            step=int(self._step),
+        )
+        left = getattr(self.env, "left_eye", None)
+        right = getattr(self.env, "right_eye", None)
+        compose.maybe_submit(
+            step=int(self._step),
+            draft=draft,
+            left_eye=left,
+            right_eye=right,
+        )
 
     def _speech_gate_signals(
         self, info: dict[str, Any] | None, affect: dict[str, Any] | None = None
@@ -1914,6 +2194,17 @@ class LiveMindPipeline:
             info["speech_alphabet"] = stored.alphabet
             info["speech_utterance_id"] = stored.utterance_id
         self._push_speech_status(hear=stored.alphabet)
+        self._ground_or_recall_phrase(
+            alphabet=stored.alphabet,
+            spectrogram=stored.spectrogram,
+            rms=float(rms),
+            voiced=float(audio.get("audio_voiced", 0.0) or 0.0),
+            utterance_id=stored.utterance_id,
+            place_id=str(place_id) if place_id is not None else None,
+            cue=cue,
+            source="hear",
+            info=info if isinstance(info, dict) else None,
+        )
         if self.config.console_log:
             log_console_line(
                 f"speech_hear step={self._step} id={stored.utterance_id} "
@@ -1943,7 +2234,9 @@ class LiveMindPipeline:
         )
         if not gate.ok:
             return False
-        rng = np.random.default_rng((int(self._step) * 9973) ^ (hash(self.config.fly_id) & 0xFFFFFFFF))
+        rng = np.random.default_rng(
+            (int(self._step) * 9973) ^ (hash(self.config.fly_id) & 0xFFFFFFFF)
+        )
         word_weights: list[tuple[str, float]] = []
         try:
             for row in self.speech_cortex.list_words(fly_id=self.config.fly_id, limit=64):
@@ -2122,8 +2415,8 @@ class LiveMindPipeline:
         """Return True when Father is still waiting on a human/LLM reply.
 
         Motor stays hard-stopped until a reply arrives. If the user focuses
-        Display 3, wait forever. If they stay away for
-        ``auto_llm_away_seconds`` (default 5), auto Ask LLM. Safe to call
+        Display 3, wait forever. If they stay away (or no VIEW), auto Ask LLM
+        after ``auto_llm_away_seconds`` (0 = immediately). Safe to call
         multiple times per step.
         """
         if not self._father_waiting or self._father_question is None:
@@ -2171,7 +2464,7 @@ class LiveMindPipeline:
         # User on Display 3 → unlimited time for the UI.
         if viewing is True:
             return True
-        away_s = float(getattr(cfg, "auto_llm_away_seconds", 5.0))
+        away_s = float(getattr(cfg, "auto_llm_away_seconds", 0.0))
         started = float(self._father_wait_started or time.monotonic())
         elapsed = time.monotonic() - started
         timed_out = False
@@ -2893,6 +3186,13 @@ class LiveMindPipeline:
         sc_close = getattr(self.skill_cortex, "close", None)
         if callable(sc_close):
             sc_close()
+        if self.phrase_grounding is not None:
+            self.phrase_grounding.close()
+        if self.sentence_compose is not None:
+            self.sentence_compose.close()
+        ph_close = getattr(self.phrase_store, "close", None)
+        if callable(ph_close):
+            ph_close()
         sp_close = getattr(self.speech_cortex, "close", None)
         if callable(sp_close):
             sp_close()
@@ -3377,6 +3677,7 @@ class LiveMindPipeline:
         right_eye: np.ndarray | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         self._poll_skill_promote_ui()
+        self._poll_phrase_grounding()
         if self._interrupt_pending and self._interrupt_remaining > 0:
             if self._poll_father_advocate() or self._father_waiting:
                 info: dict[str, Any] = {

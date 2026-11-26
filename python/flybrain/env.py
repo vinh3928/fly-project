@@ -65,9 +65,7 @@ class FakeFlyEnv(gym.Env if gym is not None else object):
         terminated = self._energy <= 0.0
         truncated = self._step >= self.config.max_steps
         # Stub ear features for speech cortex (Unity supplies real bands via capture).
-        bands = np.clip(np.abs(self._rng.normal(0.05, 0.08, size=16)), 0.0, 1.0).astype(
-            np.float32
-        )
+        bands = np.clip(np.abs(self._rng.normal(0.05, 0.08, size=16)), 0.0, 1.0).astype(np.float32)
         # Occasional louder “env cue” burst so hear-path tests can fire.
         rms = float(np.mean(bands))
         if self._step % 40 == 5:

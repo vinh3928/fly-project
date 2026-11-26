@@ -195,7 +195,7 @@ def test_live_mind_father_human_reply_via_channel() -> None:
             enabled=True,
             mode="human_or_llm",
             mock=True,
-            auto_llm_away_seconds=5.0,
+            auto_llm_away_seconds=0.0,
             timeout_seconds=0.0,
         ),
     )
@@ -217,9 +217,7 @@ def test_live_mind_father_human_reply_via_channel() -> None:
 
 
 def test_father_away_auto_llm_after_grace() -> None:
-    """If user never focuses Display 3, auto Ask LLM after auto_llm_away_seconds."""
-    import time as time_mod
-
+    """If user is not on Display 3, auto Ask LLM immediately when grace is 0."""
     from flybrain.debug.father_dialog_channel import FatherDialogChannel
     from flybrain.env import FakeFlyConfig, FakeFlyEnv
     from flybrain.pipeline.live_mind import LiveMindConfig, LiveMindPipeline
@@ -242,7 +240,7 @@ def test_father_away_auto_llm_after_grace() -> None:
             enabled=True,
             mode="human_or_llm",
             mock=True,
-            auto_llm_away_seconds=5.0,
+            auto_llm_away_seconds=0.0,
             timeout_seconds=0.0,
         ),
     )
@@ -252,13 +250,6 @@ def test_father_away_auto_llm_after_grace() -> None:
     pipe._begin_father_advocate({"odor": 0.5})
     assert pipe._father_waiting is True
     ch.inject_view_for_tests(request_id=pipe._father_request_id, viewing=False)
-    # Still inside grace → keep waiting.
-    pipe._father_wait_started = time_mod.monotonic() - 2.0
-    pipe._father_polled_step = -1
-    assert pipe._poll_father_advocate() is True
-    assert pipe._father_waiting is True
-    # Past 5s away → auto LLM.
-    pipe._father_wait_started = time_mod.monotonic() - 5.5
     pipe._father_polled_step = -1
     assert pipe._poll_father_advocate() is False
     assert pipe._father_waiting is False
@@ -293,7 +284,7 @@ def test_father_display3_focus_never_times_out() -> None:
             enabled=True,
             mode="human_or_llm",
             mock=True,
-            auto_llm_away_seconds=5.0,
+            auto_llm_away_seconds=0.0,
         ),
     )
     pipe = LiveMindPipeline(_Env(FakeFlyConfig(seed=4)), config=cfg)

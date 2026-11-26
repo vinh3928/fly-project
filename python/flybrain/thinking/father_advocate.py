@@ -109,9 +109,9 @@ class FatherAdvocateConfig:
     # human_or_llm: Unity textbox + Ask-LLM button; llm: auto-answer (fake / headless)
     mode: str = "human_or_llm"
     # Seconds to wait for the user to focus Display 3 after a novelty ask.
-    # If still away (or no VIEW signal), auto Ask LLM. While focused on Display 3,
-    # wait forever for human / Ask LLM / Skip. Set <0 to disable away-auto.
-    auto_llm_away_seconds: float = 5.0
+    # If still away (or no VIEW signal), auto Ask LLM. 0 = immediately when away.
+    # While focused on Display 3, wait forever. Set <0 to disable away-auto.
+    auto_llm_away_seconds: float = 0.0
     # Absolute wall-clock fallback when auto_llm_away_seconds < 0 (legacy).
     # Ignored while user_on_display3 is True. 0 = no absolute timeout.
     timeout_seconds: float = 0.0

@@ -7,7 +7,7 @@ Python → Unity MOUTH:
   int kind=1, then 7 float articulatory controls
 
 Python → Unity STATUS:
-  int kind=2, string hear_alphabet, string babble_alphabet
+  int kind=2, string hear_alphabet, string babble_alphabet, string ground_phrase
 
 Guid must match ``SpeechDebugChannel.cs``.
 """
@@ -44,6 +44,7 @@ class SpeechChannel:
         self.last_voiced: float = 0.0
         self.last_hear_alphabet: str = ""
         self.last_babble_alphabet: str = ""
+        self.last_ground_phrase: str = ""
         try:
             from mlagents_envs.side_channel.outgoing_message import OutgoingMessage
             from mlagents_envs.side_channel.side_channel import SideChannel
@@ -107,12 +108,15 @@ class SpeechChannel:
         self,
         hear: str | None = None,
         babble: str | None = None,
+        phrase: str | None = None,
     ) -> None:
-        """Push latest speech_hear / speech_babble alphabet labels to Unity overlay."""
+        """Push hear / babble / ground_phrase labels to the Unity overhead overlay."""
         if hear is not None:
             self.last_hear_alphabet = str(hear)
         if babble is not None:
             self.last_babble_alphabet = str(babble)
+        if phrase is not None:
+            self.last_ground_phrase = str(phrase)
         if self._side is None or self._OutgoingMessage is None:
             return
         try:
@@ -120,6 +124,7 @@ class SpeechChannel:
             msg.write_int32(int(KIND_STATUS))
             msg.write_string(_ascii(self.last_hear_alphabet))
             msg.write_string(_ascii(self.last_babble_alphabet))
+            msg.write_string(_ascii(self.last_ground_phrase))
             self._side.queue_message_to_send(msg)
         except Exception:
             pass

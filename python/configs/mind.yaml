@@ -76,6 +76,29 @@ skill_cortex:
   # Does not freeze the fly; only Display 4 HITL focus stops motion.
   auto_llm_away_seconds: 0.0
 
+# Grounded phrases: eye + hear + utterance alphabet → LLM meaning → skill Neo4j
+# (:GroundedPhrase on Bolt 7688). Recalled when image+sound match again.
+# When ≥2 phrases match the scene, compose a short sentence from phrases + drives
+# (:GroundedSentence) via LLM (or heuristic when mock).
+phrase_grounding:
+  enabled: true
+  backend: in_memory # in_memory | neo4j (neo4j uses skill_cortex uri/auth)
+  mock: true # set false + vision model to call Ollama; true = heuristic labels
+  use_vision: true
+  min_confidence: 0.35
+  match_patch_min: 0.82
+  match_audio_min: 0.55
+  match_combined_min: 0.7
+  cooldown_steps: 40
+  reinforce_speech_words: true
+  word_weight_delta: 0.08
+  sentence_compose: true
+  sentence_min_phrases: 2
+  sentence_top_k: 4
+  sentence_match_combined_min: 0.55
+  sentence_cooldown_steps: 80
+  sentence_min_confidence: 0.35
+
 # Speech cortex: listen (Unity audio bands) + articulatory babble → alphabet + eye image.
 # Separate Neo4j CE instance (7689). No ML speech model — deterministic phoneme/letter table.
 speech_cortex:
@@ -458,10 +481,10 @@ father_advocate:
   enabled: true
   # human_or_llm = Unity popup; llm = auto-answer (fake/headless / CI)
   mode: human_or_llm
-  # Novelty ask: wait this long for user to move to Display 3; then auto Ask LLM.
-  # While focused on Display 3, unlimited time for the UI (Reply / Ask LLM / Skip).
-  auto_llm_away_seconds: 5.0
-  # Absolute fallback only when auto_llm_away_seconds < 0 (legacy). 0 = off.
+  # Novelty ask: if user is not on Display 3, auto Ask LLM after this many seconds
+  # (0 = immediately). While focused on Display 3, unlimited time for the UI.
+  auto_llm_away_seconds: 0.0
+  # Absolute fallback only when auto_llm_away_seconds < 0 (legacy).
   timeout_seconds: 0
   max_question_chars: 220
   max_answer_chars: 420

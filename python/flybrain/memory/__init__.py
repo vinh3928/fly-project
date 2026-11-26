@@ -1,6 +1,16 @@
 """Short-term memory backends + spatial place graph."""
 
 from .embedder import EmbeddingParts, MindEmbedder
+from .grounded_phrase import (
+    GroundedPhrase,
+    GroundedPhraseConfig,
+    GroundedSentence,
+    InMemoryGroundedPhraseStore,
+    match_grounded_phrase,
+    match_grounded_sentence,
+    match_top_grounded_phrases,
+    open_grounded_phrase_store,
+)
 from .pgvector import (
     InMemoryShortTermMemory,
     PgVectorShortTermMemory,
@@ -58,6 +68,10 @@ __all__ = [
     "EmbeddingParts",
     "InMemoryPlaceGraph",
     "InMemoryShortTermMemory",
+    "GroundedPhrase",
+    "GroundedPhraseConfig",
+    "GroundedSentence",
+    "InMemoryGroundedPhraseStore",
     "InMemorySkillCortex",
     "InMemorySpeechCortex",
     "MindEmbedder",
@@ -91,8 +105,12 @@ __all__ = [
     "default_walls",
     "encode_place_view",
     "looks_like_word",
+    "match_grounded_phrase",
+    "match_grounded_sentence",
+    "match_top_grounded_phrases",
     "mean_wall_familiarity",
     "observe_place",
+    "open_grounded_phrase_store",
     "open_short_term_memory",
     "open_place_graph",
     "open_skill_cortex",

@@ -26,7 +26,9 @@ def test_fake_env_audio_in_step_info() -> None:
     assert float(env.mouth_articulatory[0]) == pytest.approx(0.8, abs=1e-5)
 
 
-def test_live_mind_hear_and_babble_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_live_mind_hear_and_babble_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     env = FakeFlyEnv()
     log_path = tmp_path / "speech_live.log"
     cfg = LiveMindConfig(
@@ -112,12 +114,14 @@ def test_speech_channel_send_status_tracks_alphabets() -> None:
     from flybrain.debug.speech_channel import SpeechChannel
 
     ch = SpeechChannel()
-    ch.send_status(hear="ABC", babble="XY")
+    ch.send_status(hear="ABC", babble="XY", phrase="soft noise")
     assert ch.last_hear_alphabet == "ABC"
     assert ch.last_babble_alphabet == "XY"
+    assert ch.last_ground_phrase == "soft noise"
     ch.send_status(hear="Z")
     assert ch.last_hear_alphabet == "Z"
     assert ch.last_babble_alphabet == "XY"
+    assert ch.last_ground_phrase == "soft noise"
 
 
 def test_live_mind_babble_reinforces_wordlike_alphabet() -> None:
@@ -182,12 +186,15 @@ def test_live_mind_push_speech_status_to_env_channel() -> None:
         def __init__(self) -> None:
             self.hear = ""
             self.babble = ""
+            self.phrase = ""
 
-        def send_status(self, hear=None, babble=None) -> None:
+        def send_status(self, hear=None, babble=None, phrase=None) -> None:
             if hear is not None:
                 self.hear = str(hear)
             if babble is not None:
                 self.babble = str(babble)
+            if phrase is not None:
+                self.phrase = str(phrase)
 
     ch = _Ch()
     env.speech_channel = ch  # type: ignore[attr-defined]
@@ -201,12 +208,14 @@ def test_live_mind_push_speech_status_to_env_channel() -> None:
     )
     pipeline = LiveMindPipeline(env, config=cfg)
     try:
-        pipeline._push_speech_status(hear="HI", babble="BY")
+        pipeline._push_speech_status(hear="HI", babble="BY", phrase="soft noise")
         assert ch.hear == "HI"
         assert ch.babble == "BY"
+        assert ch.phrase == "soft noise"
         pipeline._push_speech_status(babble="ZZ")
         assert ch.hear == "HI"
         assert ch.babble == "ZZ"
+        assert ch.phrase == "soft noise"
     finally:
         pipeline.close()
 

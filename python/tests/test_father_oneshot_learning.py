@@ -23,6 +23,9 @@ def _pipeline_with_unity_dialog(
     *,
     seed: int = 7,
     timeout_seconds: float = 60.0,
+    # OnesHot human-wait tests: disable away-auto so missing VIEW does not
+    # instant-Ask-LLM (production yaml uses 0.0 = Ask LLM when not on Display 3).
+    auto_llm_away_seconds: float = -1.0,
 ) -> tuple[LiveMindPipeline, FatherDialogChannel]:
     ch = FatherDialogChannel()
     # Pretend ML-Agents SideChannel is connected so human_or_llm waits on Unity.
@@ -53,6 +56,7 @@ def _pipeline_with_unity_dialog(
             mode="human_or_llm",
             mock=True,
             timeout_seconds=timeout_seconds,
+            auto_llm_away_seconds=auto_llm_away_seconds,
         ),
         place_graph=None,
     )
@@ -96,6 +100,7 @@ def test_oneshot_human_teach_then_reuse() -> None:
         assert pipe._father_question is not None
         assert ch.last_ask is not None
         assert "smell" in ch.last_ask["cue"] or ch.last_ask["question"]
+        ch.inject_view_for_tests(request_id=pipe._father_request_id, viewing=True)
 
         # Motor must stay hard-stopped while waiting for Father.
         obs = np.zeros(197, dtype=np.float32)
@@ -156,7 +161,7 @@ def test_oneshot_ask_llm_button() -> None:
 
 def test_oneshot_timeout_auto_llm_after_60s() -> None:
     """No human reply → after timeout_seconds, Father auto-answers via LLM."""
-    pipe, ch = _pipeline_with_unity_dialog(seed=9, timeout_seconds=60.0)
+    pipe, ch = _pipeline_with_unity_dialog(seed=9, timeout_seconds=60.0, auto_llm_away_seconds=-1.0)
     try:
         _arm_novel_interrupt(pipe, cue="bitter")
         assert pipe._father_waiting is True
@@ -213,6 +218,7 @@ def test_oneshot_freeze_countdown_paused_while_father_waits() -> None:
         _arm_novel_interrupt(pipe, cue="wall")
         pipe._interrupt_remaining = 3
         assert pipe._father_waiting is True
+        ch.inject_view_for_tests(request_id=pipe._father_request_id, viewing=True)
 
         for step in range(5):
             pipe._step = step
